@@ -1,0 +1,14 @@
+[package]
+name = "stellar-sync"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sorrel-client = { git = "https://github.com/fractalbeauty/sorrel", rev = "f032ec80d9320491e3547202256df1ace6f92357" }
+
+reqwest = { version = "0.13.4", features = ["rustls"] }
+url = "2.5.8"
+anyhow = "1.0.102"
+serde = { version = "1.0.228", features = ["derive"] }
+tokio = { version = "1.52.3", default-features = false, features = ["time"] }
+tracing = "0.1.44"
