@@ -9,3 +9,5 @@ name = "stellar"
 
 [dependencies]
 stellar-sync = { path = "../stellar-sync" }
+
+uniffi = "0.29.4"
