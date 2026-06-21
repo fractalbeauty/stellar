@@ -12,3 +12,9 @@ anyhow = "1.0.102"
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.52.3", default-features = false, features = ["time"] }
 tracing = "0.1.44"
+iroh = "1.0.0"
+arc-swap = "1.9.1"
+tokio-util = "0.7.18"
+futures = "0.3.32"
+n0-watcher = "1.0.0"
+uuid = "1.23.3"
