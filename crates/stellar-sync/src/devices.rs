@@ -1,43 +1,48 @@
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
 use anyhow::Context;
-use arc_swap::ArcSwap;
 use futures::StreamExt;
-use iroh::{EndpointId, Watcher};
-use n0_watcher::Watchable;
+use iroh::EndpointId;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use sorrel_client::api::keys::{ListKeysResponse, SetKeyRequest};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+use tokio::sync::watch;
+use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 use uuid::Uuid;
 
 pub struct Devices {
-    endpoint_id: Watchable<Option<EndpointId>>,
+    endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
+    devices_tx: watch::Sender<Vec<Device>>,
+
     auth: Option<AuthTask>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
-    endpoint_id: EndpointId,
-    name: Option<String>,
-    session: Option<DeviceSession>,
+    pub endpoint_id: EndpointId,
+    pub name: Option<String>,
+    pub session: Option<DeviceSession>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceSession {
-    id: Uuid,
-    last_used_at: u64,
+    pub id: Uuid,
+    pub last_used_at: u64,
 }
 
 impl Devices {
-    pub fn new(endpoint_id: Watchable<Option<EndpointId>>) -> Self {
+    pub fn new(
+        endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
+        devices_tx: watch::Sender<Vec<Device>>,
+    ) -> Self {
         Self {
-            endpoint_id,
+            endpoint_id_rx,
+            devices_tx,
+
             auth: None,
         }
     }
@@ -67,29 +72,33 @@ impl Devices {
         }
 
         let access_token = poll_device_code_flow(device_code).await?;
-        self.auth = Some(spawn_auth_task(self.endpoint_id.clone(), access_token));
+        self.auth = Some(spawn_auth_task(
+            self.endpoint_id_rx.clone(),
+            self.devices_tx.clone(),
+            access_token,
+        ));
 
         Ok(())
     }
 }
 
 struct AuthTask {
-    /// The latest list of devices
-    devices: Arc<ArcSwap<Vec<Device>>>,
     cancellation_token: CancellationToken,
 }
 
-fn spawn_auth_task(endpoint_id: Watchable<Option<EndpointId>>, access_token: String) -> AuthTask {
-    let devices = Arc::new(ArcSwap::new(Default::default()));
-
+fn spawn_auth_task(
+    endpoint_id: watch::Receiver<Option<EndpointId>>,
+    devices_tx: watch::Sender<Vec<Device>>,
+    access_token: String,
+) -> AuthTask {
     let cancellation_token = CancellationToken::new();
 
     tokio::spawn({
-        let devices = devices.clone();
+        let devices_tx = devices_tx.clone();
         let cancellation_token = cancellation_token.clone();
         async move {
             if let Err(error) =
-                run_auth_task(endpoint_id, access_token, devices, cancellation_token).await
+                run_auth_task(endpoint_id, access_token, devices_tx, cancellation_token).await
             {
                 tracing::error!("Auth task errored: {:?}", error);
             } else {
@@ -98,25 +107,22 @@ fn spawn_auth_task(endpoint_id: Watchable<Option<EndpointId>>, access_token: Str
         }
     });
 
-    AuthTask {
-        devices,
-        cancellation_token,
-    }
+    AuthTask { cancellation_token }
 }
 
 async fn run_auth_task(
-    endpoint_id: Watchable<Option<EndpointId>>,
+    endpoint_id: watch::Receiver<Option<EndpointId>>,
     access_token: String,
-    devices: Arc<ArcSwap<Vec<Device>>>,
+    devices_tx: watch::Sender<Vec<Device>>,
     cancellation_token: CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let base_url = Url::parse("https://sorrel.trillia.net").unwrap();
     let client = sorrel_client::Client::new(base_url, access_token)?;
 
-    let mut endpoint_id = endpoint_id.watch().stream();
+    let mut endpoint_id = WatchStream::new(endpoint_id);
 
     // TODO
-    let mut interval = tokio::time::interval(Duration::from_secs(10));
+    let mut interval = tokio::time::interval(Duration::from_secs(60));
 
     loop {
         tokio::select! {
@@ -163,7 +169,7 @@ async fn run_auth_task(
                             })
                             .collect::<Vec<_>>();
 
-                        devices.store(Arc::new(new_devices));
+                        let _ = devices_tx.send(new_devices);
 
                         tracing::debug!("Refreshed devices");
                     }

@@ -1,2 +1,2 @@
 pub mod devices;
-pub mod peer;
+pub mod peers;

@@ -3330,11 +3330,11 @@ dependencies = [
  "arc-swap",
  "futures",
  "iroh",
- "n0-watcher",
  "reqwest",
  "serde",
  "sorrel-client",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "url",
@@ -3345,7 +3345,6 @@ dependencies = [
 name = "stellar-tui"
 version = "0.1.0"
 dependencies = [
- "n0-watcher",
  "stellar",
  "tokio",
  "tracing-subscriber",
