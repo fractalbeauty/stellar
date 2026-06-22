@@ -4,16 +4,18 @@ use std::collections::HashMap;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-#[derive(Debug)]
+/// Handle to the peers task
+#[derive(Debug, Clone)]
 pub struct PeersTask {
     cancellation_token: CancellationToken,
     endpoint_id: EndpointId,
 }
 
 impl PeersTask {
-    pub fn spawn(devices_rx: watch::Receiver<Vec<Device>>) -> Result<Self, anyhow::Error> {
-        let cancellation_token = CancellationToken::new();
-
+    pub fn spawn(
+        cancellation_token: CancellationToken,
+        devices_rx: watch::Receiver<Vec<Device>>,
+    ) -> Result<Self, anyhow::Error> {
         let secret_key = SecretKey::generate();
         let endpoint_id = secret_key.public();
 
@@ -40,15 +42,16 @@ impl PeersTask {
         })
     }
 
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint_id
-    }
-
     pub fn cancel(&self) {
         self.cancellation_token.cancel();
     }
+
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
 }
 
+/// Owned state for the peers task
 #[derive(Debug)]
 struct Peers {
     peer_tasks: HashMap<EndpointId, PeerTask>,
@@ -185,11 +188,11 @@ impl Peers {
     }
 }
 
+/// Handle for a peer task
 #[derive(Debug)]
 struct PeerTask {
     cancellation_token: CancellationToken,
     connection_id: ConnectionId,
-    endpoint_id: EndpointId,
 }
 
 impl PeerTask {
@@ -200,8 +203,6 @@ impl PeerTask {
         connection_id: ConnectionId,
         connection: Connection,
     ) -> Self {
-        let endpoint_id = connection.remote_id();
-
         tokio::spawn({
             let cancellation_token = cancellation_token.clone();
             async move {
@@ -222,12 +223,11 @@ impl PeerTask {
         Self {
             cancellation_token,
             connection_id,
-            endpoint_id,
         }
     }
 
     pub fn endpoint_id(&self) -> EndpointId {
-        self.endpoint_id
+        self.connection_id.endpoint_id
     }
 
     pub fn cancel(&self) {
@@ -235,6 +235,7 @@ impl PeerTask {
     }
 }
 
+/// Mutable state for a peer task
 struct Peer {}
 
 impl Peer {

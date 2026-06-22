@@ -8,15 +8,93 @@ use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
-use tokio::sync::watch;
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::WatchStream;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use url::Url;
 use uuid::Uuid;
 
-pub struct Devices {
+/// Handle to the devices task
+pub struct DevicesTask {
+    cancellation_token: CancellationToken,
+    message_tx: mpsc::UnboundedSender<DevicesMessage>,
+}
+
+/// Messages to the devices task
+pub enum DevicesMessage {
+    StartDeviceCodeFlow {
+        verification_uri_complete_tx: oneshot::Sender<String>,
+    },
+}
+
+impl DevicesTask {
+    pub fn spawn(
+        cancellation_token: CancellationToken,
+        endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
+        devices_tx: watch::Sender<Vec<Device>>,
+    ) -> Self {
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
+
+        tokio::spawn({
+            let cancellation_token = cancellation_token.clone();
+            async move {
+                let (event_tx, event_rx) = mpsc::unbounded_channel();
+
+                let mut devices = Devices {
+                    endpoint_id_rx,
+                    devices_tx,
+                    message_rx,
+
+                    event_tx,
+                    event_rx,
+
+                    auth: None,
+                };
+
+                let result = devices.run(cancellation_token).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Devices task errored: {error}");
+                } else {
+                    tracing::debug!("Devices task finished");
+                }
+            }
+        });
+
+        Self {
+            cancellation_token,
+            message_tx,
+        }
+    }
+
+    pub fn cancel(&self) {
+        debug!("Cancelling devices task");
+        self.cancellation_token.cancel();
+    }
+
+    pub fn start_device_code_flow(&self) -> Result<oneshot::Receiver<String>, anyhow::Error> {
+        let (verification_uri_complete_tx, verification_uri_complete_rx) = oneshot::channel();
+
+        self.message_tx
+            .send(DevicesMessage::StartDeviceCodeFlow {
+                verification_uri_complete_tx,
+            })
+            .map_err(|_| anyhow::anyhow!("Failed to send, devices task has been dropped"))?;
+
+        Ok(verification_uri_complete_rx)
+    }
+}
+
+/// Owned state for the devices task
+#[derive(Debug)]
+struct Devices {
     endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
     devices_tx: watch::Sender<Vec<Device>>,
+    message_rx: mpsc::UnboundedReceiver<DevicesMessage>,
+
+    event_tx: mpsc::UnboundedSender<DevicesEvent>,
+    event_rx: mpsc::UnboundedReceiver<DevicesEvent>,
 
     auth: Option<AuthTask>,
 }
@@ -34,54 +112,95 @@ pub struct DeviceSession {
     pub last_used_at: u64,
 }
 
+/// Internal events from child tasks to the devices task
+enum DevicesEvent {
+    DeviceCodeFlowFinished { access_token: String },
+}
+
 impl Devices {
-    pub fn new(
-        endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
-        devices_tx: watch::Sender<Vec<Device>>,
-    ) -> Self {
-        Self {
-            endpoint_id_rx,
-            devices_tx,
+    async fn run(&mut self, cancellation_token: CancellationToken) -> Result<(), anyhow::Error> {
+        loop {
+            tokio::select! {
+                Some(message) = self.message_rx.recv() => {
+                    self.handle_message(message).await.expect("TODO");
+                }
 
-            auth: None,
+                Some(event) = self.event_rx.recv() => {
+                    self.handle_event(event).await.expect("TODO");
+                }
+
+                _ = cancellation_token.cancelled() => {
+                    debug!("Cancelled");
+                    break;
+                }
+            }
         }
+
+        Ok(())
     }
 
-    /// Start the device code flow.
-    ///
-    /// Returns the verification URI and polling information.
-    pub async fn start_device_code_flow(&self) -> Result<DeviceCode, anyhow::Error> {
-        if self.auth.is_some() {
-            anyhow::bail!("Already authorized");
+    async fn handle_message(&mut self, message: DevicesMessage) -> Result<(), anyhow::Error> {
+        match message {
+            DevicesMessage::StartDeviceCodeFlow {
+                verification_uri_complete_tx,
+            } => {
+                if self.auth.is_some() {
+                    anyhow::bail!("Already authorized");
+                }
+
+                tokio::task::spawn({
+                    let event_tx = self.event_tx.clone();
+                    async move {
+                        let device_code = match start_device_code_flow().await {
+                            Ok(device_code) => device_code,
+                            Err(error) => {
+                                tracing::error!("Failed to start device code flow: {:?}", error);
+                                return;
+                            }
+                        };
+
+                        let _ = verification_uri_complete_tx
+                            .send(device_code.verification_uri_complete.clone());
+
+                        let access_token = match poll_device_code_flow(device_code).await {
+                            Ok(access_token) => access_token,
+                            Err(error) => {
+                                tracing::error!("Failed to poll device code flow: {:?}", error);
+                                return;
+                            }
+                        };
+
+                        let _ =
+                            event_tx.send(DevicesEvent::DeviceCodeFlowFinished { access_token });
+                    }
+                });
+            }
         }
 
-        let device_code = start_device_code_flow().await?;
-        Ok(device_code)
+        Ok(())
     }
 
-    /// Poll the device code flow.
-    ///
-    /// Returns Ok if the user authorized.
-    pub async fn poll_device_code_flow(
-        // TODO
-        &mut self,
-        device_code: DeviceCode,
-    ) -> Result<(), anyhow::Error> {
-        if self.auth.is_some() {
-            anyhow::bail!("Already authorized");
-        }
+    async fn handle_event(&mut self, event: DevicesEvent) -> Result<(), anyhow::Error> {
+        match event {
+            DevicesEvent::DeviceCodeFlowFinished { access_token } => {
+                if self.auth.is_some() {
+                    anyhow::bail!("Already authorized, ignoring new access token");
+                }
 
-        let access_token = poll_device_code_flow(device_code).await?;
-        self.auth = Some(spawn_auth_task(
-            self.endpoint_id_rx.clone(),
-            self.devices_tx.clone(),
-            access_token,
-        ));
+                self.auth = Some(spawn_auth_task(
+                    self.endpoint_id_rx.clone(),
+                    self.devices_tx.clone(),
+                    access_token,
+                ));
+            }
+        }
 
         Ok(())
     }
 }
 
+/// Handle for the auth task
+#[derive(Debug)]
 struct AuthTask {
     cancellation_token: CancellationToken,
 }

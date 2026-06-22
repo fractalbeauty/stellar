@@ -8,6 +8,19 @@ crate-type = ["cdylib", "staticlib", "lib"]
 name = "stellar"
 
 [dependencies]
+stellar-log = { path = "../stellar-log" }
 stellar-sync = { path = "../stellar-sync" }
 
+anyhow = "1.0.102"
+async-std = "1.13.2"
+thiserror = "2.0.18"
+tokio = { version = "1.52.3", features = ["sync"] }
+tracing = "0.1.44"
 uniffi = "0.29.4"
+tokio-util = "0.7.18"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21.1"
+ndk-context = "0.1.1"
+
+[target.'cfg(target_os = "ios")'.dependencies]
