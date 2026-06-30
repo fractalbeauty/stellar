@@ -21,7 +21,7 @@ const DEFAULT_ENV_FILTER: &str =
 ///
 /// On Android and iOS, logs will also be forwarded to the platform logging systems. On other
 /// platforms, logs will also be written to stdout.
-pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<WorkerGuard>> {
+pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_ENV_FILTER));
 
@@ -72,7 +72,7 @@ pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<WorkerGuard>> {
             let _ = tracing::subscriber::set_global_default(subscriber);
         }
 
-        Some(guard)
+        Some(LogGuard { _guard: guard })
     } else {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
@@ -113,4 +113,9 @@ pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<WorkerGuard>> {
     log_panics::init();
 
     Ok(guard)
+}
+
+/// Guard that should be kept alive until the application exits to flush logs on drop.
+pub struct LogGuard {
+    _guard: WorkerGuard,
 }

@@ -2,6 +2,7 @@ use crate::error::{CoreError, core_error};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
+use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesTask;
 use stellar_sync::peers::PeersTask;
 use tokio::sync::oneshot;
@@ -13,21 +14,23 @@ pub struct Core {
     cancellation_token: CancellationToken,
     peers_task: PeersTask,
     devices_task: DevicesTask,
+
+    #[allow(unused)]
+    log_guard: Option<LogGuard>,
 }
 
 #[uniffi::export]
 impl Core {
     #[uniffi::constructor]
     pub async fn spawn() -> Result<Arc<Self>, CoreError> {
-        let (core_tx, core_rx) = oneshot::channel();
+        let log_guard = stellar_log::init(None)?;
 
-        // TODO
-        let _log_guard = stellar_log::init(None)?;
+        let (core_tx, core_rx) = oneshot::channel();
 
         std::thread::spawn({
             move || {
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_core_thread(core_tx);
+                    run_core_thread(log_guard, core_tx);
                 }));
 
                 if let Err(error) = &result {
@@ -77,7 +80,7 @@ impl std::fmt::Debug for Core {
     }
 }
 
-fn run_core_thread(core_tx: oneshot::Sender<Core>) {
+fn run_core_thread(log_guard: Option<LogGuard>, core_tx: oneshot::Sender<Core>) {
     debug!("Core thread started");
 
     let builder = tokio::runtime::Builder::new_multi_thread()
@@ -103,6 +106,7 @@ fn run_core_thread(core_tx: oneshot::Sender<Core>) {
             cancellation_token: cancellation_token.clone(),
             peers_task,
             devices_task,
+            log_guard,
         };
         core_tx.send(core).expect("Should send core");
 
