@@ -11,7 +11,7 @@ name = "stellar"
 stellar-log = { path = "../stellar-log" }
 stellar-sync = { path = "../stellar-sync" }
 
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 async-std = "1.13.2"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["sync"] }

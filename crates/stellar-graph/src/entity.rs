@@ -5,11 +5,17 @@ use uuid::Uuid;
 pub struct EntityId(Uuid);
 
 impl EntityId {
-    /// Generates a new entity ID.
+    /// Constructs an [`EntityId`] from a raw UUID.
+    pub fn new(inner: Uuid) -> Self {
+        Self(inner)
+    }
+
+    /// Generates a random entity ID.
     pub fn random() -> Self {
         Self(Uuid::new_v4())
     }
 
+    /// Returns the inner UUID.
     pub fn inner(&self) -> Uuid {
         self.0
     }
@@ -19,11 +25,17 @@ impl EntityId {
 pub struct EntityKind(Uuid);
 
 impl EntityKind {
-    /// Generates a new entity kind ID.
+    /// Constructs an [`EntityKind`] from a raw UUID.
+    pub fn new(inner: Uuid) -> Self {
+        Self(inner)
+    }
+
+    /// Generates a random entity kind ID.
     pub fn random() -> Self {
         Self(Uuid::new_v4())
     }
 
+    /// Returns the inner UUID.
     pub fn inner(&self) -> Uuid {
         self.0
     }
@@ -50,9 +62,19 @@ impl RelationKind {
 pub struct AttributeKind(Uuid);
 
 impl AttributeKind {
-    /// Generates a new attribute kind ID.
+    /// Constructs an [`AttributeKind`] from a raw UUID.
+    pub fn new(inner: Uuid) -> Self {
+        Self(inner)
+    }
+
+    /// Generates a random attribute kind ID.
     pub fn random() -> Self {
         Self(Uuid::new_v4())
+    }
+
+    /// Returns the inner UUID.
+    pub fn inner(&self) -> Uuid {
+        self.0
     }
 }
 
@@ -78,6 +100,14 @@ impl Version {
     pub fn new(timestamp: Timestamp, author: AuthorId) -> Self {
         Self { timestamp, author }
     }
+
+    pub fn timestamp(&self) -> Timestamp {
+        self.timestamp
+    }
+
+    pub fn author(&self) -> AuthorId {
+        self.author
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -91,6 +121,11 @@ impl Timestamp {
             .as_millis();
         Self(now_millis.try_into().unwrap_or(u64::MAX))
     }
+
+    /// Returns the inner milliseconds since the Unix epoch.
+    pub fn inner(&self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -99,6 +134,11 @@ pub struct AuthorId([u8; 32]);
 impl AuthorId {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+
+    /// Returns the inner bytes.
+    pub fn inner(&self) -> [u8; 32] {
+        self.0
     }
 }
 

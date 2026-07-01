@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+stellar-graph = { path = "../stellar-graph" }
+
 sorrel-client = { git = "https://github.com/fractalbeauty/sorrel", rev = "f032ec80d9320491e3547202256df1ace6f92357" }
 
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 arc-swap = "1.9.1"
 futures = "0.3.32"
 iroh = "1.0.0"
 reqwest = { version = "0.13.4", features = ["rustls"] }
+riblt = { git = "https://github.com/Intersubjective/riblt-rust", rev = "23cd9ce6467743bee8c1c734630e461dbed310e5" }
 serde = { version = "1.0.228", features = ["derive"] }
+siphasher = "1.0.3"
 tokio = { version = "1.52.3", default-features = false, features = ["time"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 tokio-util = "0.7.18"
