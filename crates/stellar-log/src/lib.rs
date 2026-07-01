@@ -11,7 +11,7 @@ use tracing_subscriber::{
 /// - `stellar_*=debug`: include debug logs from us
 /// - `iroh=error`: suppress noisy warnings from Iroh
 const DEFAULT_ENV_FILTER: &str =
-    "warn,stellar=debug,stellar_log=debug,stellar_sync=debug,iroh=error";
+    "warn,stellar=debug,stellar_graph=debug,stellar_log=debug,stellar_sync=debug,iroh=error";
 
 /// Initialize logging.
 ///
