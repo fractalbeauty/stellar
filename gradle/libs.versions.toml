@@ -14,6 +14,7 @@ gobley = "0.3.7"
 junit = "4.13.2"
 kotlin = "2.4.0"
 kotlinx-coroutines = "1.11.0"
+ktlint = "14.2.0"
 material3 = "1.11.0-alpha07"
 
 [libraries]
@@ -47,3 +48,4 @@ gobleyUniffi = { id = "dev.gobley.uniffi", version.ref = "gobley" }
 kotlinJvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlinAtomicfu = { id = "org.jetbrains.kotlin.plugin.atomicfu", version.ref = "kotlin" }
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
