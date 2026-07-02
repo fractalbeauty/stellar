@@ -1,4 +1,5 @@
 import gobley.gradle.GobleyHost
+import gobley.gradle.cargo.dsl.appleMobile
 import gobley.gradle.cargo.dsl.jvm
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -85,6 +86,21 @@ cargo {
 
     // Don't install rustup targets automatically
     installTargetBeforeBuild = false
+
+    builds.appleMobile {
+        variants {
+            buildTaskProvider.configure {
+                when (rustTarget.cinteropName) {
+                    // Set the iOS deployment target to match XCode. Without this we get linking errors.
+                    "ios" -> {
+                        additionalEnvironment.put("IPHONEOS_DEPLOYMENT_TARGET", "16.0.0")
+                    }
+
+                    else -> {}
+                }
+            }
+        }
+    }
 }
 
 dependencies {
