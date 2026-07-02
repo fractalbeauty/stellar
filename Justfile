@@ -11,6 +11,8 @@ test:
   cargo check --workspace
   cargo fmt --check
   just test-rust
+  ./gradlew compileKotlin --quiet
+  ./gradlew ktlintFormat --quiet
 
 test-rust *FLAGS:
   cargo nextest run
