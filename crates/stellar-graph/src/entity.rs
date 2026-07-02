@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityId(Uuid);
 
 impl EntityId {
@@ -21,7 +22,7 @@ impl EntityId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EntityKind(Uuid);
 
 impl EntityKind {
@@ -42,7 +43,7 @@ impl EntityKind {
 }
 
 /// `a` must be less than `b` for uniqueness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RelationKind {
     a: EntityKind,
     b: EntityKind,
@@ -58,7 +59,7 @@ impl RelationKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttributeKind(Uuid);
 
 impl AttributeKind {
@@ -78,19 +79,19 @@ impl AttributeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ValueKind {
     Text,
     Number,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Value {
     Text(String),
     Number(f64),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Version {
     timestamp: Timestamp,
     author: AuthorId,
@@ -110,7 +111,7 @@ impl Version {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Timestamp(u64);
 
 impl Timestamp {
@@ -128,7 +129,7 @@ impl Timestamp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AuthorId([u8; 32]);
 
 impl AuthorId {
@@ -141,50 +142,3 @@ impl AuthorId {
         self.0
     }
 }
-
-pub trait Store {
-    fn create_entity(&self, kind: EntityKind, version: Version) -> Result<EntityId, StoreError>;
-
-    // fn delete_entity()
-
-    fn get_entities(&self) -> Result<Vec<EntityId>, StoreError>;
-
-    fn get_entity_attribute(
-        &self,
-        entity: EntityId,
-        attribute: AttributeKind,
-    ) -> Result<Option<Value>, StoreError>;
-
-    fn set_entity_attribute(
-        &self,
-        entity: EntityId,
-        attribute: AttributeKind,
-        value: Value,
-        version: Version,
-    ) -> Result<(), StoreError>;
-
-    fn create_relation(&self, a: EntityId, b: EntityId, version: Version)
-    -> Result<(), StoreError>;
-
-    // fn delete_relation
-
-    fn get_relation_attribute(
-        &self,
-        a: EntityId,
-        b: EntityId,
-        attribute: AttributeKind,
-    ) -> Result<Option<Value>, StoreError>;
-
-    fn set_relation_attribute(
-        &self,
-        a: EntityId,
-        b: EntityId,
-        attribute: AttributeKind,
-        value: Value,
-        version: Version,
-    ) -> Result<(), StoreError>;
-}
-
-// TODO
-#[derive(Debug)]
-pub struct StoreError {}
