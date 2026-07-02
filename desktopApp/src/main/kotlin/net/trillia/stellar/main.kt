@@ -1,13 +1,32 @@
+@file:Suppress("ktlint:standard:filename")
+
 package net.trillia.stellar
 
 import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.application
+import androidx.compose.ui.window.awaitApplication
+import kotlinx.coroutines.runBlocking
+import uniffi.stellar.Core
+import uniffi.stellar.CoreException
+import uniffi.stellar.logError
 
-fun main() = application {
-    Window(
-        onCloseRequest = ::exitApplication,
-        title = "Stellar",
-    ) {
-        App()
+fun main() =
+    runBlocking {
+        val core =
+            try {
+                Core.spawn()
+            } catch (e: CoreException) {
+                logError("Failed to spawn core: $e")
+                return@runBlocking
+            }
+
+        awaitApplication {
+            Window(
+                onCloseRequest = ::exitApplication,
+                title = "Stellar",
+            ) {
+                App(
+                    core = core,
+                )
+            }
+        }
     }
-}
