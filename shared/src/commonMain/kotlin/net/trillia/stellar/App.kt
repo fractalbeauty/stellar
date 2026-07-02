@@ -24,7 +24,7 @@ fun App(core: Core) {
                     .fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            SessionsScreen()
+            SessionsScreen(core = core)
         }
     }
 }

@@ -4,39 +4,21 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
+import androidx.lifecycle.viewmodel.compose.viewModel
 import uniffi.stellar.Core
-import uniffi.stellar.CoreException
 
 @Composable
-fun SessionsScreen() {
-    val coroutineScope = rememberCoroutineScope()
-
-    var core by remember { mutableStateOf<Core?>(null) }
-    LaunchedEffect(Unit) {
-        core = Core.spawn()
-    }
+fun SessionsScreen(core: Core) {
+    val viewModel = viewModel { SessionsViewModel(core = core) }
+    val uiState by viewModel.uiState.collectAsState()
 
     Column {
-        Text("core: $core")
-        Text("auth state: ???")
+        Text("verification uri: ${uiState.verificationUriComplete}")
         Button(
-            onClick = {
-                coroutineScope.launch {
-                    try {
-                        val url = core?.startDeviceCodeFlow()
-                        print("meow: $url")
-                    } catch (e: CoreException) {
-                        println("error: ${e.message()}")
-                    }
-                }
-            },
+            onClick = { viewModel.startDeviceCodeFlow() },
         ) {
             Text("log in")
         }
