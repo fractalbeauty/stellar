@@ -15,7 +15,7 @@ test:
   ./gradlew ktlintFormat --quiet
 
 test-rust *FLAGS:
-  cargo nextest run
+  cargo nextest run {{FLAGS}}
 
 run-tui *FLAGS:
   cargo run --package stellar-tui -- {{FLAGS}}
