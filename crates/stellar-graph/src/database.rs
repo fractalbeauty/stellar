@@ -27,7 +27,7 @@ impl Database {
             deleted: false,
             deleted_version: version,
         };
-        self.store.set_entity_metadata(entity, value)?;
+        self.store.merge_entity_metadata(entity, value)?;
 
         Ok(entity)
     }

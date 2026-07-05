@@ -3,6 +3,7 @@ use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
+use tracing::warn;
 use uuid::Uuid;
 
 pub struct Store {
@@ -19,26 +20,80 @@ impl Store {
         Ok(Self { database, keyspace })
     }
 
-    pub fn set_entity_metadata(
+    pub fn merge_entity_metadata(
         &self,
         entity: EntityId,
         value: EntityMetadataValue,
     ) -> Result<(), anyhow::Error> {
         let key = make_entity_metadata_key(entity);
-        let value = postcard::to_allocvec(&value)?;
-        self.keyspace.insert(key, value)?;
+
+        let existing = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
+                    .context("Failed to parse metadata value")
+            })
+            .transpose()?;
+
+        let merged_value = if let Some(existing) = existing {
+            if value.kind != existing.kind {
+                warn!("merge_entity_metadata new kind != existing kind");
+            }
+
+            let (deleted, deleted_version) = Version::latest_version(
+                value.deleted,
+                value.deleted_version,
+                existing.deleted,
+                existing.deleted_version,
+            );
+            EntityMetadataValue {
+                kind: existing.kind,
+                deleted,
+                deleted_version,
+            }
+        } else {
+            value
+        };
+
+        let merged_value = postcard::to_allocvec(&merged_value)?;
+        self.keyspace.insert(key, merged_value)?;
+
         Ok(())
     }
 
-    fn set_entity_attribute(
+    fn merge_entity_attribute(
         &self,
         entity: EntityId,
         attribute: AttributeKind,
         value: EntityAttributeValue,
     ) -> Result<(), anyhow::Error> {
         let key = make_entity_attribute_key(entity, attribute);
-        let value = postcard::to_allocvec(&value)?;
-        self.keyspace.insert(key, value)?;
+
+        let existing = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<EntityAttributeValue>(value.as_ref())
+                    .context("Failed to parse attribute value")
+            })
+            .transpose()?;
+
+        let merged_value = if let Some(existing) = existing {
+            let (value, version) = Version::latest_version(
+                value.value,
+                value.version,
+                existing.value,
+                existing.version,
+            );
+            EntityAttributeValue { value, version }
+        } else {
+            value
+        };
+
+        let merged_value = postcard::to_allocvec(&merged_value)?;
+        self.keyspace.insert(key, merged_value)?;
+
         Ok(())
     }
 
@@ -162,81 +217,154 @@ fn parse_entity_attribute_key(key: Slice) -> Result<(EntityId, AttributeKind), a
 #[cfg(test)]
 mod test {
     use crate::{
-        entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version},
-        store::{EntityAttributeValue, EntityMetadataValue, Store},
+        entity::{
+            Version,
+            hegel::{gen_attribute_kind, gen_entity_id, gen_entity_kind, gen_value, gen_version},
+        },
+        store::{EntityMetadataValue, Store, hegel::gen_entity_data},
     };
+    use hegel::{Generator, TestCase, generators as gs};
+    use uuid::Uuid;
 
-    fn version() -> Version {
-        Version::new(Timestamp::now(), AuthorId::new([1u8; 32]))
-    }
+    use super::EntityAttributeValue;
 
-    fn metadata(kind: EntityKind, deleted: bool) -> EntityMetadataValue {
-        EntityMetadataValue {
-            kind,
-            deleted,
-            deleted_version: version(),
+    #[hegel::test]
+    fn retrieve_entities(tc: TestCase) {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entities = tc.draw(gs::hashmaps(gen_entity_id(), gen_entity_data()));
+
+        for (entity, data) in entities.clone() {
+            store
+                .merge_entity_metadata(entity, data.metadata)
+                .expect("should merge entity metadata");
+
+            for (attribute, value) in data.attributes {
+                store
+                    .merge_entity_attribute(entity, attribute, value)
+                    .expect("should merge entity attribute");
+            }
         }
+
+        let result = store.get_entities().expect("should get entities");
+        assert_eq!(result, entities);
     }
 
-    fn attribute(value: Value) -> EntityAttributeValue {
-        EntityAttributeValue {
-            value,
-            version: version(),
-        }
-    }
+    #[hegel::test]
+    fn merge_entity_attribute(tc: TestCase) {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
 
-    #[test]
-    fn get_entities() {
-        let store = Store::open(testdir::testdir!().join("store")).expect("should open");
+        let entity = tc.draw(gen_entity_id());
 
-        let k1 = EntityKind::random();
-
-        let a1 = AttributeKind::random();
-        let a2 = AttributeKind::random();
-
-        let e1 = EntityId::random();
         store
-            .set_entity_metadata(e1, metadata(k1, false))
-            .expect("should set entity metadata");
-        store
-            .set_entity_attribute(e1, a1, attribute(Value::Number(1.0)))
-            .expect("should set entity attribute");
-        store
-            .set_entity_attribute(e1, a2, attribute(Value::Number(2.0)))
-            .expect("should set entity attribute");
+            .merge_entity_metadata(
+                entity,
+                EntityMetadataValue {
+                    kind: tc.draw(gen_entity_kind()),
+                    deleted: false,
+                    deleted_version: tc.draw(gen_version()),
+                },
+            )
+            .expect("should merge entity metadata");
 
-        let e2 = EntityId::random();
-        store
-            .set_entity_metadata(e2, metadata(k1, false))
-            .expect("should set entity metadata");
-        store
-            .set_entity_attribute(e2, a1, attribute(Value::Number(3.0)))
-            .expect("should set entity attribute");
-        store
-            .set_entity_attribute(e2, a2, attribute(Value::Number(4.0)))
-            .expect("should set entity attribute");
+        let attribute = tc.draw(gen_attribute_kind());
 
-        let entities = store.get_entities().expect("should get entities");
+        // Generate attribute
+        let first = EntityAttributeValue {
+            value: tc.draw(gen_value()),
+            version: tc.draw(gen_version()),
+        };
 
-        assert_eq!(entities.len(), 2);
-        assert!(entities.contains_key(&e1));
-        assert!(entities.contains_key(&e2));
+        store
+            .merge_entity_attribute(entity, attribute, first.clone())
+            .expect("should merge entity attribute");
 
-        assert_eq!(entities.get(&e1).unwrap().attributes.len(), 2);
-        assert!(entities.get(&e1).unwrap().attributes.contains_key(&a1));
+        let first_result = store
+            .get_entities()
+            .expect("should get entities")
+            .clone()
+            .get(&entity)
+            .expect("should get entity")
+            .clone()
+            .attributes
+            .get(&attribute)
+            .expect("should get attribute")
+            .clone();
+        assert_eq!(first_result, first);
+
+        // Generate attribute with different version
+        let second = EntityAttributeValue {
+            value: tc.draw(gen_value()),
+            version: tc.draw(gen_version().filter(|version| *version != first.version)),
+        };
+
+        store
+            .merge_entity_attribute(entity, attribute, second.clone())
+            .expect("should merge entity attribute");
+
+        let second_result = store
+            .get_entities()
+            .expect("should get entities")
+            .clone()
+            .get(&entity)
+            .expect("should get entity")
+            .clone()
+            .attributes
+            .get(&attribute)
+            .expect("should get attribute")
+            .clone();
+
+        let (latest_value, latest_version) =
+            Version::latest_version(first.value, first.version, second.value, second.version);
         assert_eq!(
-            entities
-                .get(&e1)
-                .unwrap()
-                .attributes
-                .get(&a1)
-                .unwrap()
-                .value,
-            Value::Number(1.0)
+            second_result,
+            EntityAttributeValue {
+                value: latest_value,
+                version: latest_version
+            }
         );
     }
 }
 
+pub mod hegel {
+    use crate::{
+        entity::hegel::{gen_attribute_kind, gen_entity_kind, gen_value, gen_version},
+        store::{EntityAttributeValue, EntityData, EntityMetadataValue},
+    };
+    use hegel::{TestCase, compose, generators as gs};
+
+    #[hegel::composite]
+    pub fn gen_entity_data(tc: TestCase) -> EntityData {
+        EntityData {
+            metadata: EntityMetadataValue {
+                kind: tc.draw(gen_entity_kind()),
+                deleted: tc.draw(gs::booleans()),
+                deleted_version: tc.draw(gen_version()),
+            },
+            attributes: tc.draw(gs::hashmaps(
+                gen_attribute_kind(),
+                compose!(|tc| {
+                    EntityAttributeValue {
+                        value: tc.draw(gen_value()),
+                        version: tc.draw(gen_version()),
+                    }
+                }),
+            )),
+        }
+    }
+}
+
+// TODO
 // fn sort_relation_key(
 //     a: EntityId,
 //     b: EntityId,

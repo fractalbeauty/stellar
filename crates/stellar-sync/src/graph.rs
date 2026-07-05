@@ -266,15 +266,17 @@ mod test {
         EntitySymbol, SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
     };
     use hegel::{
-        Generator, TestCase, compose,
+        Generator, TestCase,
         generators::{self as gs},
-        one_of,
     };
     use riblt::Symbol;
     use std::collections::{HashMap, HashSet};
     use stellar_graph::{
-        entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version},
-        store::{EntityAttributeValue, EntityData, EntityMetadataValue},
+        entity::{
+            AuthorId, EntityId, EntityKind, Timestamp, Version,
+            hegel::{gen_entity_id, gen_version},
+        },
+        store::{EntityData, EntityMetadataValue, hegel::gen_entity_data},
     };
     use uuid::Uuid;
 
@@ -478,56 +480,6 @@ mod test {
 
         let xor_self_self = xor_self.xor(&symbol);
         assert_eq!(xor_self_self, symbol);
-    }
-
-    #[hegel::composite]
-    fn gen_entity_data(tc: TestCase) -> EntityData {
-        EntityData {
-            metadata: EntityMetadataValue {
-                kind: EntityKind::new(tc.draw(gen_uuid())),
-                deleted: tc.draw(gs::booleans()),
-                deleted_version: tc.draw(gen_version()),
-            },
-            attributes: tc.draw(gs::hashmaps(
-                gen_attribute_kind(),
-                compose!(|tc| {
-                    EntityAttributeValue {
-                        value: tc.draw(one_of!(
-                            compose!(|tc| { Value::Text(tc.draw(gs::text())) }),
-                            compose!(|tc| { Value::Number(tc.draw(gs::floats())) }),
-                        )),
-                        version: tc.draw(gen_version()),
-                    }
-                }),
-            )),
-        }
-    }
-
-    #[hegel::composite]
-    fn gen_version(tc: TestCase) -> Version {
-        Version::new(
-            Timestamp::new(tc.draw(gs::integers())),
-            AuthorId::new(
-                tc.draw(gs::vecs(gs::integers()).min_size(32).max_size(32))
-                    .try_into()
-                    .unwrap(),
-            ),
-        )
-    }
-
-    #[hegel::composite]
-    fn gen_attribute_kind(tc: TestCase) -> AttributeKind {
-        AttributeKind::new(tc.draw(gen_uuid()))
-    }
-
-    #[hegel::composite]
-    fn gen_entity_id(tc: TestCase) -> EntityId {
-        EntityId::new(tc.draw(gen_uuid()))
-    }
-
-    #[hegel::composite]
-    fn gen_uuid(tc: TestCase) -> Uuid {
-        Uuid::from_u128(tc.draw(gs::integers().min_value(1)))
     }
 
     fn make_empty_entity_data() -> EntityData {
