@@ -115,6 +115,11 @@ impl Version {
 pub struct Timestamp(u64);
 
 impl Timestamp {
+    /// Constructs a [`Timestamp`] from a raw u64.
+    pub fn new(inner: u64) -> Self {
+        Self(inner)
+    }
+
     pub fn now() -> Self {
         let now_millis = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)

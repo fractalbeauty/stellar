@@ -1,4 +1,4 @@
-use riblt::{CodedSymbol, HashedSymbol};
+use riblt::CodedSymbol;
 use siphasher::sip::SipHasher;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -6,19 +6,19 @@ use std::{
     iter,
 };
 use stellar_graph::{
-    entity::{AttributeKind, EntityId, Value, Version},
+    entity::{EntityId, Version},
     store::EntityData,
 };
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct EntitySymbol {
+pub struct EntitySymbol {
     id: EntityId,
     hash: u64,
 }
 
 impl EntitySymbol {
-    fn new(id: EntityId, data: EntityData, key0: u64, key1: u64) -> Self {
+    fn new(id: EntityId, data: &EntityData, key0: u64, key1: u64) -> Self {
         let mut hasher = SipHasher::new_with_keys(key0, key1);
 
         // Hash deleted version
@@ -70,101 +70,82 @@ fn write_version(hasher: &mut SipHasher, version: Version) {
     hasher.write(&version.author().inner());
 }
 
-struct SyncClientProtocol {
+pub struct SyncClientProtocol {
     encoder: riblt::Encoder<EntitySymbol>,
-    outbox: VecDeque<SyncClientMessage>,
     missing: Option<HashSet<EntityId>>,
 }
 
-enum SyncClientMessage {
+pub enum SyncClientMessage {
     CodedSymbols(Vec<CodedSymbol<EntitySymbol>>),
 }
 
 impl SyncClientProtocol {
-    const INITIAL_CODED_SYMBOLS: usize = 10;
     const BATCH_CODED_SYMBOLS: usize = 10;
 
-    fn new_from_data(entities: HashMap<EntityId, EntityData>) -> Self {
-        Self::new_from_symbols(
-            entities
-                .into_iter()
-                .map(|(entity, data)| EntitySymbol::new(entity, data, 123, 456)),
-        )
-    }
+    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
+        let symbols = entities
+            .iter()
+            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456));
 
-    /// `symbols` should be unique
-    fn new_from_symbols(symbols: impl IntoIterator<Item = EntitySymbol>) -> Self {
         let mut encoder = riblt::Encoder::new();
         for symbol in symbols {
             encoder.add_symbol(&symbol);
         }
 
-        let initial_coded_symbols = iter::repeat_with(|| encoder.produce_next_coded_symbol())
-            .take(Self::INITIAL_CODED_SYMBOLS)
-            .collect::<Vec<_>>();
-
-        let mut outbox = VecDeque::new();
-        outbox.push_back(SyncClientMessage::CodedSymbols(initial_coded_symbols));
-
         Self {
             encoder,
-            outbox,
             missing: None,
         }
     }
 
-    fn handle_message(&mut self, message: SyncServerMessage) {
+    pub fn handle_message(&mut self, message: SyncServerMessage) {
         match message {
-            SyncServerMessage::More => {
-                let initial_coded_symbols =
-                    iter::repeat_with(|| self.encoder.produce_next_coded_symbol())
-                        .take(Self::BATCH_CODED_SYMBOLS)
-                        .collect::<Vec<_>>();
-
-                self.outbox
-                    .push_back(SyncClientMessage::CodedSymbols(initial_coded_symbols));
-            }
             SyncServerMessage::Done { missing } => {
                 self.missing = Some(missing);
             }
         }
     }
 
-    fn poll_message(&mut self) -> Option<SyncClientMessage> {
-        self.outbox.pop_front()
+    pub fn poll_message(&mut self) -> Option<SyncClientMessage> {
+        // already done
+        if self.missing.is_some() {
+            return None;
+        }
+
+        // produce symbols
+        let coded_symbols = iter::repeat_with(|| self.encoder.produce_next_coded_symbol())
+            .take(Self::BATCH_CODED_SYMBOLS)
+            .collect::<Vec<_>>();
+        Some(SyncClientMessage::CodedSymbols(coded_symbols))
     }
 
-    fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         self.missing.is_some()
     }
 
-    fn poll_finish(&mut self) -> Option<HashSet<EntityId>> {
-        self.missing.take()
+    // `is_finished` must return true before calling `finish`
+    pub fn finish(self) -> HashSet<EntityId> {
+        debug_assert!(self.is_finished());
+        self.missing.expect("should be finished")
     }
 }
 
-struct SyncServerProtocol {
+pub struct SyncServerProtocol {
     decoder: riblt::Decoder<EntitySymbol>,
     outbox: VecDeque<SyncServerMessage>,
     missing: Option<HashSet<EntityId>>,
 }
 
-enum SyncServerMessage {
-    More,
+pub enum SyncServerMessage {
     Done { missing: HashSet<EntityId> },
 }
 
 impl SyncServerProtocol {
-    fn new_from_data(entities: HashMap<EntityId, EntityData>) -> Self {
-        Self::new_from_symbols(
-            entities
-                .into_iter()
-                .map(|(entity, data)| EntitySymbol::new(entity, data, 123, 456)),
-        )
-    }
+    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
+        let symbols = entities
+            .iter()
+            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456));
 
-    /// `symbols` should be unique
-    fn new_from_symbols(symbols: impl IntoIterator<Item = EntitySymbol>) -> Self {
         let mut decoder = riblt::Decoder::new();
         for symbol in symbols {
             decoder.add_symbol(&symbol);
@@ -177,7 +158,7 @@ impl SyncServerProtocol {
         }
     }
 
-    fn handle_message(&mut self, message: SyncClientMessage) {
+    pub fn handle_message(&mut self, message: SyncClientMessage) {
         match message {
             SyncClientMessage::CodedSymbols(coded_symbols) => {
                 for coded_symbol in coded_symbols {
@@ -203,34 +184,35 @@ impl SyncServerProtocol {
                     self.outbox.push_back(SyncServerMessage::Done {
                         missing: remote_missing,
                     });
-                } else {
-                    self.outbox.push_back(SyncServerMessage::More);
                 }
             }
         }
     }
 
-    fn poll_message(&mut self) -> Option<SyncServerMessage> {
+    pub fn poll_message(&mut self) -> Option<SyncServerMessage> {
         self.outbox.pop_front()
     }
 
-    fn is_finished(&self) -> bool {
+    pub fn is_finished(&self) -> bool {
         self.missing.is_some()
     }
 
-    fn poll_finish(&mut self) -> Option<HashSet<EntityId>> {
-        self.missing.take()
+    /// `is_finished` must return true before calling `finish`
+    pub fn finish(self) -> HashSet<EntityId> {
+        debug_assert!(self.is_finished());
+        self.missing.expect("should be finished")
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::graph::{
-        EntitySymbol, SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
-    };
+    use crate::graph::{SyncClientProtocol, SyncServerProtocol};
     use hegel::{TestCase, generators as gs};
-    use std::collections::HashSet;
-    use stellar_graph::entity::EntityId;
+    use std::collections::{HashMap, HashSet};
+    use stellar_graph::{
+        entity::{AuthorId, EntityId, EntityKind, Timestamp, Version},
+        store::{EntityData, EntityMetadataValue},
+    };
     use uuid::Uuid;
 
     #[hegel::test]
@@ -253,18 +235,19 @@ mod test {
             "client = {client_entities:?}, server = {server_entities:?}"
         ));
 
-        // make symbols with fixed versions
-        let client_symbols = client_entities.iter().copied().map(|entity| EntitySymbol {
-            id: entity,
-            hash: 1234,
-        });
-        let server_symbols = server_entities.iter().copied().map(|entity| EntitySymbol {
-            id: entity,
-            hash: 1234,
-        });
+        let client_data = client_entities
+            .iter()
+            .copied()
+            .map(|entity| (entity, make_empty_entity_data()))
+            .collect();
+        let server_data = server_entities
+            .iter()
+            .copied()
+            .map(|entity| (entity, make_empty_entity_data()))
+            .collect();
 
-        let mut client = SyncClientProtocol::new_from_symbols(client_symbols);
-        let mut server = SyncServerProtocol::new_from_symbols(server_symbols);
+        let mut client = SyncClientProtocol::new(client_data);
+        let mut server = SyncServerProtocol::new(server_data);
         run_client_and_server(&mut client, &mut server);
 
         // client should be missing server-only entities
@@ -272,7 +255,7 @@ mod test {
             .difference(&client_entities)
             .copied()
             .collect();
-        let client_missing = client.poll_finish().expect("should be finished");
+        let client_missing = client.finish();
         assert_eq!(
             client_missing, server_only_entities,
             "client should be missing server-only entities"
@@ -283,7 +266,7 @@ mod test {
             .difference(&server_entities)
             .copied()
             .collect();
-        let server_missing = server.poll_finish().expect("should be finished");
+        let server_missing = server.finish();
         assert_eq!(
             server_missing, client_only_entities,
             "server should be missing client-only entities"
@@ -294,15 +277,13 @@ mod test {
         let max_iterations = 1000;
 
         for _ in 0..max_iterations {
-            let client_messages = drain_client_messages(client);
-
-            for message in client_messages {
+            let client_message = client.poll_message();
+            if let Some(message) = client_message {
                 server.handle_message(message);
             }
 
-            let server_messages = drain_server_messages(server);
-
-            for message in server_messages {
+            let server_message = server.poll_message();
+            if let Some(message) = server_message {
                 client.handle_message(message);
             }
 
@@ -323,24 +304,19 @@ mod test {
         );
     }
 
-    fn drain_client_messages(client: &mut SyncClientProtocol) -> Vec<SyncClientMessage> {
-        let mut messages = Vec::new();
-        while let Some(message) = client.poll_message() {
-            messages.push(message)
-        }
-        messages
-    }
-
-    fn drain_server_messages(server: &mut SyncServerProtocol) -> Vec<SyncServerMessage> {
-        let mut messages = Vec::new();
-        while let Some(message) = server.poll_message() {
-            messages.push(message)
-        }
-        messages
-    }
-
     #[hegel::composite]
     fn gen_entity_id(tc: TestCase) -> EntityId {
         EntityId::new(Uuid::from_u128(tc.draw(gs::integers().min_value(1))))
+    }
+
+    fn make_empty_entity_data() -> EntityData {
+        EntityData {
+            metadata: EntityMetadataValue {
+                kind: EntityKind::new(Uuid::nil()),
+                deleted: false,
+                deleted_version: Version::new(Timestamp::new(0), AuthorId::new(Default::default())),
+            },
+            attributes: HashMap::new(),
+        }
     }
 }
