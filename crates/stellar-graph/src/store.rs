@@ -105,19 +105,20 @@ impl Store {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct EntityData {
     pub metadata: EntityMetadataValue,
     pub attributes: HashMap<AttributeKind, EntityAttributeValue>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityMetadataValue {
     pub kind: EntityKind,
     pub deleted: bool,
     pub deleted_version: Version,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityAttributeValue {
     pub value: Value,
     pub version: Version,
@@ -235,3 +236,22 @@ mod test {
         );
     }
 }
+
+// fn sort_relation_key(
+//     a: EntityId,
+//     b: EntityId,
+//     a_kind: EntityKind,
+//     b_kind: EntityKind,
+// ) -> (EntityId, EntityId) {
+//     if a_kind == b_kind {
+//         if a.inner() < b.inner() {
+//             (a, b)
+//         } else {
+//             (b, a)
+//         }
+//     } else if a_kind.inner() < b_kind.inner() {
+//         (a, b)
+//     } else {
+//         (b, a)
+//     }
+// }

@@ -9,6 +9,7 @@ use stellar_graph::{
     entity::{EntityId, Version},
     store::EntityData,
 };
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -71,12 +72,19 @@ fn write_version(hasher: &mut SipHasher, version: Version) {
 }
 
 pub struct SyncClientProtocol {
+    entities: HashMap<EntityId, EntityData>,
     encoder: riblt::Encoder<EntitySymbol>,
-    missing: Option<HashSet<EntityId>>,
+    outbox: VecDeque<SyncClientMessage>,
+    result: Option<HashMap<EntityId, EntityData>>,
 }
 
 pub enum SyncClientMessage {
-    CodedSymbols(Vec<CodedSymbol<EntitySymbol>>),
+    CodedSymbols {
+        coded_symbols: Vec<CodedSymbol<EntitySymbol>>,
+    },
+    Difference {
+        server_difference: HashMap<EntityId, EntityData>,
+    },
 }
 
 impl SyncClientProtocol {
@@ -93,22 +101,45 @@ impl SyncClientProtocol {
         }
 
         Self {
+            entities,
             encoder,
-            missing: None,
+            outbox: VecDeque::new(),
+            result: None,
         }
     }
 
     pub fn handle_message(&mut self, message: SyncServerMessage) {
         match message {
-            SyncServerMessage::Done { missing } => {
-                self.missing = Some(missing);
+            SyncServerMessage::Difference {
+                client_difference,
+                server_missing,
+            } => {
+                self.result = Some(client_difference);
+
+                let server_difference = server_missing.into_iter().filter_map(|entity| {
+                    let Some(data) = self.entities.get(&entity) else {
+                        warn!(
+                            "SyncServerMessage::Difference server_missing entity not in client entities"
+                        );
+                        return None;
+                    };
+                    Some((entity, data.clone()))
+                }).collect();
+
+                self.outbox
+                    .push_back(SyncClientMessage::Difference { server_difference });
             }
         }
     }
 
     pub fn poll_message(&mut self) -> Option<SyncClientMessage> {
-        // already done
-        if self.missing.is_some() {
+        // queued messages first
+        if let Some(message) = self.outbox.pop_front() {
+            return Some(message);
+        }
+
+        // don't produce symbols if already done
+        if self.result.is_some() {
             return None;
         }
 
@@ -116,28 +147,34 @@ impl SyncClientProtocol {
         let coded_symbols = iter::repeat_with(|| self.encoder.produce_next_coded_symbol())
             .take(Self::BATCH_CODED_SYMBOLS)
             .collect::<Vec<_>>();
-        Some(SyncClientMessage::CodedSymbols(coded_symbols))
+        Some(SyncClientMessage::CodedSymbols { coded_symbols })
     }
 
     pub fn is_finished(&self) -> bool {
-        self.missing.is_some()
+        self.result.is_some()
     }
 
-    // `is_finished` must return true before calling `finish`
-    pub fn finish(self) -> HashSet<EntityId> {
+    /// Finishes syncing, returning the difference to apply locally.
+    ///
+    /// `is_finished` must return true before calling `finish`
+    pub fn finish(self) -> HashMap<EntityId, EntityData> {
         debug_assert!(self.is_finished());
-        self.missing.expect("should be finished")
+        self.result.expect("should be finished")
     }
 }
 
 pub struct SyncServerProtocol {
+    entities: HashMap<EntityId, EntityData>,
     decoder: riblt::Decoder<EntitySymbol>,
     outbox: VecDeque<SyncServerMessage>,
-    missing: Option<HashSet<EntityId>>,
+    result: Option<HashMap<EntityId, EntityData>>,
 }
 
 pub enum SyncServerMessage {
-    Done { missing: HashSet<EntityId> },
+    Difference {
+        client_difference: HashMap<EntityId, EntityData>,
+        server_missing: HashSet<EntityId>,
+    },
 }
 
 impl SyncServerProtocol {
@@ -152,39 +189,56 @@ impl SyncServerProtocol {
         }
 
         Self {
+            entities,
             decoder,
             outbox: VecDeque::new(),
-            missing: None,
+            result: None,
         }
     }
 
     pub fn handle_message(&mut self, message: SyncClientMessage) {
         match message {
-            SyncClientMessage::CodedSymbols(coded_symbols) => {
+            SyncClientMessage::CodedSymbols { coded_symbols } => {
                 for coded_symbol in coded_symbols {
                     self.decoder.add_coded_symbol(&coded_symbol);
                 }
 
                 let _ = self.decoder.try_decode(); // TODO
                 if self.decoder.decoded() {
-                    let local_missing = self
+                    let server_missing = self
                         .decoder
                         .get_remote_symbols()
                         .into_iter()
                         .map(|hashed| hashed.symbol.id)
-                        .collect();
-                    let remote_missing = self
+                        .collect::<HashSet<_>>();
+                    let client_missing = self
                         .decoder
                         .get_local_symbols()
                         .into_iter()
                         .map(|hashed| hashed.symbol.id)
+                        .collect::<HashSet<_>>();
+
+                    let client_difference = client_missing
+                        .into_iter()
+                        .filter_map(|entity| {
+                            let Some(data) = self.entities.get(&entity) else {
+                                warn!(
+                                    "SyncServerProtocol decoded but client_missing entity not in server entities"
+                                );
+                                return None;
+                            };
+                            Some((entity, data.clone()))
+                        })
                         .collect();
 
-                    self.missing = Some(local_missing);
-                    self.outbox.push_back(SyncServerMessage::Done {
-                        missing: remote_missing,
+                    self.outbox.push_back(SyncServerMessage::Difference {
+                        client_difference,
+                        server_missing,
                     });
                 }
+            }
+            SyncClientMessage::Difference { server_difference } => {
+                self.result = Some(server_difference);
             }
         }
     }
@@ -194,19 +248,23 @@ impl SyncServerProtocol {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.missing.is_some()
+        self.result.is_some()
     }
 
+    /// Finishes syncing, returning the difference to apply locally.
+    ///
     /// `is_finished` must return true before calling `finish`
-    pub fn finish(self) -> HashSet<EntityId> {
+    pub fn finish(self) -> HashMap<EntityId, EntityData> {
         debug_assert!(self.is_finished());
-        self.missing.expect("should be finished")
+        self.result.expect("should be finished")
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::graph::{SyncClientProtocol, SyncServerProtocol};
+    use crate::graph::{
+        SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
+    };
     use hegel::{TestCase, generators as gs};
     use std::collections::{HashMap, HashSet};
     use stellar_graph::{
@@ -238,52 +296,71 @@ mod test {
         let client_data = client_entities
             .iter()
             .copied()
-            .map(|entity| (entity, make_empty_entity_data()))
-            .collect();
+            .map(|entity: EntityId| (entity, make_empty_entity_data()))
+            .collect::<HashMap<_, _>>();
         let server_data = server_entities
             .iter()
             .copied()
             .map(|entity| (entity, make_empty_entity_data()))
-            .collect();
+            .collect::<HashMap<_, _>>();
+
+        let client_only_data = client_data
+            .clone()
+            .into_iter()
+            .filter(|(entity, _data)| !server_entities.contains(entity))
+            .collect::<HashMap<_, _>>();
+        let server_only_data = server_data
+            .clone()
+            .into_iter()
+            .filter(|(entity, _data)| !client_entities.contains(entity))
+            .collect::<HashMap<_, _>>();
 
         let mut client = SyncClientProtocol::new(client_data);
         let mut server = SyncServerProtocol::new(server_data);
         run_client_and_server(&mut client, &mut server);
 
-        // client should be missing server-only entities
-        let server_only_entities = server_entities
-            .difference(&client_entities)
-            .copied()
-            .collect();
-        let client_missing = client.finish();
+        // client should be missing server-only data
+        let client_difference = client.finish();
         assert_eq!(
-            client_missing, server_only_entities,
-            "client should be missing server-only entities"
+            client_difference, server_only_data,
+            "client should be missing server-only data"
         );
 
         // server should be missing client-only entities
-        let client_only_entities = client_entities
-            .difference(&server_entities)
-            .copied()
-            .collect();
-        let server_missing = server.finish();
+        let server_difference = server.finish();
         assert_eq!(
-            server_missing, client_only_entities,
-            "server should be missing client-only entities"
+            server_difference, client_only_data,
+            "server should be missing client-only data"
         );
     }
 
     fn run_client_and_server(client: &mut SyncClientProtocol, server: &mut SyncServerProtocol) {
         let max_iterations = 1000;
 
+        let mut count_client_message_difference = 0;
+        let mut count_server_message_difference = 0;
+
         for _ in 0..max_iterations {
             let client_message = client.poll_message();
             if let Some(message) = client_message {
+                match &message {
+                    SyncClientMessage::Difference { .. } => {
+                        count_client_message_difference += 1;
+                    }
+                    _ => {}
+                }
+
                 server.handle_message(message);
             }
 
             let server_message = server.poll_message();
             if let Some(message) = server_message {
+                match &message {
+                    SyncServerMessage::Difference { .. } => {
+                        count_server_message_difference += 1;
+                    }
+                }
+
                 client.handle_message(message);
             }
 
@@ -302,6 +379,10 @@ mod test {
             server.is_finished(),
             "server did not finish in {max_iterations} iterations"
         );
+
+        // should only send one difference message
+        assert!(count_client_message_difference <= 1);
+        assert!(count_server_message_difference <= 1);
     }
 
     #[hegel::composite]
