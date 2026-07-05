@@ -134,7 +134,7 @@ impl Timestamp {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AuthorId([u8; 32]);
 
 impl AuthorId {
@@ -145,5 +145,13 @@ impl AuthorId {
     /// Returns the inner bytes.
     pub fn inner(&self) -> [u8; 32] {
         self.0
+    }
+}
+
+impl std::fmt::Debug for AuthorId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AuthorId")
+            .field(&hex::encode(&self.0))
+            .finish()
     }
 }

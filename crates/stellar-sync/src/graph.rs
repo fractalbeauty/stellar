@@ -263,13 +263,18 @@ impl SyncServerProtocol {
 #[cfg(test)]
 mod test {
     use crate::graph::{
-        SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
+        EntitySymbol, SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
     };
-    use hegel::{TestCase, generators as gs};
+    use hegel::{
+        Generator, TestCase, compose,
+        generators::{self as gs},
+        one_of,
+    };
+    use riblt::Symbol;
     use std::collections::{HashMap, HashSet};
     use stellar_graph::{
-        entity::{AuthorId, EntityId, EntityKind, Timestamp, Version},
-        store::{EntityData, EntityMetadataValue},
+        entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version},
+        store::{EntityAttributeValue, EntityData, EntityMetadataValue},
     };
     use uuid::Uuid;
 
@@ -293,6 +298,7 @@ mod test {
             "client = {client_entities:?}, server = {server_entities:?}"
         ));
 
+        // make empty entities to keep the test small
         let client_data = client_entities
             .iter()
             .copied()
@@ -385,9 +391,143 @@ mod test {
         assert!(count_server_message_difference <= 1);
     }
 
+    #[hegel::test]
+    fn symbol_hash_deterministic(tc: TestCase) {
+        let key0 = tc.draw(gs::integers());
+        let key1 = tc.draw(gs::integers());
+
+        let entity = tc.draw(gen_entity_id());
+        let data = tc.draw(gen_entity_data());
+
+        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
+        let symbol2 = EntitySymbol::new(entity, &data, key0, key1);
+
+        assert_eq!(symbol1, symbol2);
+    }
+
+    #[hegel::test]
+    fn symbol_hash_uses_deleted_version(tc: TestCase) {
+        let key0 = tc.draw(gs::integers());
+        let key1 = tc.draw(gs::integers());
+
+        let entity = tc.draw(gen_entity_id());
+        let data = tc.draw(gen_entity_data());
+
+        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
+
+        let mut new_data = data.clone();
+        new_data.metadata.deleted_version =
+            tc.draw(gen_version().filter(|version| *version != data.metadata.deleted_version));
+
+        tc.note(&format!("before / after = {data:?} / {new_data:?}"));
+
+        let symbol2 = EntitySymbol::new(entity, &new_data, key0, key1);
+
+        assert_ne!(
+            symbol1, symbol2,
+            "symbol should change when deleted version changes"
+        );
+    }
+
+    #[hegel::test]
+    fn symbol_hash_uses_attribute_version(tc: TestCase) {
+        let key0 = tc.draw(gs::integers());
+        let key1 = tc.draw(gs::integers());
+
+        let entity = tc.draw(gen_entity_id());
+        let data = tc.draw(gen_entity_data().filter(|data| !data.attributes.is_empty()));
+
+        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
+
+        let mut new_data = data.clone();
+        let attribute_kind = new_data.attributes.keys().next().copied().unwrap();
+        new_data
+            .attributes
+            .get_mut(&attribute_kind)
+            .unwrap()
+            .version =
+            tc.draw(gen_version().filter(|version| {
+                *version != data.attributes.get(&attribute_kind).unwrap().version
+            }));
+
+        tc.note(&format!("before / after = {data:?} / {new_data:?}"));
+
+        let symbol2 = EntitySymbol::new(entity, &new_data, key0, key1);
+
+        assert_ne!(
+            symbol1, symbol2,
+            "symbol should change when attribute version changes"
+        );
+    }
+
+    #[hegel::test]
+    fn symbol_xor(tc: TestCase) {
+        let key0 = tc.draw(gs::integers());
+        let key1 = tc.draw(gs::integers());
+
+        let entity = tc.draw(gen_entity_id());
+        let data = tc.draw(gen_entity_data());
+
+        let symbol = EntitySymbol::new(entity, &data, key0, key1);
+
+        let xor_0 = symbol.xor(&EntitySymbol::zero());
+        assert_eq!(xor_0, symbol);
+
+        let xor_self = symbol.xor(&symbol);
+        assert_eq!(xor_self, EntitySymbol::zero());
+
+        let xor_self_self = xor_self.xor(&symbol);
+        assert_eq!(xor_self_self, symbol);
+    }
+
+    #[hegel::composite]
+    fn gen_entity_data(tc: TestCase) -> EntityData {
+        EntityData {
+            metadata: EntityMetadataValue {
+                kind: EntityKind::new(tc.draw(gen_uuid())),
+                deleted: tc.draw(gs::booleans()),
+                deleted_version: tc.draw(gen_version()),
+            },
+            attributes: tc.draw(gs::hashmaps(
+                gen_attribute_kind(),
+                compose!(|tc| {
+                    EntityAttributeValue {
+                        value: tc.draw(one_of!(
+                            compose!(|tc| { Value::Text(tc.draw(gs::text())) }),
+                            compose!(|tc| { Value::Number(tc.draw(gs::floats())) }),
+                        )),
+                        version: tc.draw(gen_version()),
+                    }
+                }),
+            )),
+        }
+    }
+
+    #[hegel::composite]
+    fn gen_version(tc: TestCase) -> Version {
+        Version::new(
+            Timestamp::new(tc.draw(gs::integers())),
+            AuthorId::new(
+                tc.draw(gs::vecs(gs::integers()).min_size(32).max_size(32))
+                    .try_into()
+                    .unwrap(),
+            ),
+        )
+    }
+
+    #[hegel::composite]
+    fn gen_attribute_kind(tc: TestCase) -> AttributeKind {
+        AttributeKind::new(tc.draw(gen_uuid()))
+    }
+
     #[hegel::composite]
     fn gen_entity_id(tc: TestCase) -> EntityId {
-        EntityId::new(Uuid::from_u128(tc.draw(gs::integers().min_value(1))))
+        EntityId::new(tc.draw(gen_uuid()))
+    }
+
+    #[hegel::composite]
+    fn gen_uuid(tc: TestCase) -> Uuid {
+        Uuid::from_u128(tc.draw(gs::integers().min_value(1)))
     }
 
     fn make_empty_entity_data() -> EntityData {
