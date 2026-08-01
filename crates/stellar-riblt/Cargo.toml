@@ -1,0 +1,8 @@
+[package]
+name = "stellar-riblt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
