@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 // use std::simd::{u8x16, Simd};
 
 /// A symbol is an item in the set
-pub trait Symbol: Clone + Debug {
+pub trait Symbol: Debug + Clone {
     const BYTE_ARRAY_LENGTH: usize;
 
     /// The Symbol trait only requires that the type can be encoded to a fixed number of bytes.
@@ -36,7 +36,7 @@ pub trait Symbol: Clone + Debug {
 /// The type T is used by implemented methods to know what type of Symbol is encoded in the CodedSymbol.
 ///
 /// A CodedSymbol can be peeled when the count is 1 or -1 and the hash matches
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodedSymbol<T: Symbol> {
     _marker: PhantomData<T>,
     pub sum: Vec<u8>,
@@ -49,14 +49,14 @@ pub struct CodedSymbol<T: Symbol> {
 /// This enum acts as a wrapper to keep track of if the symbol was local or remote.
 ///
 /// It is very common that the symbol is not peelable, so this enum also has the NotPeelable variant.
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PeelableResult<T: Symbol> {
     Local(T),
     Remote(T),
     NotPeelable,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Direction {
     Add,
     Remove,

@@ -19,7 +19,7 @@ pub const BLOCK_SIZE: usize = 1024;
 /// The managed version will generate coded symbols as needed (for efficiencey, it will generate a 'block' of coded symbols at a time)
 /// The unmanaged version will be used whereever we don't have access to the set
 ///
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RatelessIBLT<T, I>
 where
     T: symbol::Symbol,
@@ -227,6 +227,7 @@ where
 ///
 /// It will also give us the symbols that were in the local set but not in the remote set.
 /// We could send these to the remote server to correct their set.
+#[derive(Debug)]
 pub struct UnmanagedRatelessIBLT<T>
 where
     T: symbol::Symbol,

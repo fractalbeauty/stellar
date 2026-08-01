@@ -13,7 +13,7 @@ pub mod test_helpers {
 
     // Example implementation of a struct that implements the 'Symbol' trait
     // This is used in tests in other modules
-    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct SimpleSymbol {
         pub value: u64,
     }

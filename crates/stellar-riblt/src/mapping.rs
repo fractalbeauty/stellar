@@ -6,6 +6,7 @@ use std::f64;
 /// The first index is always 0.
 ///
 /// I have yet to thoroughly test this is stable across different platforms/CPUs/machines.
+#[derive(Debug)]
 pub struct RandomMapping {
     prng: u64,
     last_idx: u64,
