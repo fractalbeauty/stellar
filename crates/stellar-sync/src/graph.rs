@@ -1,17 +1,302 @@
+use anyhow::Context;
+use futures::{Sink, SinkExt as _, Stream, StreamExt};
+use iroh::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::Hasher,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 use stellar_graph::{
     entity::{EntityId, Version},
     store::EntityData,
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
-use tokio_util::bytes::Bytes;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio_util::{
+    bytes::Bytes,
+    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
+};
 use tracing::warn;
 use uuid::Uuid;
+
+use crate::protocol::StreamHeader;
+
+/// Handle for a peer sync client task
+pub struct PeerSyncClientTask {}
+
+impl PeerSyncClientTask {
+    pub fn spawn(sync_manager: SyncManager, connection: Connection) -> Self {
+        tokio::spawn({
+            async move {
+                // let entities = HashMap::from([(
+                //     stellar_graph::entity::EntityId::random(),
+                //     stellar_graph::store::EntityData {
+                //         metadata: stellar_graph::store::EntityMetadataValue {
+                //             kind: stellar_graph::entity::EntityKind::random(),
+                //             deleted: false,
+                //             deleted_version: stellar_graph::entity::Version::new(
+                //                 stellar_graph::entity::Timestamp::now(),
+                //                 stellar_graph::entity::AuthorId::new([0u8; 32]),
+                //             ),
+                //         },
+                //         attributes: HashMap::new(),
+                //     },
+                // )]);
+                let entities = HashMap::new();
+                let protocol = Arc::new(Mutex::new(SyncClientProtocol::new(entities)));
+
+                let result = Self::run(protocol, sync_manager, connection).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer sync client task errored: {error}");
+                } else {
+                    tracing::debug!("Peer sync client task finished");
+                }
+            }
+        });
+
+        PeerSyncClientTask {}
+    }
+
+    async fn run(
+        protocol: Arc<Mutex<SyncClientProtocol>>,
+        sync_manager: SyncManager,
+        connection: Connection,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("PeerSyncClient starting");
+
+        let _permit = sync_manager
+            .acquire()
+            .await
+            .context("Failed to acquire sync permit")?;
+
+        let (tx, rx) = connection.open_bi().await?;
+
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+
+        let stream_header = StreamHeader::encode(&StreamHeader::Sync);
+        tx.send(stream_header)
+            .await
+            .context("Failed to send stream header")?;
+
+        let mut tx = tx.with(|message| {
+            futures::future::ready(Ok::<_, std::io::Error>(SyncClientMessage::encode(&message)))
+        });
+        let mut rx = rx.map(|result| match result {
+            Ok(bytes) => SyncServerMessage::decode(&bytes),
+            Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+        });
+
+        let tx_future = {
+            let protocol = protocol.clone();
+            async move {
+                loop {
+                    let message = {
+                        let mut protocol = protocol.lock().map_err(|e| {
+                            anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}")
+                        })?;
+                        if protocol.is_finished() {
+                            break;
+                        }
+                        protocol.poll_message()
+                    };
+
+                    if let Some(message) = message {
+                        tracing::trace!("PeerSyncClient sending {message:?}");
+                        tx.send(message).await.context("Failed to send")?;
+                    } else {
+                        tracing::trace!("PeerSyncClient nothing to send");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+
+                Ok::<(), anyhow::Error>(())
+            }
+        };
+
+        let rx_future = {
+            let protocol = protocol.clone();
+            async move {
+                while let Some(message) = rx.next().await {
+                    let message = message.context("Failed to receive")?;
+                    tracing::trace!("PeerSyncClient received {message:?}");
+
+                    let mut protocol = protocol
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}"))?;
+                    protocol.handle_message(message);
+                    if protocol.is_finished() {
+                        break;
+                    }
+                }
+
+                Ok::<(), anyhow::Error>(())
+            }
+        };
+
+        let (tx_result, rx_result) = tokio::join!(tx_future, rx_future);
+        tx_result?;
+        rx_result?;
+
+        let Ok(protocol) = Arc::try_unwrap(protocol) else {
+            anyhow::bail!("Failed to unwrap SyncClientProtocol Arc");
+        };
+        let protocol = protocol
+            .into_inner()
+            .map_err(|e| anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}"))?;
+
+        let result = protocol.finish();
+
+        // TODO: apply changes
+
+        tracing::debug!("PeerSyncClient finished");
+
+        Ok(())
+    }
+}
+
+/// Handle for a peer sync server task
+pub struct PeerSyncServerTask {}
+
+impl PeerSyncServerTask {
+    pub fn spawn(
+        sync_manager: SyncManager,
+        tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
+        rx: Pin<Box<dyn Stream<Item = Result<SyncClientMessage, anyhow::Error>> + Send>>,
+    ) -> Self {
+        tokio::spawn({
+            async move {
+                // TODO: entities
+                let protocol = Arc::new(Mutex::new(SyncServerProtocol::new(HashMap::new())));
+
+                let result = Self::run(protocol, sync_manager, tx, rx).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer sync server task errored: {error}");
+                } else {
+                    tracing::debug!("Peer sync server task finished");
+                }
+            }
+        });
+
+        PeerSyncServerTask {}
+    }
+
+    async fn run(
+        protocol: Arc<Mutex<SyncServerProtocol>>,
+        sync_manager: SyncManager,
+        mut tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
+        mut rx: Pin<Box<dyn Stream<Item = Result<SyncClientMessage, anyhow::Error>> + Send>>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::info!("PeerSyncServer starting");
+
+        let _permit = sync_manager
+            .acquire()
+            .await
+            .context("Failed to acquire sync permit")?;
+
+        let tx_future = {
+            let protocol = protocol.clone();
+            async move {
+                loop {
+                    let message = {
+                        let mut protocol = protocol.lock().map_err(|e| {
+                            anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}")
+                        })?;
+                        if protocol.is_finished() {
+                            break;
+                        }
+                        protocol.poll_message()
+                    };
+
+                    if let Some(message) = message {
+                        tracing::trace!("PeerSyncServer sending {message:?}");
+                        tx.send(message).await.context("Failed to send")?;
+                    } else {
+                        tracing::trace!("PeerSyncServer nothing to send");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+
+                Ok::<(), anyhow::Error>(())
+            }
+        };
+
+        let rx_future = {
+            let protocol = protocol.clone();
+            async move {
+                while let Some(message) = rx.next().await {
+                    let message = message.context("Failed to receive")?;
+                    tracing::trace!("PeerSyncServer received {message:?}");
+
+                    let mut protocol = protocol
+                        .lock()
+                        .map_err(|e| anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}"))?;
+                    protocol.handle_message(message);
+                    if protocol.is_finished() {
+                        break;
+                    }
+                }
+
+                Ok::<(), anyhow::Error>(())
+            }
+        };
+
+        let (tx_result, rx_result) = tokio::join!(tx_future, rx_future);
+        tx_result?;
+        rx_result?;
+
+        let Ok(protocol) = Arc::try_unwrap(protocol) else {
+            anyhow::bail!("Failed to unwrap SyncServerProtocol Arc");
+        };
+        let protocol = protocol
+            .into_inner()
+            .map_err(|e| anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}"))?;
+
+        let result = protocol.finish();
+
+        // TODO: apply changes
+
+        tracing::debug!("PeerSyncServer finished");
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncManager {
+    semaphore: Arc<Semaphore>,
+}
+
+impl SyncManager {
+    pub fn new() -> Self {
+        SyncManager {
+            semaphore: Arc::new(Semaphore::new(1)),
+        }
+    }
+
+    /// Acquires a permit to sync.
+    async fn acquire(&self) -> Result<SyncPermit, anyhow::Error> {
+        let permit = self.semaphore.clone().acquire_owned().await?;
+        Ok(SyncPermit { inner: permit })
+    }
+}
+
+impl Default for SyncManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct SyncPermit {
+    #[allow(unused)]
+    inner: OwnedSemaphorePermit,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EntitySymbol {
