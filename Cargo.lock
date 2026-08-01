@@ -4425,6 +4425,7 @@ dependencies = [
  "futures",
  "hegeltest",
  "iroh",
+ "postcard",
  "reqwest",
  "serde",
  "siphasher 1.0.3",

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -8,6 +9,7 @@ use stellar_graph::{
     store::EntityData,
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
+use tokio_util::bytes::Bytes;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -76,10 +78,12 @@ pub struct SyncClientProtocol {
     entities: HashMap<EntityId, EntityData>,
     riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
     next_index: usize,
+    sent_all: bool,
     outbox: VecDeque<SyncClientMessage>,
     result: Option<HashMap<EntityId, EntityData>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SyncClientMessage {
     CodedSymbols {
         coded_symbols: Vec<CodedSymbol<EntitySymbol>>,
@@ -104,6 +108,7 @@ impl SyncClientProtocol {
             entities,
             riblt,
             next_index: 0,
+            sent_all: false,
             outbox: VecDeque::new(),
             result: None,
         }
@@ -140,20 +145,37 @@ impl SyncClientProtocol {
         }
 
         // don't produce symbols if already done
-        if self.result.is_some() {
+        if self.result.is_some() || self.sent_all {
             return None;
         }
 
         // produce symbols
-        let coded_symbols = (self.next_index..self.next_index + Self::BATCH_CODED_SYMBOLS)
-            .map(|index| self.riblt.get_coded_symbol(index))
-            .collect::<Vec<_>>();
-        self.next_index += Self::BATCH_CODED_SYMBOLS;
-        Some(SyncClientMessage::CodedSymbols { coded_symbols })
+        let mut coded_symbols = Vec::new();
+        for _ in 0..Self::BATCH_CODED_SYMBOLS {
+            let index = self.next_index;
+            self.next_index += 1;
+
+            let coded_symbol = self.riblt.get_coded_symbol(index);
+            if coded_symbol.is_empty() {
+                // TODO: this is not actually correct, could be empty without being done
+                self.sent_all = true;
+            }
+            coded_symbols.push(coded_symbol);
+
+            if self.sent_all {
+                break;
+            }
+        }
+
+        if !coded_symbols.is_empty() {
+            Some(SyncClientMessage::CodedSymbols { coded_symbols })
+        } else {
+            None
+        }
     }
 
     pub fn is_finished(&self) -> bool {
-        self.result.is_some()
+        self.result.is_some() && self.outbox.is_empty()
     }
 
     /// Finishes syncing, returning the difference to apply locally.
@@ -165,14 +187,29 @@ impl SyncClientProtocol {
     }
 }
 
+impl SyncClientMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+}
+
 pub struct SyncServerProtocol {
     entities: HashMap<EntityId, EntityData>,
     riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
     received: UnmanagedRatelessIBLT<EntitySymbol>,
+    sent_difference: bool,
     outbox: VecDeque<SyncServerMessage>,
     result: Option<HashMap<EntityId, EntityData>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub enum SyncServerMessage {
     Difference {
         client_difference: HashMap<EntityId, EntityData>,
@@ -194,6 +231,7 @@ impl SyncServerProtocol {
             riblt,
             received: UnmanagedRatelessIBLT::new(),
             outbox: VecDeque::new(),
+            sent_difference: false,
             result: None,
         }
     }
@@ -201,6 +239,10 @@ impl SyncServerProtocol {
     pub fn handle_message(&mut self, message: SyncClientMessage) {
         match message {
             SyncClientMessage::CodedSymbols { coded_symbols } => {
+                if self.sent_difference {
+                    return;
+                }
+
                 for coded_symbol in coded_symbols {
                     self.received.add_coded_symbol(&coded_symbol);
                 }
@@ -242,6 +284,7 @@ impl SyncServerProtocol {
                         client_difference,
                         server_missing,
                     });
+                    self.sent_difference = true;
                 }
             }
             SyncClientMessage::Difference { server_difference } => {
@@ -255,7 +298,7 @@ impl SyncServerProtocol {
     }
 
     pub fn is_finished(&self) -> bool {
-        self.result.is_some()
+        self.result.is_some() && self.outbox.is_empty()
     }
 
     /// Finishes syncing, returning the difference to apply locally.
@@ -264,6 +307,19 @@ impl SyncServerProtocol {
     pub fn finish(self) -> HashMap<EntityId, EntityData> {
         debug_assert!(self.is_finished());
         self.result.expect("should be finished")
+    }
+}
+
+impl SyncServerMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
     }
 }
 

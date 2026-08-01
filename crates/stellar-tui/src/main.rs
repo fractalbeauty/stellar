@@ -4,7 +4,7 @@ use stellar::core::Core;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt::init();
+    // tracing_subscriber::fmt::init();
 
     let core = Core::spawn().await.expect("Should spawn core");
 
