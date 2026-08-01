@@ -4,7 +4,7 @@ mod symbol;
 
 pub use encoder::{Iterable, RatelessIBLT, UnmanagedRatelessIBLT};
 pub use mapping::RandomMapping;
-pub use symbol::{CodedSymbol, PeelableResult::*, Symbol};
+pub use symbol::{CodedSymbol, PeelableResult, Symbol};
 
 #[cfg(test)]
 pub mod test_helpers {

@@ -1,14 +1,13 @@
-use riblt::CodedSymbol;
 use siphasher::sip::SipHasher;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     hash::Hasher,
-    iter,
 };
 use stellar_graph::{
     entity::{EntityId, Version},
     store::EntityData,
 };
+use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -41,20 +40,22 @@ impl EntitySymbol {
     }
 }
 
-impl riblt::Symbol for EntitySymbol {
-    fn zero() -> Self {
-        Self {
-            id: EntityId::new(Uuid::nil()),
-            hash: 0,
-        }
+impl stellar_riblt::Symbol for EntitySymbol {
+    const BYTE_ARRAY_LENGTH: usize = 24;
+
+    fn encode_to_bytes(&self) -> Vec<u8> {
+        let mut buffer = vec![0u8; Self::BYTE_ARRAY_LENGTH];
+        buffer[0..16].copy_from_slice(&self.id.inner().as_u128().to_le_bytes());
+        buffer[16..24].copy_from_slice(&self.hash.to_le_bytes());
+        buffer
     }
 
-    fn xor(&self, other: &Self) -> Self {
+    fn decode_from_bytes(bytes: &[u8]) -> Self {
+        let id = u128::from_le_bytes(bytes[0..16].try_into().unwrap());
+        let hash = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
         Self {
-            id: EntityId::new(Uuid::from_u128(
-                self.id.inner().as_u128() ^ other.id.inner().as_u128(),
-            )),
-            hash: self.hash ^ other.hash,
+            id: EntityId::new(Uuid::from_u128(id)),
+            hash,
         }
     }
 
@@ -73,7 +74,8 @@ fn write_version(hasher: &mut SipHasher, version: Version) {
 
 pub struct SyncClientProtocol {
     entities: HashMap<EntityId, EntityData>,
-    encoder: riblt::Encoder<EntitySymbol>,
+    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
+    next_index: usize,
     outbox: VecDeque<SyncClientMessage>,
     result: Option<HashMap<EntityId, EntityData>>,
 }
@@ -93,16 +95,15 @@ impl SyncClientProtocol {
     pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
         let symbols = entities
             .iter()
-            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456));
+            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
+            .collect::<Vec<_>>();
 
-        let mut encoder = riblt::Encoder::new();
-        for symbol in symbols {
-            encoder.add_symbol(&symbol);
-        }
+        let riblt = RatelessIBLT::new(symbols);
 
         Self {
             entities,
-            encoder,
+            riblt,
+            next_index: 0,
             outbox: VecDeque::new(),
             result: None,
         }
@@ -144,9 +145,10 @@ impl SyncClientProtocol {
         }
 
         // produce symbols
-        let coded_symbols = iter::repeat_with(|| self.encoder.produce_next_coded_symbol())
-            .take(Self::BATCH_CODED_SYMBOLS)
+        let coded_symbols = (self.next_index..self.next_index + Self::BATCH_CODED_SYMBOLS)
+            .map(|index| self.riblt.get_coded_symbol(index))
             .collect::<Vec<_>>();
+        self.next_index += Self::BATCH_CODED_SYMBOLS;
         Some(SyncClientMessage::CodedSymbols { coded_symbols })
     }
 
@@ -165,7 +167,8 @@ impl SyncClientProtocol {
 
 pub struct SyncServerProtocol {
     entities: HashMap<EntityId, EntityData>,
-    decoder: riblt::Decoder<EntitySymbol>,
+    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
+    received: UnmanagedRatelessIBLT<EntitySymbol>,
     outbox: VecDeque<SyncServerMessage>,
     result: Option<HashMap<EntityId, EntityData>>,
 }
@@ -181,16 +184,15 @@ impl SyncServerProtocol {
     pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
         let symbols = entities
             .iter()
-            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456));
+            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
+            .collect::<Vec<_>>();
 
-        let mut decoder = riblt::Decoder::new();
-        for symbol in symbols {
-            decoder.add_symbol(&symbol);
-        }
+        let riblt = RatelessIBLT::new(symbols);
 
         Self {
             entities,
-            decoder,
+            riblt,
+            received: UnmanagedRatelessIBLT::new(),
             outbox: VecDeque::new(),
             result: None,
         }
@@ -200,23 +202,28 @@ impl SyncServerProtocol {
         match message {
             SyncClientMessage::CodedSymbols { coded_symbols } => {
                 for coded_symbol in coded_symbols {
-                    self.decoder.add_coded_symbol(&coded_symbol);
+                    self.received.add_coded_symbol(&coded_symbol);
                 }
 
-                let _ = self.decoder.try_decode(); // TODO
-                if self.decoder.decoded() {
-                    let server_missing = self
-                        .decoder
-                        .get_remote_symbols()
-                        .into_iter()
-                        .map(|hashed| hashed.symbol.id)
-                        .collect::<HashSet<_>>();
-                    let client_missing = self
-                        .decoder
-                        .get_local_symbols()
-                        .into_iter()
-                        .map(|hashed| hashed.symbol.id)
-                        .collect::<HashSet<_>>();
+                let mut collapsed = self.riblt.collapse(&self.received);
+                let peeled = collapsed.peel_all_symbols();
+                if collapsed.is_empty() {
+                    let mut client_missing = HashSet::new();
+                    let mut server_missing = HashSet::new();
+                    for symbol in peeled {
+                        match symbol {
+                            PeelableResult::Local(symbol) => {
+                                client_missing.insert(symbol.id);
+                            }
+                            PeelableResult::Remote(symbol) => {
+                                server_missing.insert(symbol.id);
+                            }
+                            PeelableResult::NotPeelable => {
+                                // TODO: update stellar-riblt to remove this case
+                                unreachable!("peel_all_symbols only returns peeled symbols")
+                            }
+                        }
+                    }
 
                     let client_difference = client_missing
                         .into_iter()
@@ -269,7 +276,6 @@ mod test {
         Generator, TestCase,
         generators::{self as gs},
     };
-    use riblt::Symbol;
     use std::collections::{HashMap, HashSet};
     use stellar_graph::{
         entity::{
@@ -278,6 +284,7 @@ mod test {
         },
         store::{EntityData, EntityMetadataValue, hegel::gen_entity_data},
     };
+    use stellar_riblt::Symbol;
     use uuid::Uuid;
 
     #[hegel::test]
@@ -351,11 +358,8 @@ mod test {
         for _ in 0..max_iterations {
             let client_message = client.poll_message();
             if let Some(message) = client_message {
-                match &message {
-                    SyncClientMessage::Difference { .. } => {
-                        count_client_message_difference += 1;
-                    }
-                    _ => {}
+                if let SyncClientMessage::Difference { .. } = &message {
+                    count_client_message_difference += 1;
                 }
 
                 server.handle_message(message);
@@ -463,7 +467,7 @@ mod test {
     }
 
     #[hegel::test]
-    fn symbol_xor(tc: TestCase) {
+    fn symbol_encode_decode_roundtrip(tc: TestCase) {
         let key0 = tc.draw(gs::integers());
         let key1 = tc.draw(gs::integers());
 
@@ -472,14 +476,8 @@ mod test {
 
         let symbol = EntitySymbol::new(entity, &data, key0, key1);
 
-        let xor_0 = symbol.xor(&EntitySymbol::zero());
-        assert_eq!(xor_0, symbol);
-
-        let xor_self = symbol.xor(&symbol);
-        assert_eq!(xor_self, EntitySymbol::zero());
-
-        let xor_self_self = xor_self.xor(&symbol);
-        assert_eq!(xor_self_self, symbol);
+        let decoded = EntitySymbol::decode_from_bytes(&symbol.encode_to_bytes());
+        assert_eq!(decoded, symbol);
     }
 
     fn make_empty_entity_data() -> EntityData {
