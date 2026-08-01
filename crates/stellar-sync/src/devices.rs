@@ -26,6 +26,10 @@ pub enum DevicesMessage {
     StartDeviceCodeFlow {
         verification_uri_complete_tx: oneshot::Sender<String>,
     },
+    AddDevice {
+        endpoint_id: EndpointId,
+        name: Option<String>,
+    },
 }
 
 impl DevicesTask {
@@ -48,6 +52,9 @@ impl DevicesTask {
 
                     event_tx,
                     event_rx,
+
+                    added_devices: Vec::new(),
+                    auth_devices: Vec::new(),
 
                     auth: None,
                 };
@@ -84,6 +91,18 @@ impl DevicesTask {
 
         Ok(verification_uri_complete_rx)
     }
+
+    pub fn add_device(
+        &self,
+        endpoint_id: EndpointId,
+        name: Option<String>,
+    ) -> Result<(), anyhow::Error> {
+        self.message_tx
+            .send(DevicesMessage::AddDevice { endpoint_id, name })
+            .map_err(|_| anyhow::anyhow!("Failed to send, devices task has been dropped"))?;
+
+        Ok(())
+    }
 }
 
 /// Owned state for the devices task
@@ -95,6 +114,9 @@ struct Devices {
 
     event_tx: mpsc::UnboundedSender<DevicesEvent>,
     event_rx: mpsc::UnboundedReceiver<DevicesEvent>,
+
+    added_devices: Vec<Device>,
+    auth_devices: Vec<Device>,
 
     auth: Option<AuthTask>,
 }
@@ -115,6 +137,7 @@ pub struct DeviceSession {
 /// Internal events from child tasks to the devices task
 enum DevicesEvent {
     DeviceCodeFlowFinished { access_token: String },
+    AuthDevicesChanged { auth_devices: Vec<Device> },
 }
 
 impl Devices {
@@ -175,6 +198,14 @@ impl Devices {
                     }
                 });
             }
+            DevicesMessage::AddDevice { endpoint_id, name } => {
+                self.added_devices.push(Device {
+                    endpoint_id,
+                    name,
+                    session: None,
+                });
+                self.notify_devices()?;
+            }
         }
 
         Ok(())
@@ -189,12 +220,27 @@ impl Devices {
 
                 self.auth = Some(spawn_auth_task(
                     self.endpoint_id_rx.clone(),
-                    self.devices_tx.clone(),
+                    self.event_tx.clone(),
                     access_token,
                 ));
             }
+            DevicesEvent::AuthDevicesChanged { auth_devices } => {
+                self.auth_devices = auth_devices;
+                self.notify_devices()?;
+            }
         }
 
+        Ok(())
+    }
+
+    fn notify_devices(&self) -> Result<(), anyhow::Error> {
+        let all_devices = self
+            .added_devices
+            .iter()
+            .chain(self.auth_devices.iter())
+            .cloned()
+            .collect();
+        self.devices_tx.send(all_devices)?;
         Ok(())
     }
 }
@@ -207,17 +253,17 @@ struct AuthTask {
 
 fn spawn_auth_task(
     endpoint_id: watch::Receiver<Option<EndpointId>>,
-    devices_tx: watch::Sender<Vec<Device>>,
+    event_tx: mpsc::UnboundedSender<DevicesEvent>,
     access_token: String,
 ) -> AuthTask {
     let cancellation_token = CancellationToken::new();
 
     tokio::spawn({
-        let devices_tx = devices_tx.clone();
+        let event_tx = event_tx.clone();
         let cancellation_token = cancellation_token.clone();
         async move {
             if let Err(error) =
-                run_auth_task(endpoint_id, access_token, devices_tx, cancellation_token).await
+                run_auth_task(endpoint_id, access_token, event_tx, cancellation_token).await
             {
                 tracing::error!("Auth task errored: {:?}", error);
             } else {
@@ -232,7 +278,7 @@ fn spawn_auth_task(
 async fn run_auth_task(
     endpoint_id: watch::Receiver<Option<EndpointId>>,
     access_token: String,
-    devices_tx: watch::Sender<Vec<Device>>,
+    event_tx: mpsc::UnboundedSender<DevicesEvent>,
     cancellation_token: CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let base_url = Url::parse("https://sorrel.trillia.net").unwrap();
@@ -288,7 +334,9 @@ async fn run_auth_task(
                             })
                             .collect::<Vec<_>>();
 
-                        let _ = devices_tx.send(new_devices);
+                        let _ = event_tx.send(DevicesEvent::AuthDevicesChanged {
+                            auth_devices: new_devices,
+                        });
 
                         tracing::debug!("Refreshed devices");
                     }

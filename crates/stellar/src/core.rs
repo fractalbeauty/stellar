@@ -3,8 +3,8 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 use stellar_log::LogGuard;
-use stellar_sync::devices::DevicesTask;
 use stellar_sync::peers::PeersTask;
+use stellar_sync::{EndpointId, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -70,6 +70,16 @@ impl Core {
             .map_err(|_dropped| core_error!("Device code flow failed to start, sender dropped"))?;
 
         Ok(verification_uri_complete)
+    }
+
+    pub fn add_device(&self, endpoint_id: String, name: Option<String>) -> Result<(), CoreError> {
+        let endpoint_id = endpoint_id
+            .parse::<EndpointId>()
+            .map_err(|_| core_error!("Failed to parse endpoint ID"))?;
+
+        self.devices_task.add_device(endpoint_id, name)?;
+
+        Ok(())
     }
 }
 
