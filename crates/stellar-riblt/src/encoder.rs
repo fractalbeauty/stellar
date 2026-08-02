@@ -70,8 +70,7 @@ where
             None
         } else {
             self.last_index += 1;
-            let it = Some(self.irblt.get_coded_symbol(self.last_index - 1));
-            it
+            Some(self.irblt.get_coded_symbol(self.last_index - 1))
         }
     }
 }
@@ -88,8 +87,7 @@ where
             None
         } else {
             self.last_index += 1;
-            let it = Some(self.irblt.get_coded_symbol_ref(self.last_index - 1));
-            it
+            Some(self.irblt.get_coded_symbol_ref(self.last_index - 1))
         }
     }
 }
@@ -159,11 +157,10 @@ where
     ///
     /// It is the responsibility of the calling code to create a new RatelessIBLT if the set changes.
     pub fn new(set_iterator: I) -> Self {
-        let riblt = RatelessIBLT {
+        RatelessIBLT {
             coded_symbols: Vec::new(),
             set_iterator,
-        };
-        riblt
+        }
     }
 
     /// Join two vectors of codedSymbols together produced from two distinct sets.
@@ -253,9 +250,9 @@ where
     T: symbol::Symbol,
 {
     pub fn new() -> Self {
-        return UnmanagedRatelessIBLT {
+        UnmanagedRatelessIBLT {
             coded_symbols: Vec::new(),
-        };
+        }
     }
 
     /// Join two vectors of codedSymbols together produced from two distinct sets.
@@ -304,10 +301,19 @@ where
     }
 }
 
+impl<T> Default for UnmanagedRatelessIBLT<T>
+where
+    T: symbol::Symbol,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // a function that takes a set that can be iterted over and an offset and returns a block of coded symbols
 
 pub fn peel_one_symbol<T: symbol::Symbol>(
-    block: &mut Vec<symbol::CodedSymbol<T>>,
+    block: &mut [symbol::CodedSymbol<T>],
 ) -> symbol::PeelableResult<T> {
     if block.is_empty() {
         return symbol::PeelableResult::NotPeelable;
@@ -332,7 +338,7 @@ pub fn peel_one_symbol<T: symbol::Symbol>(
 }
 
 pub fn remove_symbol_from_block<T: symbol::Symbol>(
-    block: &mut Vec<symbol::CodedSymbol<T>>,
+    block: &mut [symbol::CodedSymbol<T>],
     symbol_result: symbol::PeelableResult<T>,
 ) {
     let direction;
@@ -354,15 +360,15 @@ pub fn remove_symbol_from_block<T: symbol::Symbol>(
 
     let block_len = block.len();
 
-    for i in item_mapping.take_while(|&x| (x as usize) < block_len) {
-        block[i as usize].apply(&symbol, direction.clone());
+    for i in item_mapping.take_while(|&x| x < block_len) {
+        block[i].apply(&symbol, direction.clone());
     }
 }
 
 // used to combine two blocks of coded symbols generated from two distinct sets
 pub fn combine<T: symbol::Symbol>(
-    block_a: &Vec<symbol::CodedSymbol<T>>,
-    block_b: &Vec<symbol::CodedSymbol<T>>,
+    block_a: &[symbol::CodedSymbol<T>],
+    block_b: &[symbol::CodedSymbol<T>],
 ) -> UnmanagedRatelessIBLT<T> {
     let mut combined_block = Vec::new();
 
@@ -376,8 +382,8 @@ pub fn combine<T: symbol::Symbol>(
 
 // A collapsed block should effectively contain the difference between two blocks
 pub fn collapse<T: symbol::Symbol>(
-    block_local: &Vec<symbol::CodedSymbol<T>>,
-    block_remote: &Vec<symbol::CodedSymbol<T>>,
+    block_local: &[symbol::CodedSymbol<T>],
+    block_remote: &[symbol::CodedSymbol<T>],
 ) -> UnmanagedRatelessIBLT<T> {
     let mut combined_block = Vec::new();
 
@@ -389,7 +395,7 @@ pub fn collapse<T: symbol::Symbol>(
     }
 }
 
-pub fn is_empty<T: symbol::Symbol>(block: &Vec<symbol::CodedSymbol<T>>) -> bool {
+pub fn is_empty<T: symbol::Symbol>(block: &[symbol::CodedSymbol<T>]) -> bool {
     block.iter().all(|x| x.is_empty())
 }
 

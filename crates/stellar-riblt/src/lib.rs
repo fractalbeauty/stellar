@@ -25,7 +25,7 @@ pub mod test_helpers {
             buffer[0..8].copy_from_slice(&self.value.to_le_bytes());
             buffer
         }
-        fn decode_from_bytes(buffer: &Vec<u8>) -> Self {
+        fn decode_from_bytes(buffer: &[u8]) -> Self {
             let value = u64::from_le_bytes(buffer[0..8].try_into().unwrap());
             SimpleSymbol { value }
         }

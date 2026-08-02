@@ -34,7 +34,7 @@ impl Iterator for RandomMapping {
 
 impl RandomMapping {
     pub fn new<T: Symbol>(given_symbol: &T) -> Self {
-        let prng = given_symbol.hash_();
+        let prng = given_symbol.hash();
         RandomMapping { prng, last_idx: 0 }
     }
 }

@@ -12,11 +12,11 @@ pub trait Symbol: Clone + Debug {
     /// You just need to know the size of the byte array that will be produced and then set BYTE_ARRAY_LENGTH to match.
     /// I recommend using a serialization library like bincode.
     fn encode_to_bytes(&self) -> Vec<u8>;
-    fn decode_from_bytes(bytes: &Vec<u8>) -> Self;
+    fn decode_from_bytes(bytes: &[u8]) -> Self;
 
-    /// hash_() calculates the hash of the symbol.
+    /// hash() calculates the hash of the symbol.
     /// This implementation can be overridden if needed.
-    fn hash_(&self) -> u64 {
+    fn hash(&self) -> u64 {
         let encoded = self.encode_to_bytes();
         let mut hasher = DefaultHasher::new();
         encoded.hash(&mut hasher);
@@ -109,7 +109,7 @@ impl<T: Symbol> CodedSymbol<T> {
         //     .map(|(x, y)| x ^ y)
         //     .collect();
 
-        self.hash ^= s.hash_();
+        self.hash ^= s.hash();
         match direction {
             Direction::Add => self.count += 1,
             Direction::Remove => self.count -= 1,
@@ -180,12 +180,7 @@ impl<T: Symbol> CodedSymbol<T> {
     /// symbol. It could be the xor of two local and one remote symbols. This is why we also
     /// check the hash.
     pub fn is_peelable(&self) -> bool {
-        if self.count == 1 || self.count == -1 {
-            if self.hash == T::decode_from_bytes(&self.sum).hash_() {
-                return true;
-            }
-        }
-        return false;
+        (self.count == 1 || self.count == -1) && self.hash == T::decode_from_bytes(&self.sum).hash()
     }
 
     /// Peel extracts a symbol from the CodedSymbol (if possible) and returns it in a PeelableResult
@@ -230,6 +225,12 @@ impl<T: Symbol> CodedSymbol<T> {
             return false;
         }
         true
+    }
+}
+
+impl<T: Symbol> Default for CodedSymbol<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
