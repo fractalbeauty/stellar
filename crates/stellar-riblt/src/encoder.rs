@@ -1,10 +1,10 @@
 use std::ops::Deref;
 
+use crate::CodedSymbol;
 use crate::mapping;
 use crate::symbol;
-use crate::CodedSymbol;
 
-/// Constant for block size. 
+/// Constant for block size.
 /// As it can be computationally expensive to iterate over the set, it makes sense to generate
 /// a 'block' of coded symbols at a time.
 ///
@@ -27,48 +27,42 @@ where
 {
     pub coded_symbols: Vec<symbol::CodedSymbol<T>>,
     set_iterator: I,
-
 }
 
-
 pub trait Iterable {
-    type Item<'a>: 'a where Self: 'a;
+    type Item<'a>: 'a
+    where
+        Self: 'a;
     fn next<'a>(&'a mut self) -> Option<Self::Item<'a>>;
 }
 
-
- impl<T, I> IntoIterator for RatelessIBLT<T, I>
- where
-     T: symbol::Symbol,
-     I: IntoIterator<Item = T> + Clone,
- {
-
-     type Item = CodedSymbol<T>;
-     type IntoIter = IntoIter<T,I>;
- 
-     fn into_iter(self) -> IntoIter<T,I> {
-        IntoIter {
-            last_index: 0,
-            irblt: Box::new(self)
-        }
-     }
- }
-
-
-pub struct IntoIter<
-    T: symbol::Symbol,
-    I: IntoIterator<Item = T> + Clone >
-    {
-        irblt: Box<RatelessIBLT<T,I>>,
-        last_index: usize,
-    }
-
-impl<T,I> Iterator for IntoIter<T,I>
+impl<T, I> IntoIterator for RatelessIBLT<T, I>
 where
     T: symbol::Symbol,
     I: IntoIterator<Item = T> + Clone,
 {
-    type Item=CodedSymbol<T>;
+    type Item = CodedSymbol<T>;
+    type IntoIter = IntoIter<T, I>;
+
+    fn into_iter(self) -> IntoIter<T, I> {
+        IntoIter {
+            last_index: 0,
+            irblt: Box::new(self),
+        }
+    }
+}
+
+pub struct IntoIter<T: symbol::Symbol, I: IntoIterator<Item = T> + Clone> {
+    irblt: Box<RatelessIBLT<T, I>>,
+    last_index: usize,
+}
+
+impl<T, I> Iterator for IntoIter<T, I>
+where
+    T: symbol::Symbol,
+    I: IntoIterator<Item = T> + Clone,
+{
+    type Item = CodedSymbol<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.last_index > self.irblt.set_iterator.clone().into_iter().count() {
@@ -76,17 +70,17 @@ where
             None
         } else {
             self.last_index += 1;
-            let it= Some(self.irblt.get_coded_symbol(self.last_index-1));
+            let it = Some(self.irblt.get_coded_symbol(self.last_index - 1));
             it
         }
     }
 }
-impl<T,I> Iterable for IntoIter<T,I>
+impl<T, I> Iterable for IntoIter<T, I>
 where
     for<'a> T: 'a + symbol::Symbol,
     for<'a> I: 'a + IntoIterator<Item = T> + Iterator + Clone,
 {
-    type Item<'a>=&'a CodedSymbol<T>;
+    type Item<'a> = &'a CodedSymbol<T>;
 
     fn next<'a>(&'a mut self) -> Option<Self::Item<'a>> {
         if self.last_index > self.irblt.set_iterator.clone().into_iter().count() {
@@ -94,12 +88,11 @@ where
             None
         } else {
             self.last_index += 1;
-            let it= Some(self.irblt.get_coded_symbol_ref(self.last_index-1));
+            let it = Some(self.irblt.get_coded_symbol_ref(self.last_index - 1));
             it
         }
     }
 }
-
 
 impl<T, I> RatelessIBLT<T, I>
 where
@@ -135,7 +128,6 @@ where
                 self.coded_symbols[i].apply(&item, symbol::Direction::Add);
             }
         }
-
     }
 
     /// Returns the coded symbol at the provided index.
@@ -194,7 +186,6 @@ where
         peel_one_symbol(&mut self.coded_symbols)
     }
 
-
     /// Peel all symbols from the RatelessIBLT that we possibly can
     ///
     /// It is not expected that this would be called on a RatelessIBLT as we still have access to
@@ -246,10 +237,9 @@ where
     pub coded_symbols: Vec<symbol::CodedSymbol<T>>,
 }
 
-
 impl<T> Deref for UnmanagedRatelessIBLT<T>
 where
-     T: symbol::Symbol,
+    T: symbol::Symbol,
 {
     type Target = Vec<CodedSymbol<T>>;
 
@@ -430,9 +420,8 @@ mod tests {
         for cs in iblt_local.into_iter() {
             temp_symbols.push(cs.clone());
         }
-        assert_eq!(items_local.len()+1, temp_symbols.len())
+        assert_eq!(items_local.len() + 1, temp_symbols.len())
     }
-
 
     #[test]
     fn test_collapsing() {
@@ -462,8 +451,7 @@ mod tests {
         let remote_only: HashSet<SimpleSymbol> =
             items_remote.difference(&items_local).cloned().collect();
 
-
-        let iblt_remote_unmanaged : UnmanagedRatelessIBLT<SimpleSymbol> = UnmanagedRatelessIBLT {
+        let iblt_remote_unmanaged: UnmanagedRatelessIBLT<SimpleSymbol> = UnmanagedRatelessIBLT {
             coded_symbols: iblt_remote.coded_symbols.clone(),
         };
 

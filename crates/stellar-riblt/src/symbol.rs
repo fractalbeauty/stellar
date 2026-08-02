@@ -95,13 +95,13 @@ impl<T: Symbol> CodedSymbol<T> {
             "encoded_s must have the length specified by T::BYTE_ARRAY_LENGTH."
         );
 
-
-
-
         // xor_simd(&mut self.sum, &encoded_s);
 
         // Should be able to update in place here
-        self.sum.iter_mut().zip(encoded_s.iter()).for_each(|(x, y)| *x ^= y);
+        self.sum
+            .iter_mut()
+            .zip(encoded_s.iter())
+            .for_each(|(x, y)| *x ^= y);
         // self.sum = self
         //     .sum
         //     .iter()
@@ -285,14 +285,14 @@ mod tests {
 //     let chunks_b = b.chunks_exact(16);
 //     let remainder_a = chunks_a.remainder();
 //     let remainder_b = chunks_b.remainder();
-// 
+//
 //     for (chunk_a, chunk_b) in chunks_a.zip(chunks_b) {
 //         let a_simd = u8x16::from_slice(chunk_a);
 //         let b_simd = u8x16::from_slice(chunk_b);
 //         let result = a_simd ^ b_simd;
 //         result.write_to_slice(chunk_a);
 //     }
-// 
+//
 //     for (x, &y) in remainder_a.iter_mut().zip(remainder_b.iter()) {
 //         *x ^= y;
 //     }
