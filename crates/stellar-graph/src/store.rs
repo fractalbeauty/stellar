@@ -38,6 +38,7 @@ impl Store {
             })
             .transpose()?;
 
+        // TODO: don't write if the incoming value was older. this might not apply if there are multiple metadata fields to be merged eventually
         let merged_value = if let Some(existing) = existing {
             if value.kind != existing.kind {
                 warn!("merge_entity_metadata new kind != existing kind");
@@ -64,7 +65,7 @@ impl Store {
         Ok(())
     }
 
-    fn merge_entity_attribute(
+    pub fn merge_entity_attribute(
         &self,
         entity: EntityId,
         attribute: AttributeKind,
@@ -81,6 +82,7 @@ impl Store {
             })
             .transpose()?;
 
+        // TODO: don't write if the incoming value was older
         let merged_value = if let Some(existing) = existing {
             let (value, version) = Version::latest_version(
                 value.value,

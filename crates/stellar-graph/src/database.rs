@@ -34,6 +34,15 @@ impl Database {
         Ok(entity)
     }
 
+    pub fn upsert_entity(&self, entity: EntityId, data: EntityData) -> Result<(), anyhow::Error> {
+        self.store.merge_entity_metadata(entity, data.metadata)?;
+        for (attribute, value) in data.attributes {
+            self.store
+                .merge_entity_attribute(entity, attribute, value)?;
+        }
+        Ok(())
+    }
+
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
         self.store.get_entities()
     }
