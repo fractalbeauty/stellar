@@ -1,12 +1,13 @@
 use std::time::Duration;
-
 use stellar::core::Core;
 
 #[tokio::main]
 async fn main() {
     // tracing_subscriber::fmt::init();
 
-    let core = Core::spawn().await.expect("Should spawn core");
+    let core = Core::spawn("default".to_string())
+        .await
+        .expect("Should spawn core");
 
     // let verification_uri_complete = core
     //     .start_device_code_flow()

@@ -8,11 +8,13 @@ crate-type = ["cdylib", "staticlib", "lib"]
 name = "stellar"
 
 [dependencies]
+stellar-graph = { path = "../stellar-graph" }
 stellar-log = { path = "../stellar-log" }
 stellar-sync = { path = "../stellar-sync" }
 
 anyhow = "1.0.103"
 async-std = "1.13.2"
+directories-next = "2.0.0"
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["sync"] }
 tracing = "0.1.44"

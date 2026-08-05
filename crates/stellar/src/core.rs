@@ -1,7 +1,11 @@
 use crate::error::{CoreError, core_error};
+use anyhow::Context;
+use directories_next::ProjectDirs;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
+use std::unimplemented;
+use stellar_graph::database::Database;
 use stellar_log::LogGuard;
 use stellar_sync::peers::PeersTask;
 use stellar_sync::{EndpointId, devices::DevicesTask};
@@ -22,7 +26,7 @@ pub struct Core {
 #[uniffi::export]
 impl Core {
     #[uniffi::constructor]
-    pub async fn spawn() -> Result<Arc<Self>, CoreError> {
+    pub async fn spawn(profile: String) -> Result<Arc<Self>, CoreError> {
         let log_guard = stellar_log::init(None)?;
 
         let (core_tx, core_rx) = oneshot::channel();
@@ -30,17 +34,23 @@ impl Core {
         std::thread::spawn({
             move || {
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_core_thread(log_guard, core_tx);
+                    run_core_thread(profile, log_guard, core_tx)
                 }));
 
-                if let Err(error) = &result {
-                    error!("Panic in core thread: {error:?}");
-
-                    if let Some(string) = error.downcast_ref::<std::string::String>() {
-                        error!("Panic info: {string}");
+                match result {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => {
+                        error!("Core thread exited with error: {error:?}");
                     }
-                    if let Some(str) = error.downcast_ref::<&'static str>() {
-                        error!("Panic info: {str}");
+                    Err(error) => {
+                        error!("Panic in core thread: {error:?}");
+
+                        if let Some(string) = error.downcast_ref::<std::string::String>() {
+                            error!("Panic info: {string}");
+                        }
+                        if let Some(str) = error.downcast_ref::<&'static str>() {
+                            error!("Panic info: {str}");
+                        }
                     }
                 }
 
@@ -90,7 +100,11 @@ impl std::fmt::Debug for Core {
     }
 }
 
-fn run_core_thread(log_guard: Option<LogGuard>, core_tx: oneshot::Sender<Core>) {
+fn run_core_thread(
+    profile: String,
+    log_guard: Option<LogGuard>,
+    core_tx: oneshot::Sender<Core>,
+) -> Result<(), anyhow::Error> {
     debug!("Core thread started");
 
     let builder = tokio::runtime::Builder::new_multi_thread()
@@ -100,6 +114,19 @@ fn run_core_thread(log_guard: Option<LogGuard>, core_tx: oneshot::Sender<Core>) 
 
     builder.block_on(async move {
         debug!("Core runtime started");
+
+        let Some(project_dirs) = ProjectDirs::from("", "", "Stellar") else {
+            unimplemented!("ProjectDirs returned None");
+        };
+
+        let data_dir = {
+            let mut data_dir = project_dirs.data_local_dir().to_path_buf();
+            data_dir.push(profile);
+            data_dir
+        };
+        std::fs::create_dir_all(&data_dir).context("Failed to create data dir")?;
+
+        let database = Database::open(data_dir).context("Failed to open database")?;
 
         let cancellation_token = CancellationToken::new();
 
@@ -123,5 +150,7 @@ fn run_core_thread(log_guard: Option<LogGuard>, core_tx: oneshot::Sender<Core>) 
         cancellation_token.cancelled().await;
 
         debug!("Core runtime finishing");
-    });
+
+        Ok::<(), anyhow::Error>(())
+    })
 }

@@ -4,12 +4,14 @@ use crate::{
 };
 use std::{collections::HashMap, path::Path};
 
+/// Handle to the database for graph data. Provides higher-level operations than the store.
 pub struct Database {
     store: Store,
 }
 
 impl Database {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+    pub fn open(dir: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+        let path = dir.as_ref().join("store");
         let store = Store::open(path)?;
 
         Ok(Self { store })

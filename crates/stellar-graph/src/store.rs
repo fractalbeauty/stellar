@@ -6,6 +6,8 @@ use std::{collections::HashMap, path::Path};
 use tracing::warn;
 use uuid::Uuid;
 
+/// Handle to the store for graph data. Provides primitive operations.
+#[derive(Clone)]
 pub struct Store {
     database: Database,
     keyspace: Keyspace,
