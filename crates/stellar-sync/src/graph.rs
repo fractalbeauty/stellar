@@ -1,14 +1,13 @@
 use anyhow::Context;
-use futures::{Sink, SinkExt as _, Stream, StreamExt};
+use futures::{Sink, SinkExt as _, StreamExt as _};
 use iroh::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher;
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     hash::Hasher,
     pin::Pin,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::Arc,
 };
 use stellar_graph::{
     entity::{EntityId, Version},
@@ -20,7 +19,7 @@ use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
-use tracing::warn;
+
 use uuid::Uuid;
 
 use crate::protocol::StreamHeader;
@@ -47,7 +46,7 @@ impl PeerSyncClientTask {
                 //     },
                 // )]);
                 let entities = HashMap::new();
-                let protocol = Arc::new(Mutex::new(SyncClientProtocol::new(entities)));
+                let protocol = SyncClientProtocol::new(entities);
 
                 let result = Self::run(protocol, sync_manager, connection).await;
 
@@ -63,7 +62,7 @@ impl PeerSyncClientTask {
     }
 
     async fn run(
-        protocol: Arc<Mutex<SyncClientProtocol>>,
+        mut protocol: SyncClientProtocol,
         sync_manager: SyncManager,
         connection: Connection,
     ) -> Result<(), anyhow::Error> {
@@ -84,75 +83,28 @@ impl PeerSyncClientTask {
             .await
             .context("Failed to send stream header")?;
 
-        let mut tx = tx.with(|message| {
-            futures::future::ready(Ok::<_, std::io::Error>(SyncClientMessage::encode(&message)))
-        });
         let mut rx = rx.map(|result| match result {
             Ok(bytes) => SyncServerMessage::decode(&bytes),
             Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
         });
 
-        let tx_future = {
-            let protocol = protocol.clone();
-            async move {
-                loop {
-                    let message = {
-                        let mut protocol = protocol.lock().map_err(|e| {
-                            anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}")
-                        })?;
-                        if protocol.is_finished() {
-                            break;
-                        }
-                        protocol.poll_message()
-                    };
+        while let Some(message) = rx.next().await {
+            let message = message.context("Failed to receive")?;
+            tracing::trace!("PeerSyncClient received {message:?}");
 
-                    if let Some(message) = message {
-                        tracing::trace!("PeerSyncClient sending {message:?}");
-                        tx.send(message).await.context("Failed to send")?;
-                    } else {
-                        tracing::trace!("PeerSyncClient nothing to send");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-
-                Ok::<(), anyhow::Error>(())
+            protocol.handle_message(message);
+            if protocol.is_finished() {
+                break;
             }
-        };
+        }
 
-        let rx_future = {
-            let protocol = protocol.clone();
-            async move {
-                while let Some(message) = rx.next().await {
-                    let message = message.context("Failed to receive")?;
-                    tracing::trace!("PeerSyncClient received {message:?}");
+        let _ = tx.get_mut().reset(0u8.into());
+        let _ = rx.get_mut().get_mut().stop(0u8.into());
 
-                    let mut protocol = protocol
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}"))?;
-                    protocol.handle_message(message);
-                    if protocol.is_finished() {
-                        break;
-                    }
-                }
+        let (client_missing, server_missing) = protocol.finish();
 
-                Ok::<(), anyhow::Error>(())
-            }
-        };
-
-        let (tx_result, rx_result) = tokio::join!(tx_future, rx_future);
-        tx_result?;
-        rx_result?;
-
-        let Ok(protocol) = Arc::try_unwrap(protocol) else {
-            anyhow::bail!("Failed to unwrap SyncClientProtocol Arc");
-        };
-        let protocol = protocol
-            .into_inner()
-            .map_err(|e| anyhow::anyhow!("SyncClientProtocol mutex poisoned: {e:?}"))?;
-
-        let result = protocol.finish();
-
-        // TODO: apply changes
+        // TODO: exchange difference
+        dbg!(client_missing, server_missing);
 
         tracing::debug!("PeerSyncClient finished");
 
@@ -167,14 +119,13 @@ impl PeerSyncServerTask {
     pub fn spawn(
         sync_manager: SyncManager,
         tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
-        rx: Pin<Box<dyn Stream<Item = Result<SyncClientMessage, anyhow::Error>> + Send>>,
     ) -> Self {
         tokio::spawn({
             async move {
                 // TODO: entities
-                let protocol = Arc::new(Mutex::new(SyncServerProtocol::new(HashMap::new())));
+                let protocol = SyncServerProtocol::new(HashMap::new());
 
-                let result = Self::run(protocol, sync_manager, tx, rx).await;
+                let result = Self::run(protocol, sync_manager, tx).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer sync server task errored: {error}");
@@ -188,10 +139,9 @@ impl PeerSyncServerTask {
     }
 
     async fn run(
-        protocol: Arc<Mutex<SyncServerProtocol>>,
+        mut protocol: SyncServerProtocol,
         sync_manager: SyncManager,
         mut tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
-        mut rx: Pin<Box<dyn Stream<Item = Result<SyncClientMessage, anyhow::Error>> + Send>>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerSyncServer starting");
 
@@ -200,67 +150,14 @@ impl PeerSyncServerTask {
             .await
             .context("Failed to acquire sync permit")?;
 
-        let tx_future = {
-            let protocol = protocol.clone();
-            async move {
-                loop {
-                    let message = {
-                        let mut protocol = protocol.lock().map_err(|e| {
-                            anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}")
-                        })?;
-                        if protocol.is_finished() {
-                            break;
-                        }
-                        protocol.poll_message()
-                    };
+        loop {
+            let Some(message) = protocol.poll_message() else {
+                break;
+            };
 
-                    if let Some(message) = message {
-                        tracing::trace!("PeerSyncServer sending {message:?}");
-                        tx.send(message).await.context("Failed to send")?;
-                    } else {
-                        tracing::trace!("PeerSyncServer nothing to send");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-
-                Ok::<(), anyhow::Error>(())
-            }
-        };
-
-        let rx_future = {
-            let protocol = protocol.clone();
-            async move {
-                while let Some(message) = rx.next().await {
-                    let message = message.context("Failed to receive")?;
-                    tracing::trace!("PeerSyncServer received {message:?}");
-
-                    let mut protocol = protocol
-                        .lock()
-                        .map_err(|e| anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}"))?;
-                    protocol.handle_message(message);
-                    if protocol.is_finished() {
-                        break;
-                    }
-                }
-
-                Ok::<(), anyhow::Error>(())
-            }
-        };
-
-        let (tx_result, rx_result) = tokio::join!(tx_future, rx_future);
-        tx_result?;
-        rx_result?;
-
-        let Ok(protocol) = Arc::try_unwrap(protocol) else {
-            anyhow::bail!("Failed to unwrap SyncServerProtocol Arc");
-        };
-        let protocol = protocol
-            .into_inner()
-            .map_err(|e| anyhow::anyhow!("SyncServerProtocol mutex poisoned: {e:?}"))?;
-
-        let result = protocol.finish();
-
-        // TODO: apply changes
+            tracing::trace!("PeerSyncServer sending {message:?}");
+            tx.send(message).await.context("Failed to send")?;
+        }
 
         tracing::debug!("PeerSyncServer finished");
 
@@ -362,147 +259,11 @@ fn write_version(hasher: &mut SipHasher, version: Version) {
 pub struct SyncClientProtocol {
     entities: HashMap<EntityId, EntityData>,
     riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
-    next_index: usize,
-    sent_all: bool,
-    outbox: VecDeque<SyncClientMessage>,
-    result: Option<HashMap<EntityId, EntityData>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum SyncClientMessage {
-    CodedSymbols {
-        coded_symbols: Vec<CodedSymbol<EntitySymbol>>,
-    },
-    Difference {
-        server_difference: HashMap<EntityId, EntityData>,
-    },
+    received: UnmanagedRatelessIBLT<EntitySymbol>,
+    result: Option<(HashSet<EntityId>, HashSet<EntityId>)>,
 }
 
 impl SyncClientProtocol {
-    const BATCH_CODED_SYMBOLS: usize = 10;
-
-    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
-        let symbols = entities
-            .iter()
-            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
-            .collect::<Vec<_>>();
-
-        let riblt = RatelessIBLT::new(symbols);
-
-        Self {
-            entities,
-            riblt,
-            next_index: 0,
-            sent_all: false,
-            outbox: VecDeque::new(),
-            result: None,
-        }
-    }
-
-    pub fn handle_message(&mut self, message: SyncServerMessage) {
-        match message {
-            SyncServerMessage::Difference {
-                client_difference,
-                server_missing,
-            } => {
-                self.result = Some(client_difference);
-
-                let server_difference = server_missing.into_iter().filter_map(|entity| {
-                    let Some(data) = self.entities.get(&entity) else {
-                        warn!(
-                            "SyncServerMessage::Difference server_missing entity not in client entities"
-                        );
-                        return None;
-                    };
-                    Some((entity, data.clone()))
-                }).collect();
-
-                self.outbox
-                    .push_back(SyncClientMessage::Difference { server_difference });
-            }
-        }
-    }
-
-    pub fn poll_message(&mut self) -> Option<SyncClientMessage> {
-        // queued messages first
-        if let Some(message) = self.outbox.pop_front() {
-            return Some(message);
-        }
-
-        // don't produce symbols if already done
-        if self.result.is_some() || self.sent_all {
-            return None;
-        }
-
-        // produce symbols
-        let mut coded_symbols = Vec::new();
-        for _ in 0..Self::BATCH_CODED_SYMBOLS {
-            let index = self.next_index;
-            self.next_index += 1;
-
-            let coded_symbol = self.riblt.get_coded_symbol(index);
-            if coded_symbol.is_empty() {
-                // TODO: this is not actually correct, could be empty without being done
-                self.sent_all = true;
-            }
-            coded_symbols.push(coded_symbol);
-
-            if self.sent_all {
-                break;
-            }
-        }
-
-        if !coded_symbols.is_empty() {
-            Some(SyncClientMessage::CodedSymbols { coded_symbols })
-        } else {
-            None
-        }
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.result.is_some() && self.outbox.is_empty()
-    }
-
-    /// Finishes syncing, returning the difference to apply locally.
-    ///
-    /// `is_finished` must return true before calling `finish`
-    pub fn finish(self) -> HashMap<EntityId, EntityData> {
-        debug_assert!(self.is_finished());
-        self.result.expect("should be finished")
-    }
-}
-
-impl SyncClientMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
-
-pub struct SyncServerProtocol {
-    entities: HashMap<EntityId, EntityData>,
-    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
-    received: UnmanagedRatelessIBLT<EntitySymbol>,
-    sent_difference: bool,
-    outbox: VecDeque<SyncServerMessage>,
-    result: Option<HashMap<EntityId, EntityData>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub enum SyncServerMessage {
-    Difference {
-        client_difference: HashMap<EntityId, EntityData>,
-        server_missing: HashSet<EntityId>,
-    },
-}
-
-impl SyncServerProtocol {
     pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
         let symbols = entities
             .iter()
@@ -515,16 +276,14 @@ impl SyncServerProtocol {
             entities,
             riblt,
             received: UnmanagedRatelessIBLT::new(),
-            outbox: VecDeque::new(),
-            sent_difference: false,
             result: None,
         }
     }
 
-    pub fn handle_message(&mut self, message: SyncClientMessage) {
+    pub fn handle_message(&mut self, message: SyncServerMessage) {
         match message {
-            SyncClientMessage::CodedSymbols { coded_symbols } => {
-                if self.sent_difference {
+            SyncServerMessage::CodedSymbols { coded_symbols } => {
+                if self.result.is_some() {
                     return;
                 }
 
@@ -540,10 +299,10 @@ impl SyncServerProtocol {
                     for symbol in peeled {
                         match symbol {
                             PeelableResult::Local(symbol) => {
-                                client_missing.insert(symbol.id);
+                                server_missing.insert(symbol.id);
                             }
                             PeelableResult::Remote(symbol) => {
-                                server_missing.insert(symbol.id);
+                                client_missing.insert(symbol.id);
                             }
                             PeelableResult::NotPeelable => {
                                 // TODO: update stellar-riblt to remove this case
@@ -552,46 +311,83 @@ impl SyncServerProtocol {
                         }
                     }
 
-                    let client_difference = client_missing
-                        .into_iter()
-                        .filter_map(|entity| {
-                            let Some(data) = self.entities.get(&entity) else {
-                                warn!(
-                                    "SyncServerProtocol decoded but client_missing entity not in server entities"
-                                );
-                                return None;
-                            };
-                            Some((entity, data.clone()))
-                        })
-                        .collect();
-
-                    self.outbox.push_back(SyncServerMessage::Difference {
-                        client_difference,
-                        server_missing,
-                    });
-                    self.sent_difference = true;
+                    self.result = Some((client_missing, server_missing))
                 }
-            }
-            SyncClientMessage::Difference { server_difference } => {
-                self.result = Some(server_difference);
             }
         }
     }
 
-    pub fn poll_message(&mut self) -> Option<SyncServerMessage> {
-        self.outbox.pop_front()
-    }
-
     pub fn is_finished(&self) -> bool {
-        self.result.is_some() && self.outbox.is_empty()
+        self.result.is_some()
     }
 
-    /// Finishes syncing, returning the difference to apply locally.
+    /// Finishes syncing, returning (client_missing, server_missing).
     ///
     /// `is_finished` must return true before calling `finish`
-    pub fn finish(self) -> HashMap<EntityId, EntityData> {
+    pub fn finish(self) -> (HashSet<EntityId>, HashSet<EntityId>) {
         debug_assert!(self.is_finished());
         self.result.expect("should be finished")
+    }
+}
+
+pub struct SyncServerProtocol {
+    entities: HashMap<EntityId, EntityData>,
+    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
+    next_index: Option<usize>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SyncServerMessage {
+    CodedSymbols {
+        coded_symbols: Vec<CodedSymbol<EntitySymbol>>,
+    },
+}
+
+impl SyncServerProtocol {
+    const BATCH_CODED_SYMBOLS: usize = 10;
+
+    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
+        let symbols = entities
+            .iter()
+            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
+            .collect::<Vec<_>>();
+
+        let riblt = RatelessIBLT::new(symbols);
+
+        Self {
+            entities,
+            riblt,
+            next_index: Some(0),
+        }
+    }
+
+    /// TODO
+    ///
+    /// Returns `None` when the stream is finished.
+    pub fn poll_message(&mut self) -> Option<SyncServerMessage> {
+        let mut coded_symbols = Vec::new();
+        for _ in 0..Self::BATCH_CODED_SYMBOLS {
+            let Some(index) = self.next_index.as_mut().map(|next_index| {
+                let index = *next_index;
+                *next_index += 1;
+                index
+            }) else {
+                break;
+            };
+
+            let coded_symbol = self.riblt.get_coded_symbol(index);
+            if coded_symbol.is_empty() {
+                // TODO: this is not actually correct, could be empty without being done
+                // self.next_index = None;
+            }
+            coded_symbols.push(coded_symbol);
+        }
+
+        if !coded_symbols.is_empty() {
+            Some(SyncServerMessage::CodedSymbols { coded_symbols })
+        } else {
+            None
+        }
     }
 }
 
@@ -608,16 +404,72 @@ impl SyncServerMessage {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DifferenceClientMessage {
+    Done,
+    Difference {
+        server_difference: HashMap<EntityId, EntityData>,
+        client_missing: HashSet<EntityId>,
+    },
+}
+
+// SyncServerMessage::Difference {
+//                 client_difference,
+//                 server_missing,
+//             } => {
+//                 self.result = Some(client_difference);
+
+//                 let server_difference = server_missing.into_iter().filter_map(|entity| {
+//                     let Some(data) = self.entities.get(&entity) else {
+//                         warn!(
+//                             "SyncServerMessage::Difference server_missing entity not in client entities"
+//                         );
+//                         return None;
+//                     };
+//                     Some((entity, data.clone()))
+//                 }).collect();
+
+//                 self.outbox
+//                     .push_back(SyncClientMessage::Difference { server_difference });
+//             }
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum DifferenceServerMessage {
+    Difference {
+        client_difference: HashMap<EntityId, EntityData>,
+    },
+}
+
+// let client_difference = client_missing
+//                         .into_iter()
+//                         .filter_map(|entity| {
+//                             let Some(data) = self.entities.get(&entity) else {
+//                                 warn!(
+//                                     "SyncServerProtocol decoded but client_missing entity not in server entities"
+//                                 );
+//                                 return None;
+//                             };
+//                             Some((entity, data.clone()))
+//                         })
+//                         .collect();
+
+//                     self.outbox.push_back(SyncServerMessage::Difference {
+//                         client_difference,
+//                         server_missing,
+//                     });
+//                     self.sent_difference = true;
+
 #[cfg(test)]
 mod test {
-    use crate::graph::{
-        EntitySymbol, SyncClientMessage, SyncClientProtocol, SyncServerMessage, SyncServerProtocol,
-    };
+    use crate::graph::{EntitySymbol, SyncClientProtocol, SyncServerProtocol};
     use hegel::{
         Generator, TestCase,
         generators::{self as gs},
     };
-    use std::collections::{HashMap, HashSet};
+    use std::{
+        collections::{HashMap, HashSet},
+        unreachable,
+    };
     use stellar_graph::{
         entity::{
             AuthorId, EntityId, EntityKind, Timestamp, Version,
@@ -644,6 +496,17 @@ mod test {
             .take(tc.draw(gs::integers().min_value(0).max_value(all_entities.len())))
             .collect::<HashSet<_>>();
 
+        let client_only_entities = client_entities
+            .clone()
+            .into_iter()
+            .filter(|entity| !server_entities.contains(entity))
+            .collect::<HashSet<_, _>>();
+        let server_only_entities = server_entities
+            .clone()
+            .into_iter()
+            .filter(|entity| !client_entities.contains(entity))
+            .collect::<HashSet<_, _>>();
+
         tc.note(&format!(
             "client = {client_entities:?}, server = {server_entities:?}"
         ));
@@ -660,82 +523,47 @@ mod test {
             .map(|entity| (entity, make_empty_entity_data()))
             .collect::<HashMap<_, _>>();
 
-        let client_only_data = client_data
-            .clone()
-            .into_iter()
-            .filter(|(entity, _data)| !server_entities.contains(entity))
-            .collect::<HashMap<_, _>>();
-        let server_only_data = server_data
-            .clone()
-            .into_iter()
-            .filter(|(entity, _data)| !client_entities.contains(entity))
-            .collect::<HashMap<_, _>>();
+        let client = SyncClientProtocol::new(client_data);
+        let server = SyncServerProtocol::new(server_data);
+        let (client_missing, server_missing) = run_client_and_server(client, server);
 
-        let mut client = SyncClientProtocol::new(client_data);
-        let mut server = SyncServerProtocol::new(server_data);
-        run_client_and_server(&mut client, &mut server);
-
-        // client should be missing server-only data
-        let client_difference = client.finish();
+        // client should be missing server-only entities
         assert_eq!(
-            client_difference, server_only_data,
-            "client should be missing server-only data"
+            client_missing, server_only_entities,
+            "client should be missing server-only entities"
         );
 
         // server should be missing client-only entities
-        let server_difference = server.finish();
         assert_eq!(
-            server_difference, client_only_data,
-            "server should be missing client-only data"
+            server_missing, client_only_entities,
+            "server should be missing client-only entities"
         );
     }
 
-    fn run_client_and_server(client: &mut SyncClientProtocol, server: &mut SyncServerProtocol) {
+    fn run_client_and_server(
+        mut client: SyncClientProtocol,
+        mut server: SyncServerProtocol,
+    ) -> (HashSet<EntityId>, HashSet<EntityId>) {
         let max_iterations = 1000;
 
-        let mut count_client_message_difference = 0;
-        let mut count_server_message_difference = 0;
-
         for _ in 0..max_iterations {
-            let client_message = client.poll_message();
-            if let Some(message) = client_message {
-                if let SyncClientMessage::Difference { .. } = &message {
-                    count_client_message_difference += 1;
-                }
-
-                server.handle_message(message);
-            }
-
             let server_message = server.poll_message();
             if let Some(message) = server_message {
-                match &message {
-                    SyncServerMessage::Difference { .. } => {
-                        count_server_message_difference += 1;
-                    }
-                }
-
                 client.handle_message(message);
             }
 
-            // early exit when finished
-            if client.is_finished() && server.is_finished() {
-                break;
+            // exit when finished
+            if client.is_finished() {
+                return client.finish();
             }
         }
 
         // should terminate
         assert!(
             client.is_finished(),
-            "client did not finish in {max_iterations} iterations"
+            "sync did not finish in {max_iterations} iterations"
         );
-        assert!(
-            server.is_finished(),
-            "server did not finish in {max_iterations} iterations"
-        );
-
-        // should only send one difference message
-        assert!(count_client_message_difference <= 1);
-        assert!(count_server_message_difference <= 1);
+        unreachable!();
     }
 
     #[hegel::test]

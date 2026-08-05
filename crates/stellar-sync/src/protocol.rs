@@ -8,6 +8,7 @@ use tokio_util::{
 #[derive(Debug, Serialize, Deserialize)]
 pub enum StreamHeader {
     Sync,
+    Difference,
 }
 
 impl StreamHeader {

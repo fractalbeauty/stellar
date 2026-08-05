@@ -1,8 +1,6 @@
 use crate::{
     devices::Device,
-    graph::{
-        PeerSyncClientTask, PeerSyncServerTask, SyncClientMessage, SyncManager, SyncServerMessage,
-    },
+    graph::{PeerSyncClientTask, PeerSyncServerTask, SyncManager, SyncServerMessage},
     protocol::StreamHeader,
 };
 use anyhow::Context;
@@ -75,7 +73,8 @@ impl Peers {
         cancellation_token: CancellationToken,
         secret_key: SecretKey,
     ) -> Result<(), anyhow::Error> {
-        tracing::debug!("Peers starting");
+        tracing::debug!(
+            endpoint_id = ?secret_key.public(), "Peers starting");
 
         let sync_manager = SyncManager::new();
 
@@ -310,15 +309,12 @@ impl Peer {
                             let tx = Box::pin(tx.with(|message| {
                                 futures::future::ready(Ok::<_, std::io::Error>(SyncServerMessage::encode(&message)))
                             }));
-                            let rx = Box::pin(rx.map(|result| match result {
-                                Ok(bytes) => SyncClientMessage::decode(&bytes),
-                                Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-                            }));
 
                             match stream_header {
                                 StreamHeader::Sync => {
-                                    PeerSyncServerTask::spawn(sync_manager.clone(), tx, rx);
+                                    PeerSyncServerTask::spawn(sync_manager.clone(), tx);
                                 },
+                                StreamHeader::Difference => todo!(),
                             }
                         }
                         Err(e) => {
