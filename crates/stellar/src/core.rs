@@ -1,13 +1,16 @@
 use crate::error::{CoreError, core_error};
 use anyhow::Context;
 use directories_next::ProjectDirs;
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
+use stellar_graph::entity::{EntityId, EntityKind};
+use stellar_graph::store::EntityData;
 use stellar_log::LogGuard;
-use stellar_sync::peers::PeersTask;
+use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
 use stellar_sync::{EndpointId, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -16,6 +19,7 @@ use tracing::{debug, error};
 #[derive(uniffi::Object)]
 pub struct Core {
     cancellation_token: CancellationToken,
+    database: Database,
     peers_task: PeersTask,
     devices_task: DevicesTask,
 
@@ -93,6 +97,31 @@ impl Core {
     }
 }
 
+impl Core {
+    // TODO
+    pub fn add_random_entity(&self) -> Result<(), anyhow::Error> {
+        self.database.upsert_entity(
+            stellar_graph::entity::EntityId::random(),
+            stellar_graph::store::EntityData {
+                metadata: stellar_graph::store::EntityMetadataValue {
+                    kind: stellar_graph::entity::EntityKind::random(),
+                    deleted: false,
+                    deleted_version: stellar_graph::entity::Version::new(
+                        stellar_graph::entity::Timestamp::now(),
+                        stellar_graph::entity::AuthorId::new([0u8; 32]),
+                    ),
+                },
+                attributes: HashMap::new(),
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn debug_entities(&self) -> Result<String, anyhow::Error> {
+        Ok(format!("{:?}", self.database.get_entities()?))
+    }
+}
+
 // stub debug implementation
 impl std::fmt::Debug for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -133,7 +162,12 @@ fn run_core_thread(
         let (endpoint_id_tx, endpoint_id_rx) = tokio::sync::watch::channel(None);
         let (devices_tx, devices_rx) = tokio::sync::watch::channel(Vec::new());
 
-        let peers_task = PeersTask::spawn(cancellation_token.child_token(), devices_rx).unwrap();
+        let peers_task = PeersTask::spawn(
+            cancellation_token.child_token(),
+            PeersDatabaseAdapter::new(database.clone()),
+            devices_rx,
+        )
+        .unwrap();
         let _ = endpoint_id_tx.send(Some(peers_task.endpoint_id()));
 
         let devices_task =
@@ -141,6 +175,7 @@ fn run_core_thread(
 
         let core = Core {
             cancellation_token: cancellation_token.clone(),
+            database,
             peers_task,
             devices_task,
             log_guard,

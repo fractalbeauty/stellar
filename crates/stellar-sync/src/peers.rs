@@ -6,7 +6,8 @@ use crate::{
 use anyhow::Context;
 use futures::{SinkExt as _, StreamExt as _};
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::Connection};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
+use stellar_graph::{database::Database, entity::EntityId, store::EntityData};
 use tokio::sync::{mpsc, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -23,6 +24,7 @@ pub struct PeersTask {
 impl PeersTask {
     pub fn spawn(
         cancellation_token: CancellationToken,
+        database: Arc<dyn PeersDatabasePort>,
         devices_rx: watch::Receiver<Vec<Device>>,
     ) -> Result<Self, anyhow::Error> {
         let secret_key = SecretKey::generate();
@@ -35,7 +37,9 @@ impl PeersTask {
                     peer_tasks: HashMap::new(),
                 };
 
-                let result = peers.run(devices_rx, cancellation_token, secret_key).await;
+                let result = peers
+                    .run(devices_rx, cancellation_token, database, secret_key)
+                    .await;
 
                 if let Err(error) = result {
                     tracing::error!("Peers task errored: {error}");
@@ -71,6 +75,7 @@ impl Peers {
         &mut self,
         mut devices_rx: watch::Receiver<Vec<Device>>,
         cancellation_token: CancellationToken,
+        database: Arc<dyn PeersDatabasePort>,
         secret_key: SecretKey,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!(
@@ -166,7 +171,7 @@ impl Peers {
                         self.peer_tasks.get(&connection_id.endpoint_id).unwrap().cancel();
                     }
 
-                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
+                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), database.clone(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
                     self.peer_tasks.insert(peer.endpoint_id(), peer);
                 }
 
@@ -213,6 +218,7 @@ impl PeerTask {
     pub fn spawn(
         side: PeerSide,
         cancellation_token: CancellationToken,
+        database: Arc<dyn PeersDatabasePort + Send + Sync>,
         sync_manager: SyncManager,
         peer_exited_tx: mpsc::UnboundedSender<ConnectionId>,
         connection_id: ConnectionId,
@@ -224,7 +230,7 @@ impl PeerTask {
                 let mut peer = Peer {};
 
                 let result = peer
-                    .run(side, cancellation_token, sync_manager, connection)
+                    .run(side, cancellation_token, database, sync_manager, connection)
                     .await;
 
                 if let Err(error) = result {
@@ -260,6 +266,7 @@ impl Peer {
         &mut self,
         side: PeerSide,
         cancellation_token: CancellationToken,
+        database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
     ) -> Result<(), anyhow::Error> {
@@ -274,9 +281,7 @@ impl Peer {
 
         // Start syncing if we're the outgoing side
         if side == PeerSide::Outgoing {
-            let sync_manager = sync_manager.clone();
-            let connection = connection.clone();
-            PeerSyncClientTask::spawn(sync_manager, connection);
+            PeerSyncClientTask::spawn(database.clone(), sync_manager.clone(), connection.clone());
         }
 
         loop {
@@ -312,7 +317,7 @@ impl Peer {
 
                             match stream_header {
                                 StreamHeader::Sync => {
-                                    PeerSyncServerTask::spawn(sync_manager.clone(), tx);
+                                    PeerSyncServerTask::spawn(database.clone(), sync_manager.clone(), tx);
                                 },
                                 StreamHeader::Difference => todo!(),
                             }
@@ -326,6 +331,26 @@ impl Peer {
         }
 
         Ok(())
+    }
+}
+
+pub trait PeersDatabasePort: Send + Sync {
+    fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
+}
+
+pub struct PeersDatabaseAdapter {
+    database: Database,
+}
+
+impl PeersDatabaseAdapter {
+    pub fn new(database: Database) -> Arc<Self> {
+        Arc::new(Self { database })
+    }
+}
+
+impl PeersDatabasePort for PeersDatabaseAdapter {
+    fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
+        self.database.get_entities()
     }
 }
 

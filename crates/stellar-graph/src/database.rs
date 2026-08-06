@@ -5,6 +5,7 @@ use crate::{
 use std::{collections::HashMap, path::Path};
 
 /// Handle to the database for graph data. Provides higher-level operations than the store.
+#[derive(Clone)]
 pub struct Database {
     store: Store,
 }

@@ -1,3 +1,4 @@
+use crate::{peers::PeersDatabasePort, protocol::StreamHeader};
 use anyhow::Context;
 use futures::{Sink, SinkExt as _, StreamExt as _};
 use iroh::endpoint::Connection;
@@ -19,36 +20,20 @@ use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
-
 use uuid::Uuid;
-
-use crate::protocol::StreamHeader;
 
 /// Handle for a peer sync client task
 pub struct PeerSyncClientTask {}
 
 impl PeerSyncClientTask {
-    pub fn spawn(sync_manager: SyncManager, connection: Connection) -> Self {
+    pub fn spawn(
+        database: Arc<dyn PeersDatabasePort>,
+        sync_manager: SyncManager,
+        connection: Connection,
+    ) -> Self {
         tokio::spawn({
             async move {
-                // let entities = HashMap::from([(
-                //     stellar_graph::entity::EntityId::random(),
-                //     stellar_graph::store::EntityData {
-                //         metadata: stellar_graph::store::EntityMetadataValue {
-                //             kind: stellar_graph::entity::EntityKind::random(),
-                //             deleted: false,
-                //             deleted_version: stellar_graph::entity::Version::new(
-                //                 stellar_graph::entity::Timestamp::now(),
-                //                 stellar_graph::entity::AuthorId::new([0u8; 32]),
-                //             ),
-                //         },
-                //         attributes: HashMap::new(),
-                //     },
-                // )]);
-                let entities = HashMap::new();
-                let protocol = SyncClientProtocol::new(entities);
-
-                let result = Self::run(protocol, sync_manager, connection).await;
+                let result = Self::run(database, sync_manager, connection).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer sync client task errored: {error}");
@@ -62,11 +47,14 @@ impl PeerSyncClientTask {
     }
 
     async fn run(
-        mut protocol: SyncClientProtocol,
+        database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSyncClient starting");
+
+        let entities = database.get_entities().context("Failed to get entities")?;
+        let mut protocol = SyncClientProtocol::new(entities);
 
         let _permit = sync_manager
             .acquire()
@@ -117,15 +105,13 @@ pub struct PeerSyncServerTask {}
 
 impl PeerSyncServerTask {
     pub fn spawn(
+        database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
     ) -> Self {
         tokio::spawn({
             async move {
-                // TODO: entities
-                let protocol = SyncServerProtocol::new(HashMap::new());
-
-                let result = Self::run(protocol, sync_manager, tx).await;
+                let result = Self::run(database, sync_manager, tx).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer sync server task errored: {error}");
@@ -139,11 +125,14 @@ impl PeerSyncServerTask {
     }
 
     async fn run(
-        mut protocol: SyncServerProtocol,
+        database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         mut tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerSyncServer starting");
+
+        let entities = database.get_entities().context("Failed to get entities")?;
+        let mut protocol = SyncServerProtocol::new(entities);
 
         let _permit = sync_manager
             .acquire()
