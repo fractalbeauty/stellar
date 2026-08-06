@@ -1,6 +1,6 @@
 use crate::{peers::PeersDatabasePort, protocol::StreamHeader};
 use anyhow::Context;
-use futures::{Sink, SinkExt as _, StreamExt as _};
+use futures::{Sink, SinkExt as _, Stream, StreamExt as _};
 use iroh::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher;
@@ -20,6 +20,7 @@ use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
+use tracing::warn;
 use uuid::Uuid;
 
 /// Handle for a peer sync client task
@@ -61,38 +62,73 @@ impl PeerSyncClientTask {
             .await
             .context("Failed to acquire sync permit")?;
 
-        let (tx, rx) = connection.open_bi().await?;
+        {
+            let (tx, rx) = connection.open_bi().await?;
 
-        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-        let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+            let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+            let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
 
-        let stream_header = StreamHeader::encode(&StreamHeader::Sync);
-        tx.send(stream_header)
-            .await
-            .context("Failed to send stream header")?;
+            let stream_header = StreamHeader::encode(&StreamHeader::Sync);
+            tx.send(stream_header)
+                .await
+                .context("Failed to send stream header")?;
 
-        let mut rx = rx.map(|result| match result {
-            Ok(bytes) => SyncServerMessage::decode(&bytes),
-            Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-        });
+            let mut rx = rx.map(|result| match result {
+                Ok(bytes) => SyncServerMessage::decode(&bytes),
+                Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+            });
 
-        while let Some(message) = rx.next().await {
+            while let Some(message) = rx.next().await {
+                let message = message.context("Failed to receive")?;
+                tracing::trace!("PeerSyncClient received {message:?}");
+
+                protocol.handle_message(message);
+                if protocol.is_finished() {
+                    break;
+                }
+            }
+
+            let _ = tx.get_mut().reset(0u8.into());
+            let _ = rx.get_mut().get_mut().stop(0u8.into());
+        }
+
+        let difference = protocol.finish();
+
+        {
+            let (tx, rx) = connection.open_bi().await?;
+
+            let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+            let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+
+            let stream_header = StreamHeader::encode(&StreamHeader::Difference);
+            tx.send(stream_header)
+                .await
+                .context("Failed to send stream header")?;
+
+            let mut tx = tx.with(|message| {
+                futures::future::ready(Ok::<_, std::io::Error>(DifferenceClientMessage::encode(
+                    &message,
+                )))
+            });
+            let mut rx = rx.map(|result| match result {
+                Ok(bytes) => DifferenceServerMessage::decode(&bytes),
+                Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+            });
+
+            tx.send(difference)
+                .await
+                .context("Faild to send DifferenceClientMessage")?;
+
+            let Some(message) = rx.next().await else {
+                anyhow::bail!("DifferenceServerMessage stream closed");
+            };
             let message = message.context("Failed to receive")?;
             tracing::trace!("PeerSyncClient received {message:?}");
 
-            protocol.handle_message(message);
-            if protocol.is_finished() {
-                break;
-            }
+            let DifferenceServerMessage::Difference { client_difference } = message;
+
+            database.upsert_entities(client_difference)?;
         }
-
-        let _ = tx.get_mut().reset(0u8.into());
-        let _ = rx.get_mut().get_mut().stop(0u8.into());
-
-        let (client_missing, server_missing) = protocol.finish();
-
-        // TODO: exchange difference
-        dbg!(client_missing, server_missing);
 
         tracing::debug!("PeerSyncClient finished");
 
@@ -147,6 +183,61 @@ impl PeerSyncServerTask {
             tracing::trace!("PeerSyncServer sending {message:?}");
             tx.send(message).await.context("Failed to send")?;
         }
+
+        tracing::debug!("PeerSyncServer finished");
+
+        Ok(())
+    }
+}
+
+/// Handle for a peer difference server task
+pub struct PeerDifferenceServerTask {}
+
+impl PeerDifferenceServerTask {
+    pub fn spawn(
+        database: Arc<dyn PeersDatabasePort>,
+        tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
+        rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+    ) -> Self {
+        tokio::spawn({
+            async move {
+                let result = Self::run(database, tx, rx).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer difference server task errored: {error}");
+                } else {
+                    tracing::debug!("Peer difference server task finished");
+                }
+            }
+        });
+
+        Self {}
+    }
+
+    async fn run(
+        database: Arc<dyn PeersDatabasePort>,
+        mut tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
+        mut rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::info!("PeerDifferenceServer starting");
+
+        let Some(message) = rx.next().await else {
+            anyhow::bail!("DifferenceClientMessage stream closed");
+        };
+        let message = message.context("Failed to receive")?;
+        tracing::trace!("PeerSyncClient received {message:?}");
+
+        let DifferenceClientMessage::Difference {
+            server_difference,
+            client_missing,
+        } = message;
+
+        database.upsert_entities(server_difference)?;
+
+        let client_difference = database.get_entities_by_id(client_missing)?;
+        tx.send(DifferenceServerMessage::Difference { client_difference })
+            .await
+            .context("Failed to send DifferenceServerMessage")?;
 
         tracing::debug!("PeerSyncServer finished");
 
@@ -310,12 +401,30 @@ impl SyncClientProtocol {
         self.result.is_some()
     }
 
-    /// Finishes syncing, returning (client_missing, server_missing).
+    /// Finishes syncing, returning a `DifferenceClientMessage` to send.
     ///
-    /// `is_finished` must return true before calling `finish`
-    pub fn finish(self) -> (HashSet<EntityId>, HashSet<EntityId>) {
+    /// `is_finished` must return true before calling `finish`.
+    pub fn finish(self) -> DifferenceClientMessage {
         debug_assert!(self.is_finished());
-        self.result.expect("should be finished")
+        let (client_missing, server_missing) = self.result.expect("should be finished");
+
+        let server_difference = server_missing
+            .into_iter()
+            .filter_map(|entity| {
+                let Some(data) = self.entities.get(&entity) else {
+                    warn!(
+                        "SyncServerMessage::Difference server_missing entity not in client entities"
+                    );
+                    return None;
+                };
+                Some((entity, data.clone()))
+            })
+            .collect();
+
+        DifferenceClientMessage::Difference {
+            server_difference,
+            client_missing,
+        }
     }
 }
 
@@ -395,32 +504,24 @@ impl SyncServerMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceClientMessage {
-    Done,
     Difference {
         server_difference: HashMap<EntityId, EntityData>,
         client_missing: HashSet<EntityId>,
     },
 }
 
-// SyncServerMessage::Difference {
-//                 client_difference,
-//                 server_missing,
-//             } => {
-//                 self.result = Some(client_difference);
+impl DifferenceClientMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
 
-//                 let server_difference = server_missing.into_iter().filter_map(|entity| {
-//                     let Some(data) = self.entities.get(&entity) else {
-//                         warn!(
-//                             "SyncServerMessage::Difference server_missing entity not in client entities"
-//                         );
-//                         return None;
-//                     };
-//                     Some((entity, data.clone()))
-//                 }).collect();
-
-//                 self.outbox
-//                     .push_back(SyncClientMessage::Difference { server_difference });
-//             }
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceServerMessage {
@@ -429,33 +530,30 @@ pub enum DifferenceServerMessage {
     },
 }
 
-// let client_difference = client_missing
-//                         .into_iter()
-//                         .filter_map(|entity| {
-//                             let Some(data) = self.entities.get(&entity) else {
-//                                 warn!(
-//                                     "SyncServerProtocol decoded but client_missing entity not in server entities"
-//                                 );
-//                                 return None;
-//                             };
-//                             Some((entity, data.clone()))
-//                         })
-//                         .collect();
+impl DifferenceServerMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
 
-//                     self.outbox.push_back(SyncServerMessage::Difference {
-//                         client_difference,
-//                         server_missing,
-//                     });
-//                     self.sent_difference = true;
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+}
 
 #[cfg(test)]
 mod test {
-    use crate::graph::{EntitySymbol, SyncClientProtocol, SyncServerProtocol};
+    use crate::graph::{
+        DifferenceClientMessage, EntitySymbol, SyncClientProtocol, SyncServerProtocol,
+    };
     use hegel::{
         Generator, TestCase,
         generators::{self as gs},
     };
     use std::{
+        assert_eq,
         collections::{HashMap, HashSet},
         unreachable,
     };
@@ -485,11 +583,6 @@ mod test {
             .take(tc.draw(gs::integers().min_value(0).max_value(all_entities.len())))
             .collect::<HashSet<_>>();
 
-        let client_only_entities = client_entities
-            .clone()
-            .into_iter()
-            .filter(|entity| !server_entities.contains(entity))
-            .collect::<HashSet<_, _>>();
         let server_only_entities = server_entities
             .clone()
             .into_iter()
@@ -512,9 +605,20 @@ mod test {
             .map(|entity| (entity, make_empty_entity_data()))
             .collect::<HashMap<_, _>>();
 
+        let client_only_data = client_data
+            .clone()
+            .into_iter()
+            .filter(|(entity, _)| !server_entities.contains(entity))
+            .collect::<HashMap<_, _>>();
+
         let client = SyncClientProtocol::new(client_data);
         let server = SyncServerProtocol::new(server_data);
-        let (client_missing, server_missing) = run_client_and_server(client, server);
+        let difference = run_client_and_server(client, server);
+
+        let DifferenceClientMessage::Difference {
+            server_difference,
+            client_missing,
+        } = difference;
 
         // client should be missing server-only entities
         assert_eq!(
@@ -522,17 +626,17 @@ mod test {
             "client should be missing server-only entities"
         );
 
-        // server should be missing client-only entities
+        // server should be missing client-only data
         assert_eq!(
-            server_missing, client_only_entities,
-            "server should be missing client-only entities"
+            server_difference, client_only_data,
+            "server should be missing client-only data"
         );
     }
 
     fn run_client_and_server(
         mut client: SyncClientProtocol,
         mut server: SyncServerProtocol,
-    ) -> (HashSet<EntityId>, HashSet<EntityId>) {
+    ) -> DifferenceClientMessage {
         let max_iterations = 1000;
 
         for _ in 0..max_iterations {

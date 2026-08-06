@@ -1,12 +1,18 @@
 use crate::{
     devices::Device,
-    graph::{PeerSyncClientTask, PeerSyncServerTask, SyncManager, SyncServerMessage},
+    graph::{
+        DifferenceClientMessage, DifferenceServerMessage, PeerDifferenceServerTask,
+        PeerSyncClientTask, PeerSyncServerTask, SyncManager, SyncServerMessage,
+    },
     protocol::StreamHeader,
 };
 use anyhow::Context;
 use futures::{SinkExt as _, StreamExt as _};
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::Connection};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use stellar_graph::{database::Database, entity::EntityId, store::EntityData};
 use tokio::sync::{mpsc, watch};
 use tokio_util::{
@@ -311,15 +317,23 @@ impl Peer {
                             let stream_header_bytes = stream_header_result.context("Error reading stream header")?;
                             let stream_header = StreamHeader::decode(&stream_header_bytes).context("Error decoding stream header")?;
 
-                            let tx = Box::pin(tx.with(|message| {
-                                futures::future::ready(Ok::<_, std::io::Error>(SyncServerMessage::encode(&message)))
-                            }));
-
                             match stream_header {
                                 StreamHeader::Sync => {
+                                    let tx = Box::pin(tx.with(|message| {
+                                        futures::future::ready(Ok::<_, std::io::Error>(SyncServerMessage::encode(&message)))
+                                    }));
                                     PeerSyncServerTask::spawn(database.clone(), sync_manager.clone(), tx);
                                 },
-                                StreamHeader::Difference => todo!(),
+                                StreamHeader::Difference => {
+                                    let tx = Box::pin(tx.with(|message| {
+                                        futures::future::ready(Ok::<_, std::io::Error>(DifferenceServerMessage::encode(&message)))
+                                    }));
+                                    let rx = Box::pin( rx.map(|result| match result {
+                                        Ok(bytes) => DifferenceClientMessage::decode(&bytes),
+                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+                                    }));
+                                    PeerDifferenceServerTask::spawn(database.clone(), tx, rx);
+                                },
                             }
                         }
                         Err(e) => {
@@ -336,6 +350,14 @@ impl Peer {
 
 pub trait PeersDatabasePort: Send + Sync {
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
+
+    fn get_entities_by_id(
+        &self,
+        entities: HashSet<EntityId>,
+    ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
+
+    fn upsert_entities(&self, entities: HashMap<EntityId, EntityData>)
+    -> Result<(), anyhow::Error>;
 }
 
 pub struct PeersDatabaseAdapter {
@@ -351,6 +373,29 @@ impl PeersDatabaseAdapter {
 impl PeersDatabasePort for PeersDatabaseAdapter {
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
         self.database.get_entities()
+    }
+
+    fn get_entities_by_id(
+        &self,
+        entities: HashSet<EntityId>,
+    ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
+        // TODO: optimize this
+        let mut all_entities = self.get_entities()?;
+        Ok(entities
+            .into_iter()
+            .filter_map(|entity| all_entities.remove(&entity).map(|data| (entity, data)))
+            .collect())
+    }
+
+    fn upsert_entities(
+        &self,
+        entities: HashMap<EntityId, EntityData>,
+    ) -> Result<(), anyhow::Error> {
+        // TODO: batch this somewhere (maybe a level above this; inside peer, outside database)
+        for (entity, data) in entities {
+            self.database.upsert_entity(entity, data)?;
+        }
+        Ok(())
     }
 }
 
