@@ -247,19 +247,19 @@ mod tests {
         let mut coded_symbol = CodedSymbol::new();
 
         println!("0 is peelable {}", coded_symbol.is_peelable());
-        assert_eq!(coded_symbol.is_peelable(), false);
+        assert!(!coded_symbol.is_peelable());
 
         coded_symbol.apply(&symbol1, Direction::Add);
         println!("1 is peelable {}", coded_symbol.is_peelable());
-        assert_eq!(coded_symbol.is_peelable(), true);
+        assert!(coded_symbol.is_peelable());
 
         coded_symbol.apply(&symbol2, Direction::Add);
         println!("2 is peelable {}", coded_symbol.is_peelable());
-        assert_eq!(coded_symbol.is_peelable(), false);
+        assert!(!coded_symbol.is_peelable());
 
         coded_symbol.apply(&symbol1, Direction::Remove);
         println!("3 is peelable {}", coded_symbol.is_peelable());
-        assert_eq!(coded_symbol.is_peelable(), true);
+        assert!(coded_symbol.is_peelable());
 
         println!("CodedSymbol: {:?}", coded_symbol);
 
@@ -275,7 +275,7 @@ mod tests {
             }
             PeelableResult::NotPeelable => {
                 println!("No symbol to peel");
-                assert!(false);
+                panic!("No symbol to peel");
             }
         }
     }
