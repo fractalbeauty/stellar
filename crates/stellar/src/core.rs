@@ -11,7 +11,7 @@ use stellar_graph::entity::{EntityId, EntityKind};
 use stellar_graph::store::EntityData;
 use stellar_log::LogGuard;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
-use stellar_sync::{EndpointId, devices::DevicesTask};
+use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -155,6 +155,22 @@ fn run_core_thread(
         };
         std::fs::create_dir_all(&data_dir).context("Failed to create data dir")?;
 
+        let key_path = data_dir.join("secret_key");
+        let secret_key = if key_path.exists() {
+            let key_bytes = std::fs::read(&key_path).context("Failed to read secret key file")?;
+            SecretKey::from_bytes(
+                key_bytes
+                    .as_slice()
+                    .try_into()
+                    .context("Failed to parse secret key file")?,
+            )
+        } else {
+            let new_key = SecretKey::generate();
+            std::fs::write(&key_path, new_key.to_bytes())
+                .context("Failed to write secret key file")?;
+            new_key
+        };
+
         let database = Database::open(data_dir).context("Failed to open database")?;
 
         let cancellation_token = CancellationToken::new();
@@ -166,6 +182,7 @@ fn run_core_thread(
             cancellation_token.child_token(),
             PeersDatabaseAdapter::new(database.clone()),
             devices_rx,
+            secret_key,
         )
         .unwrap();
         let _ = endpoint_id_tx.send(Some(peers_task.endpoint_id()));

@@ -32,8 +32,8 @@ impl PeersTask {
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
         devices_rx: watch::Receiver<Vec<Device>>,
+        secret_key: SecretKey,
     ) -> Result<Self, anyhow::Error> {
-        let secret_key = SecretKey::generate();
         let endpoint_id = secret_key.public();
 
         tokio::spawn({
