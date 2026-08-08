@@ -1,25 +1,26 @@
-use crate::entity::{AttributeKind, EntityKind, RelationKind, ValueKind};
+use crate::entity::{AttributeKind, EntityKind, ValueKind};
 use std::collections::HashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default, automorph::Automorph)]
 pub struct Schema {
     pub entities: HashMap<EntityKind, EntitySchema>,
-    pub relations: HashMap<RelationKind, RelationSchema>,
+    // TODO
+    // pub relations: HashMap<RelationKind, RelationSchema>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph)]
 pub struct EntitySchema {
     pub name: String,
     pub attributes: HashMap<AttributeKind, AttributeSchema>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph)]
 pub struct RelationSchema {
     pub name: String,
     pub attributes: HashMap<AttributeKind, AttributeSchema>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph)]
 pub struct AttributeSchema {
     pub name: String,
     pub value: ValueKind,

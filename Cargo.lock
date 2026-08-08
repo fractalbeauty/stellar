@@ -370,6 +370,56 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "automerge"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f4f9b5e81602f033fac828dafb4fef91742f6f01adfdb8ee5b8bc804cfac7bb"
+dependencies = [
+ "cfg-if",
+ "flate2",
+ "getrandom 0.3.4",
+ "hex",
+ "hexane",
+ "itertools",
+ "leb128",
+ "rand 0.9.4",
+ "rustc-hash",
+ "serde",
+ "sha2",
+ "smol_str",
+ "thiserror 2.0.18",
+ "tinyvec",
+ "tracing",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "automorph"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42f6b6fdc8f834c0db4bfacf5cfddc2214d3d69c59a061f401560127267d448d"
+dependencies = [
+ "anyhow",
+ "automerge",
+ "automorph-derive",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "automorph-derive"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dbff42813427976d419e0a81d7da3618f84ccd5cd6f974991abcab8388b5294a"
+dependencies = [
+ "automerge",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.118",
+]
+
+[[package]]
 name = "aws-lc-rs"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -493,6 +543,16 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "piper",
+]
+
+[[package]]
+name = "borsh"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a88b7ea17d208c4193f2c1e6de3c35fe71f98c96982d5ced308bdcc749ff6e1f"
+dependencies = [
+ "bytes",
+ "cfg_aliases",
 ]
 
 [[package]]
@@ -1207,6 +1267,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer",
+ "const-oid",
  "crypto-common 0.2.2",
 ]
 
@@ -1872,6 +1933,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hexane"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ab946df174dbf65fc07610c1f936b3e40b9ca7cfd09c0f827f9509a62e93a39"
+dependencies = [
+ "leb128",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "hickory-net"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2460,6 +2531,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2574,6 +2654,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "leb128"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c83bff1d572d6b9aeef67ddfc8448e4a3737909cb28e81f97c791b9018703e52"
 
 [[package]]
 name = "libc"
@@ -4300,6 +4386,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
 
 [[package]]
+name = "smol_str"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+dependencies = [
+ "borsh",
+ "serde_core",
+]
+
+[[package]]
 name = "snafu"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4431,6 +4527,8 @@ name = "stellar-graph"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "automerge",
+ "automorph",
  "fjall",
  "hegeltest",
  "hex",
@@ -4470,9 +4568,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "automerge",
+ "automorph",
  "futures",
  "hegeltest",
  "iroh",
+ "pin-project-lite",
  "postcard",
  "reqwest",
  "serde",
@@ -4480,10 +4581,12 @@ dependencies = [
  "sorrel-client",
  "stellar-graph",
  "stellar-riblt",
+ "testdir",
  "tokio",
  "tokio-stream",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

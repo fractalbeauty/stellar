@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.103"
+automerge = "0.7.4"
+automorph = { version = "0.2.0", features = ["uuid"] }
 fjall = "3.1.5"
 hegeltest = "0.23.3"
 hex = "0.4.3"

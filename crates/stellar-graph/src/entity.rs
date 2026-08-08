@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
+use std::{fmt::Display, str::FromStr, time::SystemTime};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -42,6 +42,20 @@ impl EntityKind {
     }
 }
 
+impl Display for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl FromStr for EntityKind {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        FromStr::from_str(s).map(Self::new)
+    }
+}
+
 /// `a` must be less than `b` for uniqueness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RelationKind {
@@ -51,7 +65,7 @@ pub struct RelationKind {
 
 impl RelationKind {
     pub fn new(a: EntityKind, b: EntityKind) -> Self {
-        if a.0 < b.0 {
+        if a.inner() < b.inner() {
             Self { a, b }
         } else {
             Self { a: b, b: a }
@@ -79,7 +93,21 @@ impl AttributeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+impl Display for AttributeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.inner().fmt(f)
+    }
+}
+
+impl FromStr for AttributeKind {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        FromStr::from_str(s).map(Self::new)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
 pub enum ValueKind {
     Text,
     Number,
