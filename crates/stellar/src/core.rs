@@ -11,7 +11,6 @@ use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version,
 };
 use stellar_log::LogGuard;
-use stellar_sync::PublicKey;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
@@ -25,7 +24,7 @@ pub struct Core {
     peers_task: PeersTask,
     devices_task: DevicesTask,
 
-    public_key: PublicKey,
+    author: AuthorId,
 
     #[allow(unused)]
     log_guard: Option<LogGuard>,
@@ -178,7 +177,7 @@ impl Core {
     }
 
     fn version_now(&self) -> Version {
-        Version::new(Timestamp::now(), AuthorId::new(*self.public_key.as_bytes()))
+        Version::new(Timestamp::now(), self.author)
     }
 }
 
@@ -268,7 +267,7 @@ fn run_core_thread(
             database,
             peers_task,
             devices_task,
-            public_key,
+            author: AuthorId::new(*public_key.as_bytes()),
             log_guard,
         };
         core_tx.send(core).expect("Should send core");
