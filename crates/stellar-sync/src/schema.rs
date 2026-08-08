@@ -29,17 +29,17 @@ impl SchemaStoreTask {
         dir: impl AsRef<Path>,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
-        let path = dir.as_ref().join("schema_doc");
+        let store_path = dir.as_ref().join("schema_doc");
 
         let (schema_tx, schema_rx) = watch::channel(None);
         let (event_tx, event_rx) = mpsc::unbounded_channel();
 
         tokio::spawn({
             async move {
-                let mut store = SchemaStore {};
+                let mut store = SchemaStore { store_path };
 
                 let result = store
-                    .run(path, author, schema_tx, event_rx, cancellation_token)
+                    .run(author, schema_tx, event_rx, cancellation_token)
                     .await;
 
                 if let Err(error) = result {
@@ -102,12 +102,13 @@ where
 }
 
 /// Owned state for the schema store.
-struct SchemaStore {}
+struct SchemaStore {
+    store_path: PathBuf,
+}
 
 impl SchemaStore {
     async fn run(
         &mut self,
-        path: PathBuf,
         author: AuthorId,
         schema_tx: watch::Sender<Option<Schema>>,
         mut event_rx: mpsc::UnboundedReceiver<SchemaStoreEvent>,
@@ -115,11 +116,11 @@ impl SchemaStore {
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("SchemaStore starting");
 
-        let mut doc = match tokio::fs::try_exists(&path).await {
+        let mut doc = match tokio::fs::try_exists(&self.store_path).await {
             Ok(true) => {
                 tracing::debug!("Schema store path exists, reading existing doc");
 
-                let doc_bytes = tokio::fs::read(&path)
+                let doc_bytes = tokio::fs::read(&self.store_path)
                     .await
                     .context("Failed to read schema store path")?;
                 AutoCommit::load(&doc_bytes)
@@ -137,6 +138,8 @@ impl SchemaStore {
                 initial_schema
                     .save(&mut doc, &ROOT, "schema")
                     .context("Failed to save initial schema to doc")?;
+
+                self.save_doc(&mut doc).await?;
 
                 doc
             }
@@ -169,8 +172,8 @@ impl SchemaStore {
 
                 _ = SchemaEditBatch::save_timeout(&mut batch) => {
                     tracing::debug!("SchemaEditBatch timed out, applying changes");
-                    if let Err(e) = self.handle_batch_save_timeout(&mut doc, &mut batch, &schema_tx) {
-                        tracing::error!("SchemaStore failed to handle bathc save timeout: {e:#}");
+                    if let Err(e) = self.handle_batch_save_timeout(&mut doc, &mut batch, &schema_tx).await {
+                        tracing::error!("SchemaStore failed to handle batch save timeout: {e:#}");
                     }
                 }
 
@@ -234,7 +237,7 @@ impl SchemaStore {
         }
     }
 
-    fn handle_batch_save_timeout(
+    async fn handle_batch_save_timeout(
         &mut self,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
@@ -249,8 +252,11 @@ impl SchemaStore {
                     .save(doc, &ROOT, "schema")
                     .context("Failed to save schema to doc")?;
 
-                // TODO: notify/sync/save/etc
                 schema_tx.send_replace(Some(projection.schema.clone()));
+
+                self.save_doc(doc).await?;
+
+                // TODO: sync
             }
             None => {
                 tracing::error!("SchemaStore handle_batch_save_timeout called but batch is None");
@@ -259,6 +265,15 @@ impl SchemaStore {
 
         batch.set(None);
 
+        Ok(())
+    }
+
+    async fn save_doc(&mut self, doc: &mut AutoCommit) -> Result<(), anyhow::Error> {
+        let doc_bytes = doc.save();
+        tokio::fs::write(&self.store_path, doc_bytes)
+            .await
+            .context("Failed to write schema store path")?;
+        tracing::debug!("SchemaStore saved doc to file");
         Ok(())
     }
 }
