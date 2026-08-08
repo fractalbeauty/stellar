@@ -4599,6 +4599,7 @@ dependencies = [
  "fastrand",
  "stellar",
  "tokio",
+ "tracing",
  "tracing-subscriber",
 ]
 

@@ -10,7 +10,7 @@ use stellar_graph::database::Database;
 use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version,
 };
-use stellar_graph::schema::EntitySchema;
+use stellar_graph::schema::{EntitySchema, Schema};
 use stellar_log::LogGuard;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
 use stellar_sync::schema::SchemaStoreTask;
@@ -36,7 +36,10 @@ pub struct Core {
 #[uniffi::export]
 impl Core {
     #[uniffi::constructor]
-    pub async fn spawn(profile: String) -> Result<Arc<Self>, CoreError> {
+    pub async fn spawn(
+        profile: String,
+        schema_change_handler: Arc<dyn SchemaChangeHandler>,
+    ) -> Result<Arc<Self>, CoreError> {
         let log_guard = stellar_log::init(None)?;
 
         let (core_tx, core_rx) = oneshot::channel();
@@ -44,7 +47,7 @@ impl Core {
         std::thread::spawn({
             move || {
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_core_thread(profile, log_guard, core_tx)
+                    run_core_thread(profile, log_guard, core_tx, schema_change_handler)
                 }));
 
                 match result {
@@ -217,7 +220,7 @@ impl Core {
     }
 }
 
-// stub debug implementation
+// Stub debug implementation
 impl std::fmt::Debug for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Core").finish()
@@ -236,10 +239,17 @@ pub struct CoreAttribute {
     // version: CoreVersion,
 }
 
+/// Foreign trait for receiving schema change events.
+#[uniffi::export(with_foreign)]
+pub trait SchemaChangeHandler: Send + Sync {
+    fn on_change(&self, schema: Schema);
+}
+
 fn run_core_thread(
     profile: String,
     log_guard: Option<LogGuard>,
     core_tx: oneshot::Sender<Core>,
+    schema_change_handler: Arc<dyn SchemaChangeHandler>,
 ) -> Result<(), anyhow::Error> {
     debug!("Core thread started");
 
@@ -285,6 +295,27 @@ fn run_core_thread(
         let cancellation_token = CancellationToken::new();
 
         let schema = SchemaStoreTask::spawn(cancellation_token.child_token(), &data_dir, author)?;
+
+        // Spawn task to forward schema changes to provided SchemaChangeHandler
+        tokio::task::spawn({
+            let mut schema_rx = schema.watch_schema();
+            async move {
+                loop {
+                    match schema_rx.changed().await {
+                        Ok(()) => {
+                            let schema = schema_rx.borrow();
+                            if let Some(schema) = schema.as_ref() {
+                                schema_change_handler.on_change(schema.clone());
+                            }
+                        }
+                        Err(_) => {
+                            tracing::debug!("SchemaChangeHandler task exiting");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
 
         let (endpoint_id_tx, endpoint_id_rx) = tokio::sync::watch::channel(None);
         let (devices_tx, devices_rx) = tokio::sync::watch::channel(Vec::new());

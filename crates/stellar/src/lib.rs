@@ -1,6 +1,7 @@
 pub mod core;
 pub mod error;
 
+pub use stellar_graph as graph;
 pub use stellar_log as log;
 pub use stellar_sync as sync;
 

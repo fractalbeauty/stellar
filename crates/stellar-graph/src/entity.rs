@@ -107,7 +107,18 @@ impl FromStr for AttributeKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    automorph::Automorph,
+    uniffi::Enum,
+)]
 pub enum ValueKind {
     Text,
     Number,

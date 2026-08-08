@@ -1,6 +1,9 @@
 use clap::{Args, Parser};
-use std::time::Duration;
-use stellar::core::Core;
+use std::{sync::Arc, time::Duration};
+use stellar::{
+    core::{Core, SchemaChangeHandler},
+    graph::schema::Schema,
+};
 
 /// Stellar TUI
 #[derive(Parser)]
@@ -37,11 +40,28 @@ async fn main() {
         "default".to_string()
     };
 
-    let core = Core::spawn(profile).await.expect("Should spawn core");
+    let core = Core::spawn(profile, Arc::new(TuiSchemaChangeHandler))
+        .await
+        .expect("Should spawn core");
 
     if std::env::var("STELLAR_ADD_ENTITY").is_ok_and(|var| !var.is_empty()) {
         core.add_random_entity().unwrap();
     }
+    if std::env::var("STELLAR_ADD_ENTITYKIND").is_ok_and(|var| !var.is_empty()) {
+        core.create_schema_entity("test1".to_string())
+            .await
+            .unwrap();
+        core.create_schema_entity("test2".to_string())
+            .await
+            .unwrap();
+        core.create_schema_entity("test3".to_string())
+            .await
+            .unwrap();
+        core.create_schema_entity("test4".to_string())
+            .await
+            .unwrap();
+    }
+
     // let _ = dbg!(core.debug_entities());
 
     // let verification_uri_complete = core
@@ -60,5 +80,12 @@ async fn main() {
 
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+struct TuiSchemaChangeHandler;
+impl SchemaChangeHandler for TuiSchemaChangeHandler {
+    fn on_change(&self, schema: Schema) {
+        tracing::debug!("TuiSchemaChangeHandler on_change, schema: {schema:?}");
     }
 }
