@@ -22,6 +22,22 @@ impl Store {
         Ok(Self { database, keyspace })
     }
 
+    pub fn get_entity_metadata(
+        &self,
+        entity: EntityId,
+    ) -> Result<Option<EntityMetadataValue>, anyhow::Error> {
+        let key = make_entity_metadata_key(entity);
+        let value = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
+                    .context("Failed to parse metadata value")
+            })
+            .transpose()?;
+        Ok(value)
+    }
+
     pub fn merge_entity_metadata(
         &self,
         entity: EntityId,
@@ -102,7 +118,7 @@ impl Store {
     }
 
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
-        let mut metadata_iter = self.keyspace.prefix([ENTITY_METADATA_PREFIX]).map(|guard| {
+        let metadata_iter = self.keyspace.prefix([ENTITY_METADATA_PREFIX]).map(|guard| {
             let (key, value) = guard.into_inner().context("Fjall error reading metadata")?;
 
             let key = parse_entity_metadata_key(key).context("Failed to parse metadata key")?;
@@ -131,7 +147,7 @@ impl Store {
 
         let mut entities = HashMap::new();
 
-        while let Some(next) = metadata_iter.next() {
+        for next in metadata_iter {
             let (entity, metadata) = next?;
 
             let mut attributes = HashMap::new();

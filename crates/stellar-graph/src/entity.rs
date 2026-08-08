@@ -85,7 +85,7 @@ pub enum ValueKind {
     Number,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
 pub enum Value {
     Text(String),
     /// Cannot be NaN or infinity.
@@ -167,10 +167,15 @@ impl AuthorId {
 impl std::fmt::Debug for AuthorId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("AuthorId")
-            .field(&hex::encode(&self.0))
+            .field(&hex::encode(self.0))
             .finish()
     }
 }
+
+uniffi::custom_type!(Uuid, Vec<u8>, { remote });
+uniffi::custom_newtype!(EntityId, Uuid);
+uniffi::custom_newtype!(EntityKind, Uuid);
+uniffi::custom_newtype!(AttributeKind, Uuid);
 
 #[cfg(test)]
 mod test {

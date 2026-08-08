@@ -7,9 +7,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
-use stellar_graph::entity::{EntityId, EntityKind};
-use stellar_graph::store::EntityData;
+use stellar_graph::entity::{
+    AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version,
+};
 use stellar_log::LogGuard;
+use stellar_sync::PublicKey;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
@@ -22,6 +24,8 @@ pub struct Core {
     database: Database,
     peers_task: PeersTask,
     devices_task: DevicesTask,
+
+    public_key: PublicKey,
 
     #[allow(unused)]
     log_guard: Option<LogGuard>,
@@ -95,6 +99,57 @@ impl Core {
 
         Ok(())
     }
+
+    /// Gets all non-deleted entities.
+    pub fn get_entities(&self) -> Result<HashMap<EntityId, CoreEntity>, CoreError> {
+        let entities = self.database.get_entities()?;
+        Ok(entities
+            .into_iter()
+            .filter_map(|(entity, data)| {
+                if data.metadata.deleted {
+                    return None;
+                }
+
+                Some((
+                    entity,
+                    CoreEntity {
+                        kind: data.metadata.kind,
+                        attributes: data
+                            .attributes
+                            .into_iter()
+                            .map(|(attribute, value)| {
+                                (attribute, CoreAttribute { value: value.value })
+                            })
+                            .collect(),
+                    },
+                ))
+            })
+            .collect())
+    }
+
+    /// Creates an entity of the given kind, returning its ID.
+    pub fn create_entity(&self, kind: EntityKind) -> Result<EntityId, CoreError> {
+        let entity = self.database.create_entity(kind, self.version_now())?;
+        Ok(entity)
+    }
+
+    /// Sets an entity's attribute for an entity to a value.
+    pub fn set_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: Value,
+    ) -> Result<(), CoreError> {
+        self.database
+            .set_entity_attribute(entity, attribute, value, self.version_now())?;
+        Ok(())
+    }
+
+    /// Deletes an entity.
+    pub fn delete_entity(&self, entity: EntityId) -> Result<(), CoreError> {
+        self.database.delete_entity(entity, self.version_now())?;
+        Ok(())
+    }
 }
 
 impl Core {
@@ -117,8 +172,13 @@ impl Core {
         Ok(())
     }
 
+    // TODO
     pub fn debug_entities(&self) -> Result<String, anyhow::Error> {
         Ok(format!("{:?}", self.database.get_entities()?))
+    }
+
+    fn version_now(&self) -> Version {
+        Version::new(Timestamp::now(), AuthorId::new(*self.public_key.as_bytes()))
     }
 }
 
@@ -127,6 +187,18 @@ impl std::fmt::Debug for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Core").finish()
     }
+}
+
+#[derive(uniffi::Record)]
+pub struct CoreEntity {
+    kind: EntityKind,
+    attributes: HashMap<AttributeKind, CoreAttribute>,
+}
+
+#[derive(uniffi::Record)]
+pub struct CoreAttribute {
+    value: Value,
+    // version: CoreVersion,
 }
 
 fn run_core_thread(
@@ -170,6 +242,7 @@ fn run_core_thread(
                 .context("Failed to write secret key file")?;
             new_key
         };
+        let public_key = secret_key.public();
 
         let database = Database::open(data_dir).context("Failed to open database")?;
 
@@ -195,6 +268,7 @@ fn run_core_thread(
             database,
             peers_task,
             devices_task,
+            public_key,
             log_guard,
         };
         core_tx.send(core).expect("Should send core");

@@ -42,7 +42,7 @@ async fn main() {
     if std::env::var("STELLAR_ADD_ENTITY").is_ok_and(|var| !var.is_empty()) {
         core.add_random_entity().unwrap();
     }
-    dbg!(core.debug_entities());
+    let _ = dbg!(core.debug_entities());
 
     // let verification_uri_complete = core
     //     .start_device_code_flow()

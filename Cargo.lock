@@ -4438,6 +4438,7 @@ dependencies = [
  "serde",
  "testdir",
  "tracing",
+ "uniffi",
  "uuid",
 ]
 

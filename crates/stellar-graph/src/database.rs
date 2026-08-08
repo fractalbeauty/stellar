@@ -1,6 +1,6 @@
 use crate::{
-    entity::{EntityId, EntityKind, Version},
-    store::{EntityData, EntityMetadataValue, Store},
+    entity::{AttributeKind, EntityId, EntityKind, Value, Version},
+    store::{EntityAttributeValue, EntityData, EntityMetadataValue, Store},
 };
 use std::{collections::HashMap, path::Path};
 
@@ -41,6 +41,36 @@ impl Database {
             self.store
                 .merge_entity_attribute(entity, attribute, value)?;
         }
+        Ok(())
+    }
+
+    pub fn set_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: Value,
+        version: Version,
+    ) -> Result<(), anyhow::Error> {
+        self.store.merge_entity_attribute(
+            entity,
+            attribute,
+            EntityAttributeValue { value, version },
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_entity(&self, entity: EntityId, version: Version) -> Result<(), anyhow::Error> {
+        let Some(existing) = self.store.get_entity_metadata(entity)? else {
+            anyhow::bail!("Entity does not exist");
+        };
+        self.store.merge_entity_metadata(
+            entity,
+            EntityMetadataValue {
+                kind: existing.kind,
+                deleted: true,
+                deleted_version: version,
+            },
+        )?;
         Ok(())
     }
 

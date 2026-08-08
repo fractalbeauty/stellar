@@ -3,4 +3,4 @@ pub mod graph;
 pub mod peers;
 pub mod protocol;
 
-pub use iroh::{EndpointId, SecretKey};
+pub use iroh::{EndpointId, PublicKey, SecretKey};
