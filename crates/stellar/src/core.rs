@@ -10,8 +10,10 @@ use stellar_graph::database::Database;
 use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version,
 };
+use stellar_graph::schema::EntitySchema;
 use stellar_log::LogGuard;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
+use stellar_sync::schema::SchemaStoreTask;
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -21,6 +23,7 @@ use tracing::{debug, error};
 pub struct Core {
     cancellation_token: CancellationToken,
     database: Database,
+    schema: SchemaStoreTask,
     peers_task: PeersTask,
     devices_task: DevicesTask,
 
@@ -149,6 +152,39 @@ impl Core {
         self.database.delete_entity(entity, self.version_now())?;
         Ok(())
     }
+
+    /// Creates an entity kind, returning its ID.
+    pub async fn create_schema_entity(&self, name: String) -> Result<EntityKind, CoreError> {
+        let entity = EntityKind::random();
+        self.schema
+            .modify(move |schema| {
+                schema.entities.insert(
+                    entity,
+                    EntitySchema {
+                        name,
+                        attributes: HashMap::new(),
+                    },
+                );
+            })
+            .await?;
+        Ok(entity)
+    }
+
+    /// Deletes an entity kind.
+    pub async fn delete_schema_entity(&self, entity: EntityKind) -> Result<(), CoreError> {
+        self.schema
+            .modify(move |schema| {
+                if !schema.entities.contains_key(&entity) {
+                    anyhow::bail!("Entity kind does not exist");
+                }
+
+                schema.entities.remove(&entity);
+                Ok(())
+            })
+            .await?
+            .context("Failed to delete entity")?;
+        Ok(())
+    }
 }
 
 impl Core {
@@ -242,10 +278,13 @@ fn run_core_thread(
             new_key
         };
         let public_key = secret_key.public();
+        let author = AuthorId::new(*public_key.as_bytes());
 
-        let database = Database::open(data_dir).context("Failed to open database")?;
+        let database = Database::open(&data_dir).context("Failed to open database")?;
 
         let cancellation_token = CancellationToken::new();
+
+        let schema = SchemaStoreTask::spawn(cancellation_token.child_token(), &data_dir, author)?;
 
         let (endpoint_id_tx, endpoint_id_rx) = tokio::sync::watch::channel(None);
         let (devices_tx, devices_rx) = tokio::sync::watch::channel(Vec::new());
@@ -255,8 +294,7 @@ fn run_core_thread(
             PeersDatabaseAdapter::new(database.clone()),
             devices_rx,
             secret_key,
-        )
-        .unwrap();
+        );
         let _ = endpoint_id_tx.send(Some(peers_task.endpoint_id()));
 
         let devices_task =
@@ -265,9 +303,10 @@ fn run_core_thread(
         let core = Core {
             cancellation_token: cancellation_token.clone(),
             database,
+            schema,
             peers_task,
             devices_task,
-            author: AuthorId::new(*public_key.as_bytes()),
+            author,
             log_guard,
         };
         core_tx.send(core).expect("Should send core");

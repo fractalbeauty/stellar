@@ -3,13 +3,14 @@ use automerge::{AutoCommit, ROOT};
 use automorph::Automorph;
 use pin_project_lite::pin_project;
 use std::{
+    any::Any,
     path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
 };
 use stellar_graph::{entity::AuthorId, schema::Schema};
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{mpsc, oneshot, watch},
     time::Sleep,
 };
 use tokio_util::sync::CancellationToken;
@@ -55,19 +56,49 @@ impl SchemaStoreTask {
         })
     }
 
-    pub fn modify(
-        &self,
-        operation: Box<dyn FnOnce(&mut Schema) + Send>,
-    ) -> Result<(), anyhow::Error> {
+    pub async fn modify<F, R>(&self, operation: F) -> Result<R, anyhow::Error>
+    where
+        F: FnOnce(&mut Schema) -> R + Send + 'static,
+        R: Send + 'static,
+    {
+        let operation = wrap_modify_closure(operation);
+
+        let (result_tx, result_rx) = oneshot::channel();
+
         self.event_tx
-            .send(SchemaStoreEvent::Modify { operation })
+            .send(SchemaStoreEvent::Modify {
+                operation,
+                result_tx,
+            })
             .map_err(|e| anyhow::anyhow!("Failed to send SchemaStoreEvent::Modify: {e:?}"))?;
-        Ok(())
+
+        let result_any = result_rx
+            .await
+            .context("Failed to get SchemaStoreEvent::Modify result")?
+            .ok_or_else(|| anyhow::anyhow!("SchemaStoreEvent::Modify failed"))?;
+
+        let result = result_any
+            .downcast::<R>()
+            .map_err(|_| anyhow::anyhow!("Failed to downcast SchemaStoreEvent::Modify result"))?;
+        Ok(*result)
     }
 
     pub fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
         self.schema_rx.clone()
     }
+}
+
+fn wrap_modify_closure<F, R>(
+    operation: F,
+) -> Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>
+where
+    F: FnOnce(&mut Schema) -> R + Send + 'static,
+    R: Send + 'static,
+{
+    Box::new(move |schema| -> Box<dyn Any + Send> {
+        let result = operation(schema);
+        Box::new(result)
+    })
 }
 
 /// Owned state for the schema store.
@@ -160,20 +191,32 @@ impl SchemaStore {
         event: SchemaStoreEvent,
     ) -> Result<(), anyhow::Error> {
         match event {
-            SchemaStoreEvent::Modify { operation } => {
+            SchemaStoreEvent::Modify {
+                operation,
+                result_tx,
+            } => {
                 match batch.as_mut().as_pin_mut() {
                     Some(batch) => {
                         let projection = batch.project();
 
-                        operation(projection.schema);
+                        let result = operation(projection.schema);
+                        let _ = result_tx.send(Some(result));
 
                         tracing::debug!("SchemaStore applied SchemaStoreEvent::Modify")
                     }
                     None => {
-                        let mut schema = Schema::load(doc, &ROOT, "schema")
-                            .context("Failed to load schema from doc")?;
+                        let mut schema = match Schema::load(doc, &ROOT, "schema")
+                            .context("Failed to load schema from doc")
+                        {
+                            Ok(schema) => schema,
+                            Err(e) => {
+                                let _ = result_tx.send(None);
+                                return Err(e);
+                            }
+                        };
 
-                        operation(&mut schema);
+                        let result = operation(&mut schema);
+                        let _ = result_tx.send(Some(result));
 
                         batch.set(Some(SchemaEditBatch {
                             schema,
@@ -222,7 +265,8 @@ impl SchemaStore {
 
 enum SchemaStoreEvent {
     Modify {
-        operation: Box<dyn FnOnce(&mut Schema) + Send>,
+        operation: Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>,
+        result_tx: oneshot::Sender<Option<Box<dyn Any + Send>>>,
     },
 }
 
@@ -272,7 +316,7 @@ mod test {
         assert!(watch_schema.borrow().as_ref().unwrap().entities.is_empty());
 
         let entity_kind = EntityKind::random();
-        task.modify(Box::new(move |schema| {
+        task.modify(move |schema| {
             schema.entities.insert(
                 entity_kind,
                 EntitySchema {
@@ -280,7 +324,8 @@ mod test {
                     attributes: HashMap::new(),
                 },
             );
-        }))
+        })
+        .await
         .unwrap();
 
         watch_schema.changed().await.unwrap();
@@ -312,7 +357,7 @@ mod test {
         assert!(watch_schema.borrow().is_some());
         assert!(watch_schema.borrow().as_ref().unwrap().entities.is_empty());
 
-        task.modify(Box::new(move |schema| {
+        task.modify(move |schema| {
             schema.entities.insert(
                 EntityKind::random(),
                 EntitySchema {
@@ -320,9 +365,10 @@ mod test {
                     attributes: HashMap::new(),
                 },
             );
-        }))
+        })
+        .await
         .unwrap();
-        task.modify(Box::new(move |schema| {
+        task.modify(move |schema| {
             schema.entities.insert(
                 EntityKind::random(),
                 EntitySchema {
@@ -330,7 +376,8 @@ mod test {
                     attributes: HashMap::new(),
                 },
             );
-        }))
+        })
+        .await
         .unwrap();
 
         watch_schema.changed().await.unwrap();
