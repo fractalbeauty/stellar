@@ -1,11 +1,15 @@
 use anyhow::Context;
-use automerge::{AutoCommit, ROOT};
+use automerge::{AutoCommit, ROOT, sync::SyncDoc};
 use automorph::Automorph;
+use futures::{Sink, SinkExt as _, Stream, StreamExt};
+use iroh::endpoint::Connection;
 use pin_project_lite::pin_project;
+use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     time::Duration,
 };
 use stellar_graph::{entity::AuthorId, schema::Schema};
@@ -13,7 +17,13 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Sleep,
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{
+    bytes::Bytes,
+    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
+    sync::CancellationToken,
+};
+
+use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
 
 /// Handle to the schema store task.
 #[derive(Debug, Clone)]
@@ -85,6 +95,39 @@ impl SchemaStoreTask {
 
     pub fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
         self.schema_rx.clone()
+    }
+
+    pub async fn fork_doc_for_sync(&self) -> Result<AutoCommit, anyhow::Error> {
+        let (result_tx, result_rx) = oneshot::channel();
+
+        self.event_tx
+            .send(SchemaStoreEvent::ForkDocForSync { result_tx })
+            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreEvent::ForkDocForSync"))?;
+
+        let result = result_rx
+            .await
+            .context("Failed to get SchemaStoreEvent::ForkDocForSync result")?
+            .context("SchemaStoreEvent::ForkDocForSync failed")?;
+
+        Ok(result)
+    }
+
+    pub async fn merge_doc_for_sync(&self, doc: AutoCommit) -> Result<(), anyhow::Error> {
+        let (result_tx, result_rx) = oneshot::channel();
+
+        self.event_tx
+            .send(SchemaStoreEvent::MergeDocForSync {
+                doc: Box::new(doc),
+                result_tx,
+            })
+            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreEvent::MergeDocForSync"))?;
+
+        result_rx
+            .await
+            .context("Failed to get SchemaStoreEvent::MergeDocForSync result")?
+            .context("SchemaStoreEvent::MergeDocForSync failed")?;
+
+        Ok(())
     }
 }
 
@@ -160,7 +203,7 @@ impl SchemaStore {
                 result = event_rx.recv() => {
                     match result {
                         Some(event) => {
-                            if let Err(e) = self.handle_event(&mut doc, &mut batch, event) {
+                            if let Err(e) = self.handle_event(&schema_tx, &mut doc, &mut batch, event).await {
                                 tracing::error!("SchemaStore failed to handle event: {e:#}");
                             }
                         },
@@ -187,8 +230,9 @@ impl SchemaStore {
         Ok(())
     }
 
-    fn handle_event(
+    async fn handle_event(
         &mut self,
+        schema_tx: &watch::Sender<Option<Schema>>,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
         event: SchemaStoreEvent,
@@ -232,6 +276,43 @@ impl SchemaStore {
                     }
                 }
 
+                Ok(())
+            }
+            SchemaStoreEvent::ForkDocForSync { result_tx } => {
+                let _ = result_tx.send(Ok(doc.fork()));
+                Ok(())
+            }
+            SchemaStoreEvent::MergeDocForSync {
+                doc: mut incoming_doc,
+                result_tx,
+            } => {
+                match doc.merge(&mut incoming_doc) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = result_tx.send(Err(anyhow::anyhow!("Failed to merge doc: {e:?}")));
+                        return Ok(());
+                    }
+                }
+
+                let schema = match Schema::load(doc, &ROOT, "schema")
+                    .context("Failed to load schema from doc")
+                {
+                    Ok(schema) => schema,
+                    Err(e) => {
+                        let _ = result_tx.send(Err(anyhow::anyhow!(
+                            "Failed to load doc after merge: {e:?}"
+                        )));
+                        return Err(e);
+                    }
+                };
+
+                schema_tx.send_replace(Some(schema));
+
+                self.save_doc(doc).await?;
+
+                // TODO: sync?
+
+                let _ = result_tx.send(Ok(()));
                 Ok(())
             }
         }
@@ -283,6 +364,13 @@ enum SchemaStoreEvent {
         operation: Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>,
         result_tx: oneshot::Sender<Option<Box<dyn Any + Send>>>,
     },
+    ForkDocForSync {
+        result_tx: oneshot::Sender<Result<AutoCommit, anyhow::Error>>,
+    },
+    MergeDocForSync {
+        doc: Box<AutoCommit>,
+        result_tx: oneshot::Sender<Result<(), anyhow::Error>>,
+    },
 }
 
 pin_project! {
@@ -301,6 +389,213 @@ impl SchemaEditBatch {
         } else {
             std::future::pending::<()>().await;
         }
+    }
+}
+
+/// Handle for a peer schema sync client task
+pub struct PeerSchemaClientTask {}
+
+impl PeerSchemaClientTask {
+    pub fn spawn(schema: Arc<dyn PeersSchemaPort>, connection: Connection) -> Self {
+        tokio::spawn({
+            async move {
+                let result = Self::run(schema, connection).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer schema client task errored: {error}");
+                } else {
+                    tracing::debug!("Peer schema client task finished");
+                }
+            }
+        });
+
+        Self {}
+    }
+
+    async fn run(
+        schema: Arc<dyn PeersSchemaPort>,
+        connection: Connection,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("PeerSchemaClient starting");
+
+        let (tx, rx) = connection.open_bi().await?;
+
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+        let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
+
+        let stream_header = StreamHeader::encode(&StreamHeader::SchemaSync);
+        tx.send(stream_header)
+            .await
+            .context("Failed to send stream header")?;
+
+        let mut tx = Box::new(tx.with(|message| {
+            futures::future::ready(Ok::<_, std::io::Error>(SchemaSyncClientMessage::encode(
+                &message,
+            )))
+        }));
+        let mut rx = Box::new(rx.map(|result| match result {
+            Ok(bytes) => SchemaSyncServerMessage::decode(&bytes),
+            Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+        }));
+
+        let mut doc = schema.fork_doc().await?;
+        let mut sync_doc = doc.sync();
+
+        let mut state = automerge::sync::State::new();
+
+        loop {
+            let (client_message, client_done) = match sync_doc.generate_sync_message(&mut state) {
+                Some(sync_message) => (
+                    SchemaSyncClientMessage::Message(sync_message.encode()),
+                    false,
+                ),
+                None => (SchemaSyncClientMessage::Done, true),
+            };
+
+            tx.send(client_message).await?;
+
+            let server_message = rx
+                .next()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("SchemaSyncServerMessage stream closed"))??;
+
+            let server_done = match server_message {
+                SchemaSyncServerMessage::Message(encoded) => {
+                    let sync_message = automerge::sync::Message::decode(&encoded)?;
+
+                    sync_doc.receive_sync_message(&mut state, sync_message)?;
+
+                    false
+                }
+                SchemaSyncServerMessage::Done => true,
+            };
+
+            if client_done && server_done {
+                break;
+            }
+        }
+
+        drop(sync_doc);
+        schema.merge_doc(doc).await?;
+
+        tracing::debug!("PeerSchemaClient finished");
+
+        Ok(())
+    }
+}
+
+/// Handle for a peer schema sync server task
+pub struct PeerSchemaServerTask {}
+
+impl PeerSchemaServerTask {
+    pub fn spawn(
+        schema: Arc<dyn PeersSchemaPort>,
+        tx: Pin<Box<dyn Sink<SchemaSyncServerMessage, Error = std::io::Error> + Send>>,
+        rx: Pin<Box<dyn Stream<Item = Result<SchemaSyncClientMessage, anyhow::Error>> + Send>>,
+    ) -> Self {
+        tokio::spawn({
+            async move {
+                let result = Self::run(schema, tx, rx).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer schema server task errored: {error}");
+                } else {
+                    tracing::debug!("Peer schema server task finished");
+                }
+            }
+        });
+
+        Self {}
+    }
+
+    async fn run(
+        schema: Arc<dyn PeersSchemaPort>,
+        mut tx: Pin<Box<dyn Sink<SchemaSyncServerMessage, Error = std::io::Error> + Send>>,
+        mut rx: Pin<Box<dyn Stream<Item = Result<SchemaSyncClientMessage, anyhow::Error>> + Send>>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("PeerSchemaServer starting");
+
+        let mut doc = schema.fork_doc().await?;
+        let mut sync_doc = doc.sync();
+
+        let mut state = automerge::sync::State::new();
+
+        loop {
+            let client_message = rx
+                .next()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("SchemaSyncClientMessage stream closed"))??;
+
+            let client_done = match client_message {
+                SchemaSyncClientMessage::Message(encoded) => {
+                    let sync_message = automerge::sync::Message::decode(&encoded)?;
+
+                    sync_doc.receive_sync_message(&mut state, sync_message)?;
+
+                    false
+                }
+                SchemaSyncClientMessage::Done => true,
+            };
+
+            let (server_message, server_done) = match sync_doc.generate_sync_message(&mut state) {
+                Some(sync_message) => (
+                    SchemaSyncServerMessage::Message(sync_message.encode()),
+                    false,
+                ),
+                None => (SchemaSyncServerMessage::Done, true),
+            };
+
+            tx.send(server_message).await?;
+
+            if client_done && server_done {
+                break;
+            }
+        }
+
+        drop(sync_doc);
+        schema.merge_doc(doc).await?;
+
+        tracing::debug!("PeerSchemaServer finished");
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SchemaSyncClientMessage {
+    Message(Vec<u8>),
+    Done,
+}
+
+impl SchemaSyncClientMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SchemaSyncServerMessage {
+    Message(Vec<u8>),
+    Done,
+}
+
+impl SchemaSyncServerMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
     }
 }
 

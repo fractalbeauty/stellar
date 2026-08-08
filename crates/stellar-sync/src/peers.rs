@@ -5,15 +5,21 @@ use crate::{
         PeerSyncClientTask, PeerSyncServerTask, SyncManager, SyncServerMessage,
     },
     protocol::StreamHeader,
+    schema::{
+        PeerSchemaClientTask, PeerSchemaServerTask, SchemaStoreTask, SchemaSyncClientMessage,
+        SchemaSyncServerMessage,
+    },
 };
 use anyhow::Context;
+use async_trait::async_trait;
+use automerge::AutoCommit;
 use futures::{SinkExt as _, StreamExt as _};
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::Connection};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use stellar_graph::{database::Database, entity::EntityId, store::EntityData};
+use stellar_graph::{database::Database, entity::EntityId, schema::Schema, store::EntityData};
 use tokio::sync::{mpsc, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -31,6 +37,7 @@ impl PeersTask {
     pub fn spawn(
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
+        schema: Arc<dyn PeersSchemaPort>,
         devices_rx: watch::Receiver<Vec<Device>>,
         secret_key: SecretKey,
     ) -> Self {
@@ -44,7 +51,7 @@ impl PeersTask {
                 };
 
                 let result = peers
-                    .run(devices_rx, cancellation_token, database, secret_key)
+                    .run(devices_rx, cancellation_token, database, schema, secret_key)
                     .await;
 
                 if let Err(error) = result {
@@ -82,6 +89,7 @@ impl Peers {
         mut devices_rx: watch::Receiver<Vec<Device>>,
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
+        schema: Arc<dyn PeersSchemaPort>,
         secret_key: SecretKey,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!(
@@ -177,7 +185,7 @@ impl Peers {
                         self.peer_tasks.get(&connection_id.endpoint_id).unwrap().cancel();
                     }
 
-                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), database.clone(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
+                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), database.clone(),schema.clone(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
                     self.peer_tasks.insert(peer.endpoint_id(), peer);
                 }
 
@@ -224,7 +232,8 @@ impl PeerTask {
     pub fn spawn(
         side: PeerSide,
         cancellation_token: CancellationToken,
-        database: Arc<dyn PeersDatabasePort + Send + Sync>,
+        database: Arc<dyn PeersDatabasePort>,
+        schema: Arc<dyn PeersSchemaPort>,
         sync_manager: SyncManager,
         peer_exited_tx: mpsc::UnboundedSender<ConnectionId>,
         connection_id: ConnectionId,
@@ -236,7 +245,14 @@ impl PeerTask {
                 let mut peer = Peer {};
 
                 let result = peer
-                    .run(side, cancellation_token, database, sync_manager, connection)
+                    .run(
+                        side,
+                        cancellation_token,
+                        database,
+                        schema,
+                        sync_manager,
+                        connection,
+                    )
                     .await;
 
                 if let Err(error) = result {
@@ -273,6 +289,7 @@ impl Peer {
         side: PeerSide,
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
+        schema: Arc<dyn PeersSchemaPort>,
         sync_manager: SyncManager,
         connection: Connection,
     ) -> Result<(), anyhow::Error> {
@@ -288,6 +305,7 @@ impl Peer {
         // Start syncing if we're the outgoing side
         if side == PeerSide::Outgoing {
             PeerSyncClientTask::spawn(database.clone(), sync_manager.clone(), connection.clone());
+            PeerSchemaClientTask::spawn(schema.clone(), connection.clone());
         }
 
         loop {
@@ -334,6 +352,16 @@ impl Peer {
                                     }));
                                     PeerDifferenceServerTask::spawn(database.clone(), tx, rx);
                                 },
+                                StreamHeader::SchemaSync => {
+                                    let tx = Box::pin(tx.with(|message| {
+                                        futures::future::ready(Ok::<_, std::io::Error>(SchemaSyncServerMessage::encode(&message)))
+                                    }));
+                                    let rx = Box::pin( rx.map(|result| match result {
+                                        Ok(bytes) => SchemaSyncClientMessage::decode(&bytes),
+                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+                                    }));
+                                    PeerSchemaServerTask::spawn(schema.clone(), tx, rx);
+                                }
                             }
                         }
                         Err(e) => {
@@ -396,6 +424,40 @@ impl PeersDatabasePort for PeersDatabaseAdapter {
             self.database.upsert_entity(entity, data)?;
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+pub trait PeersSchemaPort: Send + Sync {
+    fn watch_schema(&self) -> watch::Receiver<Option<Schema>>;
+
+    async fn fork_doc(&self) -> Result<AutoCommit, anyhow::Error>;
+
+    async fn merge_doc(&self, doc: AutoCommit) -> Result<(), anyhow::Error>;
+}
+
+pub struct PeersSchemaAdapter {
+    schema: SchemaStoreTask,
+}
+
+impl PeersSchemaAdapter {
+    pub fn new(schema: SchemaStoreTask) -> Arc<Self> {
+        Arc::new(Self { schema })
+    }
+}
+
+#[async_trait]
+impl PeersSchemaPort for PeersSchemaAdapter {
+    fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
+        self.schema.watch_schema()
+    }
+
+    async fn fork_doc(&self) -> Result<AutoCommit, anyhow::Error> {
+        self.schema.fork_doc_for_sync().await
+    }
+
+    async fn merge_doc(&self, doc: AutoCommit) -> Result<(), anyhow::Error> {
+        self.schema.merge_doc_for_sync(doc).await
     }
 }
 

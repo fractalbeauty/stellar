@@ -48,16 +48,7 @@ async fn main() {
         core.add_random_entity().unwrap();
     }
     if std::env::var("STELLAR_ADD_ENTITYKIND").is_ok_and(|var| !var.is_empty()) {
-        core.create_schema_entity("test1".to_string())
-            .await
-            .unwrap();
-        core.create_schema_entity("test2".to_string())
-            .await
-            .unwrap();
-        core.create_schema_entity("test3".to_string())
-            .await
-            .unwrap();
-        core.create_schema_entity("test4".to_string())
+        core.create_schema_entity("Entity".to_string())
             .await
             .unwrap();
     }

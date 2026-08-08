@@ -44,7 +44,7 @@ impl PeerSyncClientTask {
             }
         });
 
-        PeerSyncClientTask {}
+        Self {}
     }
 
     async fn run(
@@ -157,7 +157,7 @@ impl PeerSyncServerTask {
             }
         });
 
-        PeerSyncServerTask {}
+        Self {}
     }
 
     async fn run(

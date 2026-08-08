@@ -12,7 +12,7 @@ use stellar_graph::entity::{
 };
 use stellar_graph::schema::{EntitySchema, Schema};
 use stellar_log::LogGuard;
-use stellar_sync::peers::{PeersDatabaseAdapter, PeersTask};
+use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
 use stellar_sync::schema::SchemaStoreTask;
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
@@ -323,6 +323,7 @@ fn run_core_thread(
         let peers_task = PeersTask::spawn(
             cancellation_token.child_token(),
             PeersDatabaseAdapter::new(database.clone()),
+            PeersSchemaAdapter::new(schema.clone()),
             devices_rx,
             secret_key,
         );

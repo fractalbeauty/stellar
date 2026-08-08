@@ -9,6 +9,7 @@ use tokio_util::{
 pub enum StreamHeader {
     Sync,
     Difference,
+    SchemaSync,
 }
 
 impl StreamHeader {
