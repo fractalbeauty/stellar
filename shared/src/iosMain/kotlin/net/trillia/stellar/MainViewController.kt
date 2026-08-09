@@ -11,17 +11,19 @@ import platform.UIKit.UIViewController
 import uniffi.stellar.Core
 
 fun MainViewController(): UIViewController {
+    val schemaManager = SchemaManager()
+
     val coreState: MutableState<Core?> = mutableStateOf(null)
     @OptIn(DelicateCoroutinesApi::class)
     GlobalScope.launch {
-        coreState.value = Core.spawn("default", SchemaManager())
+        coreState.value = Core.spawn(profile = "default", schemaChangeHandler = schemaManager)
     }
 
     return ComposeUIViewController {
         val core by coreState
 
         core?.let { core ->
-            App(core = core)
+            App(core = core, schemaManager = schemaManager)
         }
     }
 }

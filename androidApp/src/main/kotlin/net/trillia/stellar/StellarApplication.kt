@@ -13,6 +13,8 @@ class StellarApplication : Application() {
         private set
     val coreReady = MutableStateFlow(false)
 
+    var schemaManager = SchemaManager()
+
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
 
@@ -25,7 +27,7 @@ class StellarApplication : Application() {
 
         @OptIn(DelicateCoroutinesApi::class)
         GlobalScope.launch {
-            core = Core.spawn("default", SchemaManager())
+            core = Core.spawn(profile = "default", schemaChangeHandler = schemaManager)
             coreReady.value = true
         }
     }

@@ -96,7 +96,7 @@ fun InspectPane() {
 }
 
 @Composable
-private fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
+fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
     val tahoma = FontFamily(Font(Res.font.tahoma))
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()

@@ -11,9 +11,11 @@ import uniffi.stellar.logError
 
 fun main() =
     runBlocking {
+        val schemaManager = SchemaManager()
+
         val core =
             try {
-                Core.spawn("default", SchemaManager())
+                Core.spawn(profile = "default", schemaChangeHandler = schemaManager)
             } catch (e: CoreException) {
                 logError("Failed to spawn core: $e")
                 return@runBlocking
@@ -26,6 +28,7 @@ fun main() =
             ) {
                 App(
                     core = core,
+                    schemaManager = schemaManager,
                 )
             }
         }
