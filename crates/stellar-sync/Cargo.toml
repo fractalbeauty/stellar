@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 stellar-graph = { path = "../stellar-graph" }
 stellar-riblt = { path = "../stellar-riblt" }
+stellar-uniffi = { path = "../stellar-uniffi" }
 
 sorrel-client = { git = "https://github.com/fractalbeauty/sorrel", rev = "f032ec80d9320491e3547202256df1ace6f92357" }
 

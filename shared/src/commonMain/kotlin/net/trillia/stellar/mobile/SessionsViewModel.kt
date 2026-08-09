@@ -12,12 +12,19 @@ import uniffi.stellar.Core
 import uniffi.stellar.CoreException
 import uniffi.stellar.logError
 import uniffi.stellar_sync.DevicesState
+import uniffi.stellar_uniffi.PublicKey
+import kotlin.uuid.Uuid
 
 class SessionsViewModel(
     private val core: Core,
     private val devicesManager: DevicesManager,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(SessionsUiState())
+    private val _uiState =
+        MutableStateFlow(
+            SessionsUiState(
+                localEndpointId = core.endpointId(),
+            ),
+        )
 
     val uiState: StateFlow<SessionsUiState>
         get() = _uiState.asStateFlow()
@@ -44,9 +51,20 @@ class SessionsViewModel(
             }
         }
     }
+
+    fun revokeAuthSession(session: Uuid) {
+        viewModelScope.launch {
+            try {
+                core.revokeAuthSession(session)
+            } catch (e: CoreException) {
+                logError("Error revoking session: $e")
+            }
+        }
+    }
 }
 
 data class SessionsUiState(
     val verificationUriComplete: String? = null,
     val devicesState: DevicesState? = null,
+    val localEndpointId: PublicKey,
 )

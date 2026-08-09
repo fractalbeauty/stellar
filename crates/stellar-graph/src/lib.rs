@@ -7,4 +7,4 @@ use uuid::Uuid;
 
 uniffi::setup_scaffolding!();
 
-uniffi::custom_type!(Uuid, Vec<u8>, { remote });
+uniffi::use_remote_type!(stellar_uniffi::Uuid);

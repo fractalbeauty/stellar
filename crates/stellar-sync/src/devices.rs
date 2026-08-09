@@ -3,7 +3,9 @@ use futures::StreamExt;
 use iroh::EndpointId;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use sorrel_client::Client;
 use sorrel_client::api::keys::{ListKeysResponse, SetKeyRequest};
+use sorrel_client::api::sessions::SessionRevokeResponse;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -31,6 +33,9 @@ pub enum DevicesMessage {
     AddDevice {
         endpoint_id: EndpointId,
         name: Option<String>,
+    },
+    RevokeAuthSession {
+        session: Uuid,
     },
 }
 
@@ -116,6 +121,14 @@ impl DevicesTask {
     ) -> Result<(), anyhow::Error> {
         self.message_tx
             .send(DevicesMessage::AddDevice { endpoint_id, name })
+            .map_err(|_| anyhow::anyhow!("Failed to send, devices task has been dropped"))?;
+
+        Ok(())
+    }
+
+    pub fn revoke_auth_session(&self, session: Uuid) -> Result<(), anyhow::Error> {
+        self.message_tx
+            .send(DevicesMessage::RevokeAuthSession { session })
             .map_err(|_| anyhow::anyhow!("Failed to send, devices task has been dropped"))?;
 
         Ok(())
@@ -242,6 +255,12 @@ impl Devices {
                     .await
                     .context("Failed to save devices data")?;
             }
+            DevicesMessage::RevokeAuthSession { session } => {
+                let Some(auth) = &self.auth else {
+                    anyhow::bail!("Auth task is None");
+                };
+                auth.revoke_session(session)?;
+            }
         }
 
         Ok(())
@@ -281,10 +300,24 @@ impl Devices {
     }
 
     fn notify_state(&self) {
-        let devices = self
+        let added_devices = self
+            .added_devices
+            .iter()
+            .map(|device| DevicesStateDevice {
+                endpoint_id: device.endpoint_id,
+                name: device.name.clone(),
+                session: device
+                    .session
+                    .as_ref()
+                    .map(|session| DevicesStateDeviceSession {
+                        id: session.id,
+                        last_used_at: session.last_used_at,
+                    }),
+            })
+            .collect();
+        let auth_devices = self
             .auth_devices
             .iter()
-            .chain(self.added_devices.iter())
             .map(|device| DevicesStateDevice {
                 endpoint_id: device.endpoint_id,
                 name: device.name.clone(),
@@ -300,7 +333,8 @@ impl Devices {
 
         let state = DevicesState {
             authed: self.access_token.is_some(),
-            devices,
+            added_devices,
+            auth_devices,
         };
         self.state_tx.send_replace(Some(state));
     }
@@ -369,7 +403,8 @@ impl Devices {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DevicesState {
     authed: bool,
-    devices: Vec<DevicesStateDevice>,
+    added_devices: Vec<DevicesStateDevice>,
+    auth_devices: Vec<DevicesStateDevice>,
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -396,6 +431,20 @@ struct DevicesData {
 #[derive(Debug)]
 struct AuthTask {
     cancellation_token: CancellationToken,
+    message_tx: mpsc::UnboundedSender<AuthMessage>,
+}
+
+impl AuthTask {
+    fn revoke_session(&self, session: Uuid) -> Result<(), anyhow::Error> {
+        self.message_tx
+            .send(AuthMessage::RevokeSession { session })?;
+        Ok(())
+    }
+}
+
+/// Messages to the auths task
+enum AuthMessage {
+    RevokeSession { session: Uuid },
 }
 
 fn spawn_auth_task(
@@ -404,14 +453,21 @@ fn spawn_auth_task(
     access_token: String,
 ) -> AuthTask {
     let cancellation_token = CancellationToken::new();
+    let (message_tx, message_rx) = mpsc::unbounded_channel();
 
     tokio::spawn({
         let event_tx = event_tx.clone();
         let cancellation_token = cancellation_token.clone();
         async move {
-            if let Err(error) =
-                run_auth_task(endpoint_id, access_token, event_tx, cancellation_token).await
-            {
+            let mut auth = match Auth::init(access_token, event_tx) {
+                Ok(auth) => auth,
+                Err(e) => {
+                    tracing::error!("Auth task failed to init: {e:?}");
+                    return;
+                }
+            };
+
+            if let Err(error) = auth.run(endpoint_id, message_rx, cancellation_token).await {
                 tracing::error!("Auth task errored: {:?}", error);
             } else {
                 tracing::debug!("Auth task finished");
@@ -419,84 +475,135 @@ fn spawn_auth_task(
         }
     });
 
-    AuthTask { cancellation_token }
+    AuthTask {
+        cancellation_token,
+        message_tx,
+    }
 }
 
-async fn run_auth_task(
-    endpoint_id: watch::Receiver<Option<EndpointId>>,
-    access_token: String,
+/// Owned state for the auth task
+struct Auth {
+    client: Client,
     event_tx: mpsc::UnboundedSender<DevicesEvent>,
-    cancellation_token: CancellationToken,
-) -> Result<(), anyhow::Error> {
-    let base_url = Url::parse("https://sorrel.trillia.net").unwrap();
-    let client = sorrel_client::Client::new(base_url, access_token)?;
+}
 
-    let mut endpoint_id = WatchStream::new(endpoint_id);
+impl Auth {
+    fn init(
+        access_token: String,
+        event_tx: mpsc::UnboundedSender<DevicesEvent>,
+    ) -> Result<Self, anyhow::Error> {
+        let base_url = Url::parse("https://sorrel.trillia.net").unwrap();
+        let client = sorrel_client::Client::new(base_url, access_token)?;
 
-    // TODO
-    let mut interval = tokio::time::interval(Duration::from_secs(60));
+        Ok(Self { client, event_tx })
+    }
 
-    loop {
-        tokio::select! {
-            _ = cancellation_token.cancelled() => {
-                tracing::debug!("Cancelled");
-                break;
-            }
+    async fn run(
+        &mut self,
+        endpoint_id: watch::Receiver<Option<EndpointId>>,
+        mut message_rx: mpsc::UnboundedReceiver<AuthMessage>,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), anyhow::Error> {
+        let mut endpoint_id = WatchStream::new(endpoint_id);
 
-            // Set device key when the endpoint ID changes
-            Some(Some(endpoint_id)) = endpoint_id.next() => {
-                let result = client.set_key(SetKeyRequest {
-                    app: SORREL_APP.to_string(),
-                    public_key: *endpoint_id,
-                }).await;
+        // TODO
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
 
-                match result {
-                    Ok(_) => tracing::debug!("Set key"),
-                    Err(error) => tracing::error!("Failed to set key, error: {:?}", error),
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    tracing::debug!("Cancelled");
+                    break;
                 }
-            }
 
-            // Periodically get device keys
-            _ = interval.tick() => {
-                let response = client.list_keys().await?;
+                Some(message) = message_rx.recv() => {
+                    match message {
+                        AuthMessage::RevokeSession { session } => {
+                            let response = self.client.revoke_session(session).await?;
 
-                match response {
-                    ListKeysResponse::Success(response) => {
-                        let new_devices = response.keys.into_iter()
-                            .filter(|key| key.app == SORREL_APP)
-                            .filter_map(|key| {
-                                let Ok(endpoint_id) = EndpointId::from_bytes(&key.public_key)  else {
-                                    tracing::error!("Failed to parse endpoint ID from public key bytes, skipping device");
-                                    return None;
-                                };
+                            match response {
+                                SessionRevokeResponse::Success {..} => {
+                                    tracing::info!(?session, "Revoked session");
+                                }
+                                response => {
+                                    tracing::error!(?session, "Failed to revoke session, response: {response:?}");
+                                }
+                            }
 
-                                Some(Device {
-                                    endpoint_id,
-                                    name: key.session_device_name,
-                                    session: Some(DeviceSession {
-                                        id: key.session_id,
-                                        last_used_at: key.session_last_used_at,
-                                    })
-                                })
-                            })
-                            .collect::<Vec<_>>();
-
-                        let _ = event_tx.send(DevicesEvent::AuthDevicesChanged {
-                            auth_devices: new_devices,
-                        });
-
-                        tracing::debug!("Refreshed devices");
+                            if let Err(e) = self.list_keys().await {
+                                tracing::error!("Refreshing keys after revoking session failed: {e:?}");
+                            }
+                        }
                     }
+                }
 
-                    response => {
-                        tracing::error!("Failed to refresh keys, response: {:?}", response);
+                // Set device key when the endpoint ID changes
+                Some(Some(endpoint_id)) = endpoint_id.next() => {
+                    let result = self.client.set_key(SetKeyRequest {
+                        app: SORREL_APP.to_string(),
+                        public_key: *endpoint_id,
+                    }).await;
+
+                    match result {
+                        Ok(_) => tracing::debug!("Set key"),
+                        Err(error) => tracing::error!("Failed to set key, error: {:?}", error),
+                    }
+                }
+
+                // Periodically get device keys
+                _ = interval.tick() => {
+                    if let Err(e) = self.list_keys().await {
+                        tracing::error!("Periodic auth devices refresh failed: {e:?}");
                     }
                 }
             }
         }
+
+        Ok(())
     }
 
-    Ok(())
+    async fn list_keys(&mut self) -> Result<(), anyhow::Error> {
+        let response = self.client.list_keys().await?;
+
+        match response {
+            ListKeysResponse::Success(response) => {
+                let new_devices = response
+                    .keys
+                    .into_iter()
+                    .filter(|key| key.app == SORREL_APP)
+                    .filter_map(|key| {
+                        let Ok(endpoint_id) = EndpointId::from_bytes(&key.public_key) else {
+                            tracing::error!(
+                                "Failed to parse endpoint ID from public key bytes, skipping device"
+                            );
+                            return None;
+                        };
+
+                        Some(Device {
+                            endpoint_id,
+                            name: key.session_device_name,
+                            session: Some(DeviceSession {
+                                id: key.session_id,
+                                last_used_at: key.session_last_used_at,
+                            }),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+
+                let _ = self.event_tx.send(DevicesEvent::AuthDevicesChanged {
+                    auth_devices: new_devices,
+                });
+
+                tracing::debug!("Refreshed devices");
+
+                Ok(())
+            }
+
+            response => {
+                anyhow::bail!("Failed to refresh keys, response: {:?}", response);
+            }
+        }
+    }
 }
 
 const SORREL_APP: &str = "stellar";

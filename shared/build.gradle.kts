@@ -116,6 +116,21 @@ uniffi {
             lift = "kotlin.uuid.Uuid.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
+        customType("EntityId") {
+            typeName = "kotlin.uuid.Uuid"
+            lift = "kotlin.uuid.Uuid.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("EntityKind") {
+            typeName = "kotlin.uuid.Uuid"
+            lift = "kotlin.uuid.Uuid.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("AttributeKind") {
+            typeName = "kotlin.uuid.Uuid"
+            lift = "kotlin.uuid.Uuid.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
     }
 }
 

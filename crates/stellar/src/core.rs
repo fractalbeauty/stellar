@@ -19,6 +19,7 @@ use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
+use uuid::Uuid;
 
 #[derive(uniffi::Object)]
 pub struct Core {
@@ -28,6 +29,7 @@ pub struct Core {
     peers: PeersTask,
     devices: DevicesTask,
 
+    endpoint_id: EndpointId,
     author: AuthorId,
 
     devices_change_handler: Arc<dyn DevicesChangeHandler>,
@@ -95,6 +97,10 @@ impl Core {
         self.cancellation_token.cancel();
     }
 
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
     pub async fn start_device_code_flow(&self) -> Result<String, CoreError> {
         let rx = self.devices.start_device_code_flow()?;
 
@@ -104,6 +110,11 @@ impl Core {
             .map_err(|_dropped| core_error!("Device code flow failed to start, sender dropped"))?;
 
         Ok(verification_uri_complete)
+    }
+
+    pub fn revoke_auth_session(&self, session: Uuid) -> Result<(), CoreError> {
+        self.devices.revoke_auth_session(session)?;
+        Ok(())
     }
 
     pub fn add_device(&self, endpoint_id: String, name: Option<String>) -> Result<(), CoreError> {
@@ -428,6 +439,7 @@ fn run_core_thread(
             new_key
         };
         let public_key = secret_key.public();
+        let endpoint_id = EndpointId::from(public_key);
         let author = AuthorId::new(*public_key.as_bytes());
 
         let database = Database::open(&data_dir).context("Failed to open database")?;
@@ -505,6 +517,7 @@ fn run_core_thread(
             schema,
             peers,
             devices,
+            endpoint_id,
             author,
             devices_change_handler,
             schema_change_handler,

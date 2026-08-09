@@ -5,7 +5,13 @@ pub use stellar_graph as graph;
 pub use stellar_log as log;
 pub use stellar_sync as sync;
 
+use stellar_sync::PublicKey;
+use uuid::Uuid;
+
 uniffi::setup_scaffolding!();
+
+uniffi::use_remote_type!(stellar_uniffi::Uuid);
+uniffi::use_remote_type!(stellar_uniffi::PublicKey);
 
 // On Android, expose a JNI function to initialize `ndk_context`
 #[cfg(target_os = "android")]

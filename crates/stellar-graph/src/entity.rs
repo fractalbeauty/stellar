@@ -211,9 +211,18 @@ impl std::fmt::Debug for AuthorId {
     }
 }
 
-uniffi::custom_newtype!(EntityId, Uuid);
-uniffi::custom_newtype!(EntityKind, Uuid);
-uniffi::custom_newtype!(AttributeKind, Uuid);
+uniffi::custom_type!(EntityId, Vec<u8>, {
+    lower: |entity| entity.inner().as_bytes().to_vec(),
+    try_lift: |bytes| Ok(EntityId(Uuid::from_slice(&bytes)?)),
+});
+uniffi::custom_type!(EntityKind, Vec<u8>, {
+    lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
+    try_lift: |bytes| Ok(EntityKind(Uuid::from_slice(&bytes)?)),
+});
+uniffi::custom_type!(AttributeKind, Vec<u8>, {
+    lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
+    try_lift: |bytes| Ok(AttributeKind(Uuid::from_slice(&bytes)?)),
+});
 
 #[cfg(test)]
 mod test {

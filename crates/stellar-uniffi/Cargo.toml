@@ -1,0 +1,9 @@
+[package]
+name = "stellar-uniffi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iroh = "1.0.0"
+uuid = "1.23.3"
+uniffi = "0.29.4"

@@ -4515,11 +4515,13 @@ dependencies = [
  "stellar-graph",
  "stellar-log",
  "stellar-sync",
+ "stellar-uniffi",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
  "tracing",
  "uniffi",
+ "uuid",
 ]
 
 [[package]]
@@ -4534,6 +4536,7 @@ dependencies = [
  "hex",
  "postcard",
  "serde",
+ "stellar-uniffi",
  "testdir",
  "tracing",
  "uniffi",
@@ -4583,6 +4586,7 @@ dependencies = [
  "sorrel-client",
  "stellar-graph",
  "stellar-riblt",
+ "stellar-uniffi",
  "testdir",
  "tokio",
  "tokio-stream",
@@ -4604,6 +4608,15 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "stellar-uniffi"
+version = "0.1.0"
+dependencies = [
+ "iroh",
+ "uniffi",
+ "uuid",
 ]
 
 [[package]]
@@ -5368,9 +5381,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.4"
+version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf80a72845275afea99e7f2b434723d3bc7e38470fcd1c7ed39a599c73319a53"
+checksum = "bf3923a6f5c4c6382e0b653c4117f48d631ea17f38ed86e2a828e6f7412f5239"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
