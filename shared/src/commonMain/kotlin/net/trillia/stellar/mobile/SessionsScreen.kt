@@ -20,7 +20,7 @@ fun SessionsScreen(core: Core) {
         Button(
             onClick = { viewModel.startDeviceCodeFlow() },
         ) {
-            Text("log in")
+            Text("log in to the main frame!!!")
         }
     }
 }

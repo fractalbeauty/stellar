@@ -1,0 +1,287 @@
+package net.trillia.stellar
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldColors
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.VerticalDivider
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import org.jetbrains.compose.resources.Font
+import stellar.shared.generated.resources.Res
+import stellar.shared.generated.resources.tahoma
+
+@Composable
+fun InspectPane() {
+    val myObj = mapOf(
+        "Field1" to "myfirst",
+        "Field2" to "mytwo!",
+        "Field3" to "mysan3333333563",
+    )
+
+    val myData = arrayOf(
+        mapOf(
+            "Field1" to "myfirst",
+            "Field2" to "mytwo!",
+            "Field3" to "mysan3333333563",
+        ),
+        mapOf(
+            "Field1" to "what",
+            "Field2" to "mytwo!",
+        ),
+        mapOf(
+            "Field0" to "0",
+            "Field2" to "w2323!",
+            "Field3" to "mysan3333333563",
+        )
+    )
+
+    var selected by remember { mutableStateOf<Int?>(null) }
+
+    val fields = FieldSet(
+        FieldInfo("Field1", 50.dp),
+        FieldInfo("Field2", 90.dp),
+        FieldInfo("Field3", 96.dp)
+    )
+
+    Column {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button("OK") {}
+            Button("Cancel long action") {}
+        }
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
+            DataTable(myData, fields, selected, { selected = it })
+            selected?.let { Inspector(myData[it], fields) }
+        }
+    }
+}
+
+@Composable
+private fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
+    val tahoma = FontFamily(Font(Res.font.tahoma))
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val cBgPressed = Color(0xFF000000)
+    val cFgPressed = Color(0xFFFFFFFF)
+    val cBgBase = Color(0xFFECECEC)
+    val cBgHl = Color(0xFFEFEFEF)
+    val shape = RoundedCornerShape(5.dp)
+    val bg = Brush.verticalGradient(listOf(cBgHl, cBgBase), 4f, 15f)
+    Row(
+        modifier = Modifier.clip(shape)
+            .widthIn(min = 78.dp)
+            .padding(2.dp)
+            .border(1.dp, Color(0xFF777777), shape = shape)
+            .clickable(onClick = onClick, interactionSource = interactionSource)
+            .run({
+                if (isPressed) background(cBgPressed, shape) else background(bg, shape)
+            }),
+        horizontalArrangement = Arrangement.Center
+
+    ) {
+        Text(
+            label,
+            fontFamily = tahoma,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 1.em,
+            modifier = Modifier.padding(vertical = 3.dp, horizontal = 7.dp),
+            color = if (isPressed) cFgPressed else Color.Unspecified,
+        )
+    }
+}
+
+
+data class FieldSet(val fields: List<FieldInfo>) {
+    constructor(vararg fieldInfo: FieldInfo) : this(listOf(*fieldInfo))
+}
+
+data class FieldInfo(val label: String, val width: Dp)
+
+@Composable
+private fun DataTable(
+    myData: Array<Map<String, String>>,
+    fields: FieldSet,
+    selected: Int?,
+    onSelected: (newValue: Int?) -> Unit
+) {
+    val bgInteractionSource = remember { MutableInteractionSource() }
+
+    Box(
+        modifier = Modifier.combinedClickable(
+            onClick = {
+                onSelected(null)
+            },
+            interactionSource = bgInteractionSource,
+        )
+    ) {
+        Column {
+            // draw headers
+            Row {
+                fields.fields.forEach {
+                    DataTableHeader(it)
+                }
+            }
+
+            // draw rows
+            myData.forEachIndexed { rowindex, row ->
+                val rowInteractionSource = remember { MutableInteractionSource() }
+                Row(modifier = Modifier.combinedClickable(onClick = {
+                    onSelected(rowindex)
+                }, interactionSource = rowInteractionSource)) {
+                    val rowVals = fields.fields.map { row.get(it.label) }
+                    rowVals.forEachIndexed { colindex, label ->
+                        DataTableCell(
+                            fields.fields[colindex],
+                            label,
+                            rowindex % 2 == 1,
+                            rowindex == selected
+                        )
+                    }
+                }
+            }
+        }
+
+        // draw first border
+        VerticalDivider(thickness = 1.dp)
+
+        // draw ending dividers
+        var widthSoFar = 0.dp
+        fields.fields.forEach {
+            VerticalDivider(
+                thickness = 1.dp, modifier = Modifier.offset(x = widthSoFar + it.width)
+                    .alpha(0.5F)
+            )
+            widthSoFar += it.width
+        }
+    }
+
+
+}
+
+val inspectorFieldLabelHeight = 24.dp
+
+@Composable
+fun Inspector(obj: Map<String, String>, fields: FieldSet) {
+    Column() {
+        obj.entries.forEach {
+            InspectorField(it.key, it.value, false, true)
+        }
+        // dummy field
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(top=inspectorFieldLabelHeight).height(32.dp).width(200.dp).background(Color(0xFFCCCCCC))) {
+            Text("+", fontWeight = FontWeight.Black, color = Color.White, fontSize = 2.em, lineHeight = 1.em)
+        }
+    }
+}
+
+@Composable
+private fun InspectorField(key: String, value: String, valIsRef: Boolean, valIsEditable: Boolean) {
+    var valueState = rememberTextFieldState(value) // XXX
+    Column {
+        Text(key, modifier = Modifier.height(inspectorFieldLabelHeight))
+        TextField(
+            valueState,
+            contentPadding = PaddingValues.Zero,
+            colors = TextFieldDefaults.colors(
+                unfocusedContainerColor = Color(0xFFEEEEEE),
+                focusedContainerColor = Color(0xFFDDDDDD)
+            ),
+            modifier = Modifier.height(32.dp).width(200.dp)
+        )
+    }
+}
+
+val fieldPadStart = 3.dp
+
+@Composable
+private fun DataTableCell(
+    fieldInfo: FieldInfo,
+    label: String?,
+    secondary: Boolean,
+    selected: Boolean
+) {
+    val tahoma = FontFamily(Font(Res.font.tahoma))
+    Text(
+        label.orEmpty(),
+        fontFamily = tahoma,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        lineHeight = 1.em,
+        maxLines = 1,
+        overflow = TextOverflow.MiddleEllipsis,
+        modifier = Modifier.width(fieldInfo.width).run(
+            {
+                if (selected) background(Color(0xFFB0D3FF)) else if (secondary) background(
+                    Color(
+                        0xFFEEEEEE
+                    )
+                ) else background(Color(0xFFFAFAFA))
+            }
+        ).padding(vertical = 2.dp).padding(start = fieldPadStart),
+    )
+}
+
+@Composable
+private fun DataTableHeader(fieldInfo: FieldInfo) {
+    val tahoma = FontFamily(Font(Res.font.tahoma))
+    Box(Modifier.background(Color(0xFFDADADA))) {
+        Text(
+            fieldInfo.label,
+            fontFamily = tahoma,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            lineHeight = 1.em,
+            maxLines = 1,
+            overflow = TextOverflow.MiddleEllipsis,
+            modifier = Modifier.width(fieldInfo.width).padding(vertical = 2.dp)
+                .padding(start = fieldPadStart),
+        )
+    }
+}
+
+@Composable
+@Preview
+fun InspectPanePreview() {
+    Box(modifier = Modifier.padding(16.dp)) {
+        InspectPane()
+    }
+}
