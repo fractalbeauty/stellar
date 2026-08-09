@@ -14,7 +14,7 @@ fun MainViewController(): UIViewController {
     val coreState: MutableState<Core?> = mutableStateOf(null)
     @OptIn(DelicateCoroutinesApi::class)
     GlobalScope.launch {
-        coreState.value = Core.spawn()
+        coreState.value = Core.spawn("default", SchemaManager())
     }
 
     return ComposeUIViewController {

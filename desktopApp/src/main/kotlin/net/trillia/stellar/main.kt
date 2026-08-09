@@ -13,7 +13,7 @@ fun main() =
     runBlocking {
         val core =
             try {
-                Core.spawn()
+                Core.spawn("default", SchemaManager())
             } catch (e: CoreException) {
                 logError("Failed to spawn core: $e")
                 return@runBlocking

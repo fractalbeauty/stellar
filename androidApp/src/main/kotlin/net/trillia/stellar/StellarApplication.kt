@@ -25,7 +25,7 @@ class StellarApplication : Application() {
 
         @OptIn(DelicateCoroutinesApi::class)
         GlobalScope.launch {
-            core = Core.spawn()
+            core = Core.spawn("default", SchemaManager())
             coreReady.value = true
         }
     }
