@@ -19,6 +19,8 @@ import kotlinx.coroutines.launch
 import net.trillia.stellar.Button
 import net.trillia.stellar.SchemaManager
 import uniffi.stellar.Core
+import uniffi.stellar.CoreException
+import uniffi.stellar.logError
 import uniffi.stellar_graph.ValueKind
 
 @Composable
@@ -32,23 +34,31 @@ fun SchemaEditor(
     val schema = maybeSchema ?: return
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        schema.entities.map { (entityKind, entitySchema) ->
+        schema.entities.entries.sortedBy { it.key }.forEach { (entityKind, entitySchema) ->
             Column {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(entitySchema.name)
 
                     Button("new attribute", onClick = {
                         coroutineScope.launch {
-                            core.createSchemaEntityAttribute(entityKind, "Attribute", ValueKind.TEXT)
+                            try {
+                                core.createSchemaEntityAttribute(entityKind, "Attribute", ValueKind.TEXT)
+                            } catch (e: CoreException) {
+                                logError("$e")
+                            }
                         }
                     })
 
                     Button("delete entity", onClick = {
                         coroutineScope.launch {
-                            core.deleteSchemaEntity(entityKind)
+                            try {
+                                core.deleteSchemaEntity(entityKind)
+                            } catch (e: CoreException) {
+                                logError("$e")
+                            }
                         }
                     })
                 }
@@ -60,7 +70,11 @@ fun SchemaEditor(
 
                             Button("delete attribute", onClick = {
                                 coroutineScope.launch {
-                                    core.deleteSchemaEntityAttribute(entityKind, attributeKind)
+                                    try {
+                                        core.deleteSchemaEntityAttribute(entityKind, attributeKind)
+                                    } catch (e: CoreException) {
+                                        logError("$e")
+                                    }
                                 }
                             })
                         }
@@ -71,7 +85,11 @@ fun SchemaEditor(
 
         Button("new entity", onClick = {
             coroutineScope.launch {
-                core.createSchemaEntity("Entity")
+                try {
+                    core.createSchemaEntity("Entity")
+                } catch (e: CoreException) {
+                    logError("$e")
+                }
             }
         })
     }

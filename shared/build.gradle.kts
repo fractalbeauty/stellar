@@ -110,6 +110,12 @@ uniffi {
         build = GobleyHost.current.rustTarget
         // Added in our temporary fork of Gobley, see `settings.gradle.kt`.
         generateAllNamespaces = true
+
+        customType("Uuid") {
+            typeName = "kotlin.uuid.Uuid"
+            lift = "kotlin.uuid.Uuid.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
     }
 }
 
