@@ -24,8 +24,8 @@ pub struct Core {
     cancellation_token: CancellationToken,
     database: Database,
     schema: SchemaStoreTask,
-    peers_task: PeersTask,
-    devices_task: DevicesTask,
+    peers: PeersTask,
+    devices: DevicesTask,
 
     author: AuthorId,
 
@@ -87,7 +87,7 @@ impl Core {
     }
 
     pub async fn start_device_code_flow(&self) -> Result<String, CoreError> {
-        let rx = self.devices_task.start_device_code_flow()?;
+        let rx = self.devices.start_device_code_flow()?;
 
         let verification_uri_complete = async_std::future::timeout(Duration::from_secs(10), rx)
             .await
@@ -102,7 +102,7 @@ impl Core {
             .parse::<EndpointId>()
             .map_err(|_| core_error!("Failed to parse endpoint ID"))?;
 
-        self.devices_task.add_device(endpoint_id, name)?;
+        self.devices.add_device(endpoint_id, name)?;
 
         Ok(())
     }
@@ -445,24 +445,24 @@ fn run_core_thread(
         let (endpoint_id_tx, endpoint_id_rx) = tokio::sync::watch::channel(None);
         let (devices_tx, devices_rx) = tokio::sync::watch::channel(Vec::new());
 
-        let peers_task = PeersTask::spawn(
+        let peers = PeersTask::spawn(
             cancellation_token.child_token(),
             PeersDatabaseAdapter::new(database.clone()),
             PeersSchemaAdapter::new(schema.clone()),
             devices_rx,
             secret_key,
         );
-        let _ = endpoint_id_tx.send(Some(peers_task.endpoint_id()));
+        let _ = endpoint_id_tx.send(Some(peers.endpoint_id()));
 
-        let devices_task =
+        let devices =
             DevicesTask::spawn(cancellation_token.child_token(), endpoint_id_rx, devices_tx);
 
         let core = Core {
             cancellation_token: cancellation_token.clone(),
             database,
             schema,
-            peers_task,
-            devices_task,
+            peers,
+            devices,
             author,
             schema_change_handler,
             log_guard,
