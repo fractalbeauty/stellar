@@ -29,7 +29,7 @@ use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
 #[derive(Debug, Clone)]
 pub struct SchemaStoreTask {
     schema_rx: watch::Receiver<Option<Schema>>,
-    event_tx: mpsc::UnboundedSender<SchemaStoreEvent>,
+    message_tx: mpsc::UnboundedSender<SchemaStoreMessage>,
 }
 
 impl SchemaStoreTask {
@@ -42,14 +42,14 @@ impl SchemaStoreTask {
         let store_path = data_dir.as_ref().join("schema_doc");
 
         let (schema_tx, schema_rx) = watch::channel(None);
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
 
         tokio::spawn({
             async move {
                 let mut store = SchemaStore { store_path };
 
                 let result = store
-                    .run(author, schema_tx, event_rx, cancellation_token)
+                    .run(author, schema_tx, message_rx, cancellation_token)
                     .await;
 
                 if let Err(error) = result {
@@ -62,7 +62,7 @@ impl SchemaStoreTask {
 
         Ok(Self {
             schema_rx,
-            event_tx,
+            message_tx,
         })
     }
 
@@ -75,21 +75,21 @@ impl SchemaStoreTask {
 
         let (result_tx, result_rx) = oneshot::channel();
 
-        self.event_tx
-            .send(SchemaStoreEvent::Modify {
+        self.message_tx
+            .send(SchemaStoreMessage::Modify {
                 operation,
                 result_tx,
             })
-            .map_err(|e| anyhow::anyhow!("Failed to send SchemaStoreEvent::Modify: {e:?}"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to send SchemaStoreMessage::Modify: {e:?}"))?;
 
         let result_any = result_rx
             .await
-            .context("Failed to get SchemaStoreEvent::Modify result")?
-            .ok_or_else(|| anyhow::anyhow!("SchemaStoreEvent::Modify failed"))?;
+            .context("Failed to get SchemaStoreMessage::Modify result")?
+            .ok_or_else(|| anyhow::anyhow!("SchemaStoreMessage::Modify failed"))?;
 
         let result = result_any
             .downcast::<R>()
-            .map_err(|_| anyhow::anyhow!("Failed to downcast SchemaStoreEvent::Modify result"))?;
+            .map_err(|_| anyhow::anyhow!("Failed to downcast SchemaStoreMessage::Modify result"))?;
         Ok(*result)
     }
 
@@ -100,14 +100,14 @@ impl SchemaStoreTask {
     pub async fn fork_doc_for_sync(&self) -> Result<AutoCommit, anyhow::Error> {
         let (result_tx, result_rx) = oneshot::channel();
 
-        self.event_tx
-            .send(SchemaStoreEvent::ForkDocForSync { result_tx })
-            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreEvent::ForkDocForSync"))?;
+        self.message_tx
+            .send(SchemaStoreMessage::ForkDocForSync { result_tx })
+            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreMessage::ForkDocForSync"))?;
 
         let result = result_rx
             .await
-            .context("Failed to get SchemaStoreEvent::ForkDocForSync result")?
-            .context("SchemaStoreEvent::ForkDocForSync failed")?;
+            .context("Failed to get SchemaStoreMessage::ForkDocForSync result")?
+            .context("SchemaStoreMessage::ForkDocForSync failed")?;
 
         Ok(result)
     }
@@ -115,17 +115,17 @@ impl SchemaStoreTask {
     pub async fn merge_doc_for_sync(&self, doc: AutoCommit) -> Result<(), anyhow::Error> {
         let (result_tx, result_rx) = oneshot::channel();
 
-        self.event_tx
-            .send(SchemaStoreEvent::MergeDocForSync {
+        self.message_tx
+            .send(SchemaStoreMessage::MergeDocForSync {
                 doc: Box::new(doc),
                 result_tx,
             })
-            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreEvent::MergeDocForSync"))?;
+            .map_err(|_| anyhow::anyhow!("Failed to send SchemaStoreMessage::MergeDocForSync"))?;
 
         result_rx
             .await
-            .context("Failed to get SchemaStoreEvent::MergeDocForSync result")?
-            .context("SchemaStoreEvent::MergeDocForSync failed")?;
+            .context("Failed to get SchemaStoreMessage::MergeDocForSync result")?
+            .context("SchemaStoreMessage::MergeDocForSync failed")?;
 
         Ok(())
     }
@@ -154,7 +154,7 @@ impl SchemaStore {
         &mut self,
         author: AuthorId,
         schema_tx: watch::Sender<Option<Schema>>,
-        mut event_rx: mpsc::UnboundedReceiver<SchemaStoreEvent>,
+        mut message_rx: mpsc::UnboundedReceiver<SchemaStoreMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("SchemaStore starting");
@@ -200,15 +200,15 @@ impl SchemaStore {
 
         loop {
             tokio::select! {
-                result = event_rx.recv() => {
+                result = message_rx.recv() => {
                     match result {
-                        Some(event) => {
-                            if let Err(e) = self.handle_event(&schema_tx, &mut doc, &mut batch, event).await {
-                                tracing::error!("SchemaStore failed to handle event: {e:#}");
+                        Some(message) => {
+                            if let Err(e) = self.handle_message(&schema_tx, &mut doc, &mut batch, message).await {
+                                tracing::error!("SchemaStore failed to handle message: {e:#}");
                             }
                         },
                         None => {
-                            tracing::debug!("SchemaStore event rx closed");
+                            tracing::debug!("SchemaStore message rx closed");
                         },
                     }
                 }
@@ -230,15 +230,15 @@ impl SchemaStore {
         Ok(())
     }
 
-    async fn handle_event(
+    async fn handle_message(
         &mut self,
         schema_tx: &watch::Sender<Option<Schema>>,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
-        event: SchemaStoreEvent,
+        message: SchemaStoreMessage,
     ) -> Result<(), anyhow::Error> {
-        match event {
-            SchemaStoreEvent::Modify {
+        match message {
+            SchemaStoreMessage::Modify {
                 operation,
                 result_tx,
             } => {
@@ -249,7 +249,7 @@ impl SchemaStore {
                         let result = operation(projection.schema);
                         let _ = result_tx.send(Some(result));
 
-                        tracing::debug!("SchemaStore applied SchemaStoreEvent::Modify")
+                        tracing::debug!("SchemaStore applied SchemaStoreMessage::Modify")
                     }
                     None => {
                         let mut schema = match Schema::load(doc, &ROOT, "schema")
@@ -271,18 +271,18 @@ impl SchemaStore {
                         }));
 
                         tracing::debug!(
-                            "SchemaStore started SchemaEditBatch and applied SchemaStoreEvent::Modify"
+                            "SchemaStore started SchemaEditBatch and applied SchemaStoreMessage::Modify"
                         );
                     }
                 }
 
                 Ok(())
             }
-            SchemaStoreEvent::ForkDocForSync { result_tx } => {
+            SchemaStoreMessage::ForkDocForSync { result_tx } => {
                 let _ = result_tx.send(Ok(doc.fork()));
                 Ok(())
             }
-            SchemaStoreEvent::MergeDocForSync {
+            SchemaStoreMessage::MergeDocForSync {
                 doc: mut incoming_doc,
                 result_tx,
             } => {
@@ -359,7 +359,7 @@ impl SchemaStore {
     }
 }
 
-enum SchemaStoreEvent {
+enum SchemaStoreMessage {
     Modify {
         operation: Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>,
         result_tx: oneshot::Sender<Option<Box<dyn Any + Send>>>,
