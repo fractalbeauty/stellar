@@ -1,8 +1,9 @@
 use clap::{Args, Parser};
 use std::{sync::Arc, time::Duration};
 use stellar::{
-    core::{Core, SchemaChangeHandler},
+    core::{Core, DevicesChangeHandler, SchemaChangeHandler},
     graph::schema::Schema,
+    sync::devices::DevicesState,
 };
 
 /// Stellar TUI
@@ -40,9 +41,13 @@ async fn main() {
         "default".to_string()
     };
 
-    let core = Core::spawn(profile, Arc::new(TuiSchemaChangeHandler))
-        .await
-        .expect("Should spawn core");
+    let core = Core::spawn(
+        profile,
+        Arc::new(TuiDevicesChangeHandler),
+        Arc::new(TuiSchemaChangeHandler),
+    )
+    .await
+    .expect("Should spawn core");
 
     if std::env::var("STELLAR_ADD_ENTITY").is_ok_and(|var| !var.is_empty()) {
         core.add_random_entity().unwrap();
@@ -70,6 +75,13 @@ async fn main() {
 
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+struct TuiDevicesChangeHandler;
+impl DevicesChangeHandler for TuiDevicesChangeHandler {
+    fn on_change(&self, devices: DevicesState) {
+        tracing::debug!("TuiDevicesChangeHandler on_change, devices: {devices:?}");
     }
 }
 

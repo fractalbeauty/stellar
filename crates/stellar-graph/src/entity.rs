@@ -211,7 +211,6 @@ impl std::fmt::Debug for AuthorId {
     }
 }
 
-uniffi::custom_type!(Uuid, Vec<u8>, { remote });
 uniffi::custom_newtype!(EntityId, Uuid);
 uniffi::custom_newtype!(EntityKind, Uuid);
 uniffi::custom_newtype!(AttributeKind, Uuid);

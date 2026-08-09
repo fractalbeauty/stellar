@@ -12,6 +12,7 @@ use stellar_graph::entity::{
 };
 use stellar_graph::schema::{AttributeSchema, EntitySchema, Schema};
 use stellar_log::LogGuard;
+use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
 use stellar_sync::schema::SchemaStoreTask;
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
@@ -29,6 +30,7 @@ pub struct Core {
 
     author: AuthorId,
 
+    devices_change_handler: Arc<dyn DevicesChangeHandler>,
     schema_change_handler: Arc<dyn SchemaChangeHandler>,
 
     #[allow(unused)]
@@ -40,6 +42,7 @@ impl Core {
     #[uniffi::constructor]
     pub async fn spawn(
         profile: String,
+        devices_change_handler: Arc<dyn DevicesChangeHandler>,
         schema_change_handler: Arc<dyn SchemaChangeHandler>,
     ) -> Result<Arc<Self>, CoreError> {
         let log_guard = stellar_log::init(None)?;
@@ -49,7 +52,13 @@ impl Core {
         std::thread::spawn({
             move || {
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    run_core_thread(profile, log_guard, core_tx, schema_change_handler)
+                    run_core_thread(
+                        profile,
+                        log_guard,
+                        core_tx,
+                        devices_change_handler,
+                        schema_change_handler,
+                    )
                 }));
 
                 match result {
@@ -363,6 +372,12 @@ pub struct CoreAttribute {
     // version: CoreVersion,
 }
 
+/// Foreign trait for receiving devices change events.
+#[uniffi::export(with_foreign)]
+pub trait DevicesChangeHandler: Send + Sync {
+    fn on_change(&self, devices_state: DevicesState);
+}
+
 /// Foreign trait for receiving schema change events.
 #[uniffi::export(with_foreign)]
 pub trait SchemaChangeHandler: Send + Sync {
@@ -373,6 +388,7 @@ fn run_core_thread(
     profile: String,
     log_guard: Option<LogGuard>,
     core_tx: oneshot::Sender<Core>,
+    devices_change_handler: Arc<dyn DevicesChangeHandler>,
     schema_change_handler: Arc<dyn SchemaChangeHandler>,
 ) -> Result<(), anyhow::Error> {
     debug!("Core thread started");
@@ -461,6 +477,28 @@ fn run_core_thread(
             devices_tx,
         );
 
+        // Spawn task to forward devices state changes to provided DevicesChangeHandler
+        tokio::task::spawn({
+            let devices_change_handler = devices_change_handler.clone();
+            let mut state_rx = devices.watch_state();
+            async move {
+                loop {
+                    match state_rx.changed().await {
+                        Ok(()) => {
+                            let state = state_rx.borrow();
+                            if let Some(state) = state.as_ref() {
+                                devices_change_handler.on_change(state.clone());
+                            }
+                        }
+                        Err(_) => {
+                            tracing::debug!("SchemaChangeHandler task exiting");
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
         let core = Core {
             cancellation_token: cancellation_token.clone(),
             database,
@@ -468,6 +506,7 @@ fn run_core_thread(
             peers,
             devices,
             author,
+            devices_change_handler,
             schema_change_handler,
             log_guard,
         };

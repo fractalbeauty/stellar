@@ -19,6 +19,7 @@ use uuid::Uuid;
 /// Handle to the devices task
 pub struct DevicesTask {
     cancellation_token: CancellationToken,
+    state_rx: watch::Receiver<Option<DevicesState>>,
     message_tx: mpsc::UnboundedSender<DevicesMessage>,
 }
 
@@ -43,6 +44,7 @@ impl DevicesTask {
     ) -> Self {
         let data_path = data_dir.as_ref().join("devices.json");
 
+        let (state_tx, state_rx) = watch::channel(None);
         let (message_tx, message_rx) = mpsc::unbounded_channel();
 
         tokio::spawn({
@@ -53,6 +55,7 @@ impl DevicesTask {
                 let mut devices = Devices {
                     endpoint_id_rx,
                     devices_tx,
+                    state_tx,
                     message_rx,
 
                     event_tx,
@@ -80,6 +83,7 @@ impl DevicesTask {
 
         Self {
             cancellation_token,
+            state_rx,
             message_tx,
         }
     }
@@ -87,6 +91,10 @@ impl DevicesTask {
     pub fn cancel(&self) {
         debug!("Cancelling devices task");
         self.cancellation_token.cancel();
+    }
+
+    pub fn watch_state(&self) -> watch::Receiver<Option<DevicesState>> {
+        self.state_rx.clone()
     }
 
     pub fn start_device_code_flow(&self) -> Result<oneshot::Receiver<String>, anyhow::Error> {
@@ -119,6 +127,7 @@ impl DevicesTask {
 struct Devices {
     endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
     devices_tx: watch::Sender<Vec<Device>>,
+    state_tx: watch::Sender<Option<DevicesState>>,
     message_rx: mpsc::UnboundedReceiver<DevicesMessage>,
 
     event_tx: mpsc::UnboundedSender<DevicesEvent>,
@@ -161,6 +170,8 @@ impl Devices {
         self.load_data()
             .await
             .context("Failed to load devices data")?;
+
+        self.notify_state();
 
         loop {
             tokio::select! {
@@ -224,7 +235,9 @@ impl Devices {
                     name,
                     session: None,
                 });
-                self.notify_devices()?;
+
+                self.notify_devices_and_state();
+
                 self.save_data()
                     .await
                     .context("Failed to save devices data")?;
@@ -239,28 +252,57 @@ impl Devices {
             DevicesEvent::DeviceCodeFlowFinished { access_token } => {
                 self.set_access_token_without_saving(access_token)?;
 
+                self.notify_state();
+
                 self.save_data()
                     .await
                     .context("Failed to save devices data")?;
             }
             DevicesEvent::AuthDevicesChanged { auth_devices } => {
                 self.auth_devices = auth_devices;
-                self.notify_devices()?;
+
+                self.notify_devices_and_state();
             }
         }
 
         Ok(())
     }
 
-    fn notify_devices(&self) -> Result<(), anyhow::Error> {
+    fn notify_devices_and_state(&self) {
         let all_devices = self
             .added_devices
             .iter()
             .chain(self.auth_devices.iter())
             .cloned()
             .collect();
-        self.devices_tx.send(all_devices)?;
-        Ok(())
+        self.devices_tx.send_replace(all_devices);
+
+        self.notify_state();
+    }
+
+    fn notify_state(&self) {
+        let devices = self
+            .auth_devices
+            .iter()
+            .chain(self.added_devices.iter())
+            .map(|device| DevicesStateDevice {
+                endpoint_id: device.endpoint_id,
+                name: device.name.clone(),
+                session: device
+                    .session
+                    .as_ref()
+                    .map(|session| DevicesStateDeviceSession {
+                        id: session.id,
+                        last_used_at: session.last_used_at,
+                    }),
+            })
+            .collect();
+
+        let state = DevicesState {
+            authed: self.access_token.is_some(),
+            devices,
+        };
+        self.state_tx.send_replace(Some(state));
     }
 
     /// Sets the access token and starts the auth task
@@ -323,6 +365,27 @@ impl Devices {
     }
 }
 
+/// Devices state exposed to the UI
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DevicesState {
+    authed: bool,
+    devices: Vec<DevicesStateDevice>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DevicesStateDevice {
+    pub endpoint_id: EndpointId,
+    pub name: Option<String>,
+    pub session: Option<DevicesStateDeviceSession>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DevicesStateDeviceSession {
+    pub id: Uuid,
+    pub last_used_at: u64,
+}
+
+/// Persisted devices data
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct DevicesData {
     access_token: Option<String>,
