@@ -2,10 +2,11 @@ use anyhow::Context;
 use futures::StreamExt;
 use iroh::EndpointId;
 use reqwest::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sorrel_client::api::keys::{ListKeysResponse, SetKeyRequest};
 use std::{
     collections::HashMap,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -33,11 +34,15 @@ pub enum DevicesMessage {
 }
 
 impl DevicesTask {
+    /// `data_dir` is the directory devices data should be persisted to.
     pub fn spawn(
         cancellation_token: CancellationToken,
+        data_dir: impl AsRef<Path>,
         endpoint_id_rx: watch::Receiver<Option<EndpointId>>,
         devices_tx: watch::Sender<Vec<Device>>,
     ) -> Self {
+        let data_path = data_dir.as_ref().join("devices.json");
+
         let (message_tx, message_rx) = mpsc::unbounded_channel();
 
         tokio::spawn({
@@ -53,8 +58,12 @@ impl DevicesTask {
                     event_tx,
                     event_rx,
 
+                    data_path,
+
                     added_devices: Vec::new(),
                     auth_devices: Vec::new(),
+
+                    access_token: None,
 
                     auth: None,
                 };
@@ -115,8 +124,14 @@ struct Devices {
     event_tx: mpsc::UnboundedSender<DevicesEvent>,
     event_rx: mpsc::UnboundedReceiver<DevicesEvent>,
 
+    /// The file to load/save data to
+    data_path: PathBuf,
+
     added_devices: Vec<Device>,
     auth_devices: Vec<Device>,
+
+    /// The current access token
+    access_token: Option<String>,
 
     auth: Option<AuthTask>,
 }
@@ -142,6 +157,11 @@ enum DevicesEvent {
 
 impl Devices {
     async fn run(&mut self, cancellation_token: CancellationToken) -> Result<(), anyhow::Error> {
+        // Try to load persisted data and configure stuff
+        self.load_data()
+            .await
+            .context("Failed to load devices data")?;
+
         loop {
             tokio::select! {
                 Some(message) = self.message_rx.recv() => {
@@ -205,6 +225,9 @@ impl Devices {
                     session: None,
                 });
                 self.notify_devices()?;
+                self.save_data()
+                    .await
+                    .context("Failed to save devices data")?;
             }
         }
 
@@ -214,15 +237,11 @@ impl Devices {
     async fn handle_event(&mut self, event: DevicesEvent) -> Result<(), anyhow::Error> {
         match event {
             DevicesEvent::DeviceCodeFlowFinished { access_token } => {
-                if self.auth.is_some() {
-                    anyhow::bail!("Already authorized, ignoring new access token");
-                }
+                self.set_access_token_without_saving(access_token)?;
 
-                self.auth = Some(spawn_auth_task(
-                    self.endpoint_id_rx.clone(),
-                    self.event_tx.clone(),
-                    access_token,
-                ));
+                self.save_data()
+                    .await
+                    .context("Failed to save devices data")?;
             }
             DevicesEvent::AuthDevicesChanged { auth_devices } => {
                 self.auth_devices = auth_devices;
@@ -243,6 +262,71 @@ impl Devices {
         self.devices_tx.send(all_devices)?;
         Ok(())
     }
+
+    /// Sets the access token and starts the auth task
+    fn set_access_token_without_saving(
+        &mut self,
+        access_token: String,
+    ) -> Result<(), anyhow::Error> {
+        if self.auth.is_some() {
+            anyhow::bail!("Already authorized, ignoring new access token");
+        }
+
+        self.access_token = Some(access_token.clone());
+
+        self.auth = Some(spawn_auth_task(
+            self.endpoint_id_rx.clone(),
+            self.event_tx.clone(),
+            access_token,
+        ));
+
+        Ok(())
+    }
+
+    /// Loads data from file (or initializes with defaults) and configures stuff
+    async fn load_data(&mut self) -> Result<(), anyhow::Error> {
+        let data = match tokio::fs::read(&self.data_path).await {
+            Ok(bytes) => {
+                tracing::debug!("Devices task read data");
+                serde_json::from_slice::<DevicesData>(&bytes)
+                    .context("Failed to deserialize devices data")?
+            }
+            Err(e) => {
+                tracing::debug!("Devices failed to read data, using defaults: {e:?}");
+                DevicesData::default()
+            }
+        };
+
+        if let Some(access_token) = data.access_token {
+            self.set_access_token_without_saving(access_token)?;
+        }
+
+        Ok(())
+    }
+
+    /// Saves data to file
+    async fn save_data(&mut self) -> Result<(), anyhow::Error> {
+        let data = DevicesData {
+            access_token: self.access_token.clone(),
+        };
+
+        let json =
+            serde_json::to_string_pretty(&data).context("Failed to serialize devices data")?;
+
+        tokio::fs::write(&self.data_path, json.as_bytes())
+            .await
+            .context("Failed to write devices data file")?;
+
+        tracing::debug!("Devices task saved data");
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DevicesData {
+    access_token: Option<String>,
+    // added_devices
 }
 
 /// Handle for the auth task

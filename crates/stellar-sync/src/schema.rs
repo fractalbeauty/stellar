@@ -33,13 +33,13 @@ pub struct SchemaStoreTask {
 }
 
 impl SchemaStoreTask {
-    /// `dir` is the directory the schema file should be persisted to.
+    /// `data_dir` is the directory the schema file should be persisted to.
     pub fn spawn(
         cancellation_token: CancellationToken,
-        dir: impl AsRef<Path>,
+        data_dir: impl AsRef<Path>,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
-        let store_path = dir.as_ref().join("schema_doc");
+        let store_path = data_dir.as_ref().join("schema_doc");
 
         let (schema_tx, schema_rx) = watch::channel(None);
         let (event_tx, event_rx) = mpsc::unbounded_channel();

@@ -454,8 +454,12 @@ fn run_core_thread(
         );
         let _ = endpoint_id_tx.send(Some(peers.endpoint_id()));
 
-        let devices =
-            DevicesTask::spawn(cancellation_token.child_token(), endpoint_id_rx, devices_tx);
+        let devices = DevicesTask::spawn(
+            cancellation_token.child_token(),
+            data_dir,
+            endpoint_id_rx,
+            devices_tx,
+        );
 
         let core = Core {
             cancellation_token: cancellation_token.clone(),

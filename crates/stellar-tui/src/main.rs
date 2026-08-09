@@ -52,18 +52,17 @@ async fn main() {
             .await
             .unwrap();
     }
+    if std::env::var("STELLAR_AUTH").is_ok_and(|var| !var.is_empty()) {
+        let verification_uri_complete = core
+            .start_device_code_flow()
+            .await
+            .expect("Should start device code flow");
 
-    // let _ = dbg!(core.debug_entities());
-
-    // let verification_uri_complete = core
-    //     .start_device_code_flow()
-    //     .await
-    //     .expect("Should start device code flow");
-
-    // println!(
-    //     "Visit the following URL to authorize the device: {}",
-    //     verification_uri_complete
-    // );
+        println!(
+            "Visit the following URL to authorize the device: {}",
+            verification_uri_complete
+        );
+    }
 
     if let Ok(endpoint_id) = std::env::var("STELLAR_CONNECT_TO") {
         core.add_device(endpoint_id, None).unwrap();
