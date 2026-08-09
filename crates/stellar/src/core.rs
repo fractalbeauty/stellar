@@ -29,6 +29,8 @@ pub struct Core {
 
     author: AuthorId,
 
+    schema_change_handler: Arc<dyn SchemaChangeHandler>,
+
     #[allow(unused)]
     log_guard: Option<LogGuard>,
 }
@@ -158,34 +160,41 @@ impl Core {
 
     /// Creates an entity in the schema, returning its ID.
     pub async fn create_schema_entity(&self, name: String) -> Result<EntityKind, CoreError> {
-        let entity = EntityKind::random();
-        self.schema
-            .modify(move |schema| {
+        let (schema, entity_kind) = self
+            .schema
+            .modify(move |schema| -> Result<_, anyhow::Error> {
+                let entity_kind = EntityKind::random();
                 schema.entities.insert(
-                    entity,
+                    entity_kind,
                     EntitySchema {
                         name,
                         attributes: HashMap::new(),
                     },
                 );
+
+                Ok((schema.clone(), entity_kind))
             })
-            .await?;
-        Ok(entity)
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(entity_kind)
     }
 
     /// Deletes an entity in the schema.
     pub async fn delete_schema_entity(&self, entity: EntityKind) -> Result<(), CoreError> {
-        self.schema
+        let schema = self
+            .schema
             .modify(move |schema| {
                 let removed = schema.entities.remove(&entity);
                 if removed.is_none() {
                     anyhow::bail!("Entity kind does not exist");
                 }
 
-                Ok(())
+                Ok(schema.clone())
             })
             .await?
             .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
         Ok(())
     }
 
@@ -195,7 +204,8 @@ impl Core {
         entity: EntityKind,
         name: String,
     ) -> Result<(), CoreError> {
-        self.schema
+        let schema = self
+            .schema
             .modify(move |schema| {
                 let Some(entity_schema) = schema.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
@@ -203,10 +213,11 @@ impl Core {
 
                 entity_schema.name = name;
 
-                Ok(())
+                Ok(schema.clone())
             })
             .await?
             .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
         Ok(())
     }
 
@@ -217,7 +228,8 @@ impl Core {
         name: String,
         value: ValueKind,
     ) -> Result<(), CoreError> {
-        self.schema
+        let schema = self
+            .schema
             .modify(move |schema| {
                 let Some(entity_schema) = schema.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
@@ -227,10 +239,11 @@ impl Core {
                     .attributes
                     .insert(AttributeKind::random(), AttributeSchema { name, value });
 
-                Ok(())
+                Ok(schema.clone())
             })
             .await?
             .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
         Ok(())
     }
 
@@ -240,7 +253,8 @@ impl Core {
         entity: EntityKind,
         attribute: AttributeKind,
     ) -> Result<(), CoreError> {
-        self.schema
+        let schema = self
+            .schema
             .modify(move |schema| {
                 let Some(entity_schema) = schema.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
@@ -251,10 +265,11 @@ impl Core {
                     anyhow::bail!("Attribute kind does not exist");
                 }
 
-                Ok(())
+                Ok(schema.clone())
             })
             .await?
             .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
         Ok(())
     }
 
@@ -266,7 +281,8 @@ impl Core {
         name: Option<String>,
         value: Option<ValueKind>,
     ) -> Result<(), CoreError> {
-        self.schema
+        let schema = self
+            .schema
             .modify(move |schema| {
                 let Some(entity_schema) = schema.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
@@ -283,12 +299,19 @@ impl Core {
                     attribute_schema.value = value;
                 }
 
-                Ok(())
+                Ok(schema.clone())
             })
             .await?
             .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
         Ok(())
     }
+}
+
+#[derive(uniffi::Record)]
+pub struct CreateSchemaEntityResult {
+    schema: Schema,
+    entity_kind: EntityKind,
 }
 
 impl Core {
@@ -399,6 +422,7 @@ fn run_core_thread(
 
         // Spawn task to forward schema changes to provided SchemaChangeHandler
         tokio::task::spawn({
+            let schema_change_handler = schema_change_handler.clone();
             let mut schema_rx = schema.watch_schema();
             async move {
                 loop {
@@ -440,6 +464,7 @@ fn run_core_thread(
             peers_task,
             devices_task,
             author,
+            schema_change_handler,
             log_guard,
         };
         core_tx.send(core).expect("Should send core");
