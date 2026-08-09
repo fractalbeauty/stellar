@@ -7,17 +7,30 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import net.trillia.stellar.DevicesManager
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
 import uniffi.stellar.logError
+import uniffi.stellar_sync.DevicesState
 
 class SessionsViewModel(
     private val core: Core,
+    private val devicesManager: DevicesManager,
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(SessionsUiState())
 
     val uiState: StateFlow<SessionsUiState>
         get() = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            devicesManager.devicesState.collect { devicesState ->
+                _uiState.update {
+                    it.copy(devicesState = devicesState)
+                }
+            }
+        }
+    }
 
     fun startDeviceCodeFlow() {
         viewModelScope.launch {
@@ -35,4 +48,5 @@ class SessionsViewModel(
 
 data class SessionsUiState(
     val verificationUriComplete: String? = null,
+    val devicesState: DevicesState? = null,
 )

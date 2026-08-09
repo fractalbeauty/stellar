@@ -11,19 +11,20 @@ import platform.UIKit.UIViewController
 import uniffi.stellar.Core
 
 fun MainViewController(): UIViewController {
+    val devicesManager = DevicesManager()
     val schemaManager = SchemaManager()
 
     val coreState: MutableState<Core?> = mutableStateOf(null)
     @OptIn(DelicateCoroutinesApi::class)
     GlobalScope.launch {
-        coreState.value = Core.spawn(profile = "default", schemaChangeHandler = schemaManager)
+        coreState.value = Core.spawn(profile = "default", devicesChangeHandler = devicesManager, schemaChangeHandler = schemaManager)
     }
 
     return ComposeUIViewController {
         val core by coreState
 
         core?.let { core ->
-            App(core = core, schemaManager = schemaManager)
+            App(core = core, devicesManager = devicesManager, schemaManager = schemaManager)
         }
     }
 }

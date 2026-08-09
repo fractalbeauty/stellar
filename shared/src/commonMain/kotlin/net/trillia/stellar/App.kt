@@ -2,6 +2,7 @@ package net.trillia.stellar
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeContentPadding
@@ -16,6 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -28,11 +31,14 @@ import kotlinx.coroutines.launch
 import net.trillia.stellar.desktop.SchemaEditor
 import net.trillia.stellar.mobile.SessionsScreen
 import uniffi.stellar.Core
+import uniffi.stellar.CoreException
+import uniffi.stellar.logError
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun App(
     core: Core,
+    devicesManager: DevicesManager,
     schemaManager: SchemaManager,
 ) {
     MaterialTheme {
@@ -45,12 +51,19 @@ fun App(
         ) {
             CompositionLocalProvider(LocalRippleConfiguration provides null) {
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
-                    SchemaEditor(core, schemaManager)
-                    return@CompositionLocalProvider
+                    var screen by remember { mutableStateOf(0) }
 
-//            SessionsScreen(core = core)
+                    Row {
+                        Button("schema", onClick = { screen = 0 })
+                        Button("devices", onClick = { screen = 1 })
+                        Button("inspect", onClick = { screen = 2 })
+                    }
 
-                    InspectPane()
+                    when (screen) {
+                        0 -> SchemaEditor(core, schemaManager)
+                        1 -> SessionsScreen(core = core, devicesManager = devicesManager)
+                        2 -> InspectPane()
+                    }
                 }
             }
         }

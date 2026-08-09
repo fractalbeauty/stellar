@@ -11,11 +11,12 @@ import uniffi.stellar.logError
 
 fun main() =
     runBlocking {
+        val devicesManager = DevicesManager()
         val schemaManager = SchemaManager()
 
         val core =
             try {
-                Core.spawn(profile = "default", schemaChangeHandler = schemaManager)
+                Core.spawn(profile = "default", devicesChangeHandler = devicesManager, schemaChangeHandler = schemaManager)
             } catch (e: CoreException) {
                 logError("Failed to spawn core: $e")
                 return@runBlocking
@@ -28,6 +29,7 @@ fun main() =
             ) {
                 App(
                     core = core,
+                    devicesManager = devicesManager,
                     schemaManager = schemaManager,
                 )
             }

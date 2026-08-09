@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val coreReady by app.coreReady.collectAsState()
             if (coreReady) {
-                App(core = app.core, schemaManager = app.schemaManager)
+                App(core = app.core, devicesManager = app.devicesManager, schemaManager = app.schemaManager)
             }
         }
     }
