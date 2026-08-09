@@ -148,6 +148,11 @@ impl Peers {
                     for device in &devices {
                         let remote_id = device.endpoint_id;
 
+                        // Don't attempt to connect to ourselves
+                        if remote_id == endpoint.id() {
+                            continue;
+                        }
+
                         if !self.peer_tasks.contains_key(&remote_id) {
                             tracing::debug!("Endpoint {} is in the devices list but not connected, connecting", remote_id);
 
