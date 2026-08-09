@@ -8,9 +8,9 @@ use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
 use stellar_graph::entity::{
-    AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version,
+    AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, ValueKind, Version,
 };
-use stellar_graph::schema::{EntitySchema, Schema};
+use stellar_graph::schema::{AttributeSchema, EntitySchema, Schema};
 use stellar_log::LogGuard;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
 use stellar_sync::schema::SchemaStoreTask;
@@ -156,7 +156,7 @@ impl Core {
         Ok(())
     }
 
-    /// Creates an entity kind, returning its ID.
+    /// Creates an entity in the schema, returning its ID.
     pub async fn create_schema_entity(&self, name: String) -> Result<EntityKind, CoreError> {
         let entity = EntityKind::random();
         self.schema
@@ -173,19 +173,120 @@ impl Core {
         Ok(entity)
     }
 
-    /// Deletes an entity kind.
+    /// Deletes an entity in the schema.
     pub async fn delete_schema_entity(&self, entity: EntityKind) -> Result<(), CoreError> {
         self.schema
             .modify(move |schema| {
-                if !schema.entities.contains_key(&entity) {
+                let removed = schema.entities.remove(&entity);
+                if removed.is_none() {
                     anyhow::bail!("Entity kind does not exist");
                 }
 
-                schema.entities.remove(&entity);
                 Ok(())
             })
             .await?
-            .context("Failed to delete entity")?;
+            .context("Failed to modify schema")?;
+        Ok(())
+    }
+
+    /// Updates an entity in the schema.
+    pub async fn update_schema_entity(
+        &self,
+        entity: EntityKind,
+        name: String,
+    ) -> Result<(), CoreError> {
+        self.schema
+            .modify(move |schema| {
+                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                    anyhow::bail!("Entity kind does not exist");
+                };
+
+                entity_schema.name = name;
+
+                Ok(())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        Ok(())
+    }
+
+    /// Creates an attribute for an entity in the schema.
+    pub async fn create_schema_entity_attribute(
+        &self,
+        entity: EntityKind,
+        name: String,
+        value: ValueKind,
+    ) -> Result<(), CoreError> {
+        self.schema
+            .modify(move |schema| {
+                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                    anyhow::bail!("Entity kind does not exist");
+                };
+
+                entity_schema
+                    .attributes
+                    .insert(AttributeKind::random(), AttributeSchema { name, value });
+
+                Ok(())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        Ok(())
+    }
+
+    /// Deletes an attribute for an entity in the schema.
+    pub async fn delete_schema_entity_attribute(
+        &self,
+        entity: EntityKind,
+        attribute: AttributeKind,
+    ) -> Result<(), CoreError> {
+        self.schema
+            .modify(move |schema| {
+                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                    anyhow::bail!("Entity kind does not exist");
+                };
+
+                let removed = entity_schema.attributes.remove(&attribute);
+                if removed.is_none() {
+                    anyhow::bail!("Attribute kind does not exist");
+                }
+
+                Ok(())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        Ok(())
+    }
+
+    /// Updates an attribute for an entity in the schema.
+    pub async fn update_schema_entity_attribute(
+        &self,
+        entity: EntityKind,
+        attribute: AttributeKind,
+        name: Option<String>,
+        value: Option<ValueKind>,
+    ) -> Result<(), CoreError> {
+        self.schema
+            .modify(move |schema| {
+                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                    anyhow::bail!("Entity kind does not exist");
+                };
+
+                let Some(attribute_schema) = entity_schema.attributes.get_mut(&attribute) else {
+                    anyhow::bail!("Attribute kind does not exist");
+                };
+
+                if let Some(name) = name {
+                    attribute_schema.name = name;
+                }
+                if let Some(value) = value {
+                    attribute_schema.value = value;
+                }
+
+                Ok(())
+            })
+            .await?
+            .context("Failed to modify schema")?;
         Ok(())
     }
 }
