@@ -73,6 +73,39 @@ impl RelationKind {
     }
 }
 
+impl ToString for RelationKind {
+    fn to_string(&self) -> String {
+        format!("{},{}", self.a, self.b)
+    }
+}
+
+impl FromStr for RelationKind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (a, b) = s
+            .split_once(',')
+            .ok_or_else(|| anyhow::anyhow!("Missing separator"))?;
+        let a = FromStr::from_str(a)?;
+        let b = FromStr::from_str(b)?;
+        Ok(Self::new(a, b))
+    }
+}
+
+uniffi::custom_type!(RelationKind, Vec<u8>, {
+    lower: |relation_kind| {
+        let mut bytes = [0u8; 32];
+        bytes[0..16].copy_from_slice(relation_kind.a.inner().as_bytes());
+        bytes[16..32].copy_from_slice(relation_kind.b.inner().as_bytes());
+        bytes.to_vec()
+    },
+    try_lift: |bytes| {
+        let a = EntityKind::new(Uuid::from_slice(&bytes[0..16])?);
+        let b = EntityKind::new(Uuid::from_slice(&bytes[16..32])?);
+        Ok(RelationKind::new(a, b))
+    },
+});
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttributeKind(Uuid);
 

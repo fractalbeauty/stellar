@@ -8,9 +8,10 @@ use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
 use stellar_graph::entity::{
-    AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, ValueKind, Version,
+    AttributeKind, AuthorId, EntityId, EntityKind, RelationKind, Timestamp, Value, ValueKind,
+    Version,
 };
-use stellar_graph::schema::{AttributeSchema, EntitySchema, Schema};
+use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, Schema};
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
@@ -247,24 +248,25 @@ impl Core {
         entity: EntityKind,
         name: String,
         value: ValueKind,
-    ) -> Result<(), CoreError> {
-        let schema = self
+    ) -> Result<AttributeKind, CoreError> {
+        let (schema, attribute_kind) = self
             .schema
             .modify(move |schema| {
                 let Some(entity_schema) = schema.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
                 };
 
+                let attribute_kind = AttributeKind::random();
                 entity_schema
                     .attributes
-                    .insert(AttributeKind::random(), AttributeSchema { name, value });
+                    .insert(attribute_kind, AttributeSchema { name, value });
 
-                Ok(schema.clone())
+                Ok((schema.clone(), attribute_kind))
             })
             .await?
             .context("Failed to modify schema")?;
         self.schema_change_handler.on_change(schema);
-        Ok(())
+        Ok(attribute_kind)
     }
 
     /// Deletes an attribute for an entity in the schema.
@@ -309,6 +311,159 @@ impl Core {
                 };
 
                 let Some(attribute_schema) = entity_schema.attributes.get_mut(&attribute) else {
+                    anyhow::bail!("Attribute kind does not exist");
+                };
+
+                if let Some(name) = name {
+                    attribute_schema.name = name;
+                }
+                if let Some(value) = value {
+                    attribute_schema.value = value;
+                }
+
+                Ok(schema.clone())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
+    /// Creates a relation in the schema.
+    pub async fn create_schema_relation(
+        &self,
+        relation: RelationKind,
+        name: String,
+    ) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| -> Result<_, anyhow::Error> {
+                schema.relations.insert(
+                    relation,
+                    RelationSchema {
+                        name,
+                        attributes: HashMap::new(),
+                    },
+                );
+
+                Ok(schema.clone())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
+    /// Deletes a relation in the schema.
+    pub async fn delete_schema_relation(&self, relation: RelationKind) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| {
+                let removed = schema.relations.remove(&relation);
+                if removed.is_none() {
+                    anyhow::bail!("Relation kind does not exist");
+                }
+
+                Ok(schema.clone())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
+    /// Updates a relation in the schema.
+    pub async fn update_schema_relation(
+        &self,
+        relation: RelationKind,
+        name: String,
+    ) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| {
+                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                    anyhow::bail!("Relation kind does not exist");
+                };
+
+                relation_schema.name = name;
+
+                Ok(schema.clone())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
+    /// Creates an attribute for a relation in the schema.
+    pub async fn create_schema_relation_attribute(
+        &self,
+        relation: RelationKind,
+        name: String,
+        value: ValueKind,
+    ) -> Result<AttributeKind, CoreError> {
+        let (schema, attribute_kind) = self
+            .schema
+            .modify(move |schema| {
+                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                    anyhow::bail!("Relation kind does not exist");
+                };
+
+                let attribute_kind = AttributeKind::random();
+                relation_schema
+                    .attributes
+                    .insert(AttributeKind::random(), AttributeSchema { name, value });
+
+                Ok((schema.clone(), attribute_kind))
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(attribute_kind)
+    }
+
+    /// Deletes an attribute for a relation in the schema.
+    pub async fn delete_schema_relation_attribute(
+        &self,
+        relation: RelationKind,
+        attribute: AttributeKind,
+    ) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| {
+                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                    anyhow::bail!("Relation kind does not exist");
+                };
+
+                let removed = relation_schema.attributes.remove(&attribute);
+                if removed.is_none() {
+                    anyhow::bail!("Attribute kind does not exist");
+                }
+
+                Ok(schema.clone())
+            })
+            .await?
+            .context("Failed to modify schema")?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
+    /// Updates an attribute for a relation in the schema.
+    pub async fn update_schema_relation_attribute(
+        &self,
+        relation: RelationKind,
+        attribute: AttributeKind,
+        name: Option<String>,
+        value: Option<ValueKind>,
+    ) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| {
+                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                    anyhow::bail!("Relation kind does not exist");
+                };
+
+                let Some(attribute_schema) = relation_schema.attributes.get_mut(&attribute) else {
                     anyhow::bail!("Attribute kind does not exist");
                 };
 
