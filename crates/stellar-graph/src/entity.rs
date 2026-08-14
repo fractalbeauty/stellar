@@ -1,198 +1,234 @@
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr, time::SystemTime};
-use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EntityId(Uuid);
+/// An entity ID, consisting of an [`EntityKind`] and some random bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EntityId([u8; 16]);
 
 impl EntityId {
-    /// Constructs an [`EntityId`] from a raw UUID.
-    pub fn new(inner: Uuid) -> Self {
-        Self(inner)
+    /// Constructs an [`EntityId`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
     }
 
-    /// Generates a random entity ID.
-    pub fn random() -> Self {
-        Self(Uuid::new_v4())
+    /// Constructs an [`EntityId`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 16]) -> Self {
+        Self(*bytes)
     }
 
-    /// Returns the inner UUID.
-    pub fn inner(&self) -> Uuid {
+    /// Generates a new random [`EntityId`] with the given [`EntityKind`].
+    pub fn random(kind: EntityKind) -> Self {
+        let random: [u8; 11] = rand::random();
+
+        let mut bytes = [0u8; 16];
+        bytes[0..5].copy_from_slice(&kind.as_bytes());
+        bytes[5..15].copy_from_slice(&random);
+
+        Self::from_bytes(bytes)
+    }
+
+    /// Returns the [`EntityId`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 16] {
         self.0
+    }
+
+    /// Returns the [`EntityId`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 16] {
+        &self.0
+    }
+
+    /// Returns the [`EntityKind`] of this [`EntityId`].
+    pub fn kind(&self) -> EntityKind {
+        EntityKind::from_bytes(self.0[0..5].try_into().unwrap())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct EntityKind(Uuid);
+impl std::fmt::Debug for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("EntityId")
+            .field(&hex::encode(self.0))
+            .finish()
+    }
+}
+
+impl Display for EntityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl FromStr for EntityId {
+    type Err = hex::FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = [0u8; 16];
+        hex::decode_to_slice(s.as_bytes(), &mut bytes)?;
+        Ok(Self(bytes))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[automorph(transparent)]
+pub struct EntityKind([u8; 5]);
 
 impl EntityKind {
-    /// Constructs an [`EntityKind`] from a raw UUID.
-    pub fn new(inner: Uuid) -> Self {
-        Self(inner)
+    /// Constructs an [`EntityKind`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 5]) -> Self {
+        Self(bytes)
     }
 
-    /// Generates a random entity kind ID.
+    /// Constructs an [`EntityKind`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 5]) -> Self {
+        Self(*bytes)
+    }
+
+    /// Generates a new random [`EntityKind`].
     pub fn random() -> Self {
-        Self(Uuid::new_v4())
+        Self(rand::random())
     }
 
-    /// Returns the inner UUID.
-    pub fn inner(&self) -> Uuid {
+    /// Returns the [`EntityKind`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 5] {
         self.0
+    }
+
+    /// Returns the [`EntityKind`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 5] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for EntityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("EntityKind")
+            .field(&hex::encode(self.0))
+            .finish()
     }
 }
 
 impl Display for EntityKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
 impl FromStr for EntityKind {
-    type Err = uuid::Error;
+    type Err = hex::FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        FromStr::from_str(s).map(Self::new)
+        let mut bytes = [0u8; 5];
+        hex::decode_to_slice(s.as_bytes(), &mut bytes)?;
+        Ok(Self(bytes))
     }
 }
 
-impl automorph::Automorph for EntityKind {
-    type Changes = automorph::uuid_string::Changes;
-
-    type Cursor = automorph::uuid_string::Cursor;
-
-    fn save<D: automerge::transaction::Transactable + automerge::ReadDoc>(
-        &self,
-        doc: &mut D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-    ) -> automorph::Result<()> {
-        automorph::uuid_string::save(&self.0, doc, obj, prop)
-    }
-
-    fn load_at<D: automerge::ReadDoc>(
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-        heads: &[automerge::ChangeHash],
-    ) -> automorph::Result<Self> {
-        Ok(Self(automorph::uuid_string::load_at(
-            doc, obj, prop, heads,
-        )?))
-    }
-
-    fn diff_at<D: automerge::ReadDoc>(
-        &self,
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-        heads: &[automerge::ChangeHash],
-    ) -> automorph::Result<Self::Changes> {
-        automorph::uuid_string::diff_at(&self.0, doc, obj, prop, heads)
-    }
-
-    fn load<D: automerge::ReadDoc>(
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-    ) -> automorph::Result<Self> {
-        Ok(Self(automorph::uuid_string::load(doc, obj, prop)?))
-    }
-
-    fn update<D: automerge::ReadDoc>(
-        &mut self,
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-    ) -> automorph::Result<Self::Changes> {
-        automorph::uuid_string::update(&mut self.0, doc, obj, prop)
-    }
-
-    fn update_at<D: automerge::ReadDoc>(
-        &mut self,
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-        heads: &[automerge::ChangeHash],
-    ) -> automorph::Result<Self::Changes> {
-        automorph::uuid_string::update_at(&mut self.0, doc, obj, prop, heads)
-    }
-
-    fn diff<D: automerge::ReadDoc>(
-        &self,
-        doc: &D,
-        obj: impl AsRef<automerge::ObjId>,
-        prop: impl Into<automerge::Prop>,
-    ) -> automorph::Result<Self::Changes> {
-        automorph::uuid_string::diff(&self.0, doc, obj, prop)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RelationKind(Uuid);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[automorph(transparent)]
+pub struct RelationKind([u8; 5]);
 
 impl RelationKind {
-    /// Constructs a [`RelationKind`] from a raw UUID.
-    pub fn new(inner: Uuid) -> Self {
-        Self(inner)
+    /// Constructs a [`RelationKind`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 5]) -> Self {
+        Self(bytes)
     }
 
-    /// Generates a random relation kind ID.
+    /// Constructs a [`RelationKind`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 5]) -> Self {
+        Self(*bytes)
+    }
+
+    /// Generates a new random [`RelationKind`].
     pub fn random() -> Self {
-        Self(Uuid::new_v4())
+        Self(rand::random())
     }
 
-    /// Returns the inner UUID.
-    pub fn inner(&self) -> Uuid {
+    /// Returns the [`RelationKind`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 5] {
         self.0
+    }
+
+    /// Returns the [`RelationKind`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 5] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for RelationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RelationKind")
+            .field(&hex::encode(self.0))
+            .finish()
     }
 }
 
 impl Display for RelationKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
 impl FromStr for RelationKind {
-    type Err = uuid::Error;
+    type Err = hex::FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        FromStr::from_str(s).map(Self::new)
+        let mut bytes = [0u8; 5];
+        hex::decode_to_slice(s.as_bytes(), &mut bytes)?;
+        Ok(Self(bytes))
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct AttributeKind(Uuid);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[automorph(transparent)]
+pub struct AttributeKind([u8; 5]);
 
 impl AttributeKind {
-    /// Constructs an [`AttributeKind`] from a raw UUID.
-    pub fn new(inner: Uuid) -> Self {
-        Self(inner)
+    /// Constructs an [`AttributeKind`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 5]) -> Self {
+        Self(bytes)
     }
 
-    /// Generates a random attribute kind ID.
+    /// Constructs an [`AttributeKind`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 5]) -> Self {
+        Self(*bytes)
+    }
+
+    /// Generates a new random [`AttributeKind`].
     pub fn random() -> Self {
-        Self(Uuid::new_v4())
+        Self(rand::random())
     }
 
-    /// Returns the inner UUID.
-    pub fn inner(&self) -> Uuid {
+    /// Returns the [`AttributeKind`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 5] {
         self.0
+    }
+
+    /// Returns the [`AttributeKind`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 5] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AttributeKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("AttributeKind")
+            .field(&hex::encode(self.0))
+            .finish()
     }
 }
 
 impl Display for AttributeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.inner().fmt(f)
+        write!(f, "{}", hex::encode(self.0))
     }
 }
 
 impl FromStr for AttributeKind {
-    type Err = uuid::Error;
+    type Err = hex::FromHexError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        FromStr::from_str(s).map(Self::new)
+        let mut bytes = [0u8; 5];
+        hex::decode_to_slice(s.as_bytes(), &mut bytes)?;
+        Ok(Self(bytes))
     }
 }
 
@@ -244,8 +280,8 @@ impl Version {
 
         let a_timestamp = a_version.timestamp().inner();
         let b_timestamp = b_version.timestamp().inner();
-        let a_author = a_version.author().inner();
-        let b_author = b_version.author().inner();
+        let a_author = a_version.author().as_bytes();
+        let b_author = b_version.author().as_bytes();
 
         if (a_timestamp, a_author) > (b_timestamp, b_author) {
             (a, a_version)
@@ -282,13 +318,24 @@ impl Timestamp {
 pub struct AuthorId([u8; 32]);
 
 impl AuthorId {
-    pub fn new(bytes: [u8; 32]) -> Self {
+    /// Constructs an [`AuthorId`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    /// Returns the inner bytes.
-    pub fn inner(&self) -> [u8; 32] {
+    /// Constructs an [`AuthorId`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 32]) -> Self {
+        Self(*bytes)
+    }
+
+    /// Returns the [`AuthorId`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 32] {
         self.0
+    }
+
+    /// Returns the [`AuthorId`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 32] {
+        &self.0
     }
 }
 
@@ -301,20 +348,20 @@ impl std::fmt::Debug for AuthorId {
 }
 
 uniffi::custom_type!(EntityId, Vec<u8>, {
-    lower: |entity| entity.inner().as_bytes().to_vec(),
-    try_lift: |bytes| Ok(EntityId(Uuid::from_slice(&bytes)?)),
+    lower: |entity| entity.as_bytes().to_vec(),
+    try_lift: |bytes| Ok(EntityId::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift EntityId"))?)),
 });
 uniffi::custom_type!(EntityKind, Vec<u8>, {
-    lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
-    try_lift: |bytes| Ok(EntityKind(Uuid::from_slice(&bytes)?)),
+    lower: |entity_kind| entity_kind.as_bytes().to_vec(),
+    try_lift: |bytes| Ok(EntityKind::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift EntityKind"))?)),
 });
 uniffi::custom_type!(RelationKind, Vec<u8>, {
-    lower: |relation_kind| relation_kind.inner().as_bytes().to_vec(),
-    try_lift: |bytes| Ok(RelationKind(Uuid::from_slice(&bytes)?)),
+    lower: |relation_kind| relation_kind.as_bytes().to_vec(),
+    try_lift: |bytes| Ok(RelationKind::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift RelationKind"))?)),
 });
 uniffi::custom_type!(AttributeKind, Vec<u8>, {
-    lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
-    try_lift: |bytes| Ok(AttributeKind(Uuid::from_slice(&bytes)?)),
+    lower: |attribute_kind| attribute_kind.as_bytes().to_vec(),
+    try_lift: |bytes| Ok(AttributeKind::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift AttributeKind"))?)),
 });
 
 #[cfg(test)]
@@ -339,7 +386,7 @@ mod test {
         let latest = Version::latest_version("version1", version1, "version2", version2);
 
         // Larger author ID should be latest
-        if author1.inner() > author2.inner() {
+        if author1.as_bytes() > author2.as_bytes() {
             assert_eq!(latest, ("version1", version1));
         } else {
             assert_eq!(latest, ("version2", version2));
@@ -370,7 +417,11 @@ mod test {
 
 pub mod hegel {
     use crate::entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version};
-    use hegel::{TestCase, compose, generators as gs, one_of};
+    use hegel::{
+        TestCase, compose,
+        generators::{self as gs},
+        one_of,
+    };
     use uuid::Uuid;
 
     #[hegel::composite]
@@ -385,8 +436,9 @@ pub mod hegel {
 
     #[hegel::composite]
     pub fn gen_author_id(tc: TestCase) -> AuthorId {
-        AuthorId::new(
+        AuthorId::from_bytes(
             tc.draw(gs::vecs(gs::integers()).min_size(32).max_size(32))
+                .as_slice()
                 .try_into()
                 .unwrap(),
         )
@@ -394,17 +446,17 @@ pub mod hegel {
 
     #[hegel::composite]
     pub fn gen_entity_id(tc: TestCase) -> EntityId {
-        EntityId::new(tc.draw(gen_uuid()))
+        EntityId::from_bytes(tc.draw(gs::arrays(gs::integers())))
     }
 
     #[hegel::composite]
     pub fn gen_entity_kind(tc: TestCase) -> EntityKind {
-        EntityKind::new(tc.draw(gen_uuid()))
+        EntityKind::from_bytes(tc.draw(gs::arrays(gs::integers())))
     }
 
     #[hegel::composite]
     pub fn gen_attribute_kind(tc: TestCase) -> AttributeKind {
-        AttributeKind::new(tc.draw(gen_uuid()))
+        AttributeKind::from_bytes(tc.draw(gs::arrays(gs::integers())))
     }
 
     #[hegel::composite]

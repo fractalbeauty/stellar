@@ -494,30 +494,6 @@ pub struct CreateSchemaEntityResult {
 }
 
 impl Core {
-    // TODO
-    pub fn add_random_entity(&self) -> Result<(), anyhow::Error> {
-        self.database.upsert_entity(
-            stellar_graph::entity::EntityId::random(),
-            stellar_graph::store::EntityData {
-                metadata: stellar_graph::store::EntityMetadataValue {
-                    kind: stellar_graph::entity::EntityKind::random(),
-                    deleted: false,
-                    deleted_version: stellar_graph::entity::Version::new(
-                        stellar_graph::entity::Timestamp::now(),
-                        stellar_graph::entity::AuthorId::new([0u8; 32]),
-                    ),
-                },
-                attributes: HashMap::new(),
-            },
-        )?;
-        Ok(())
-    }
-
-    // TODO
-    pub fn debug_entities(&self) -> Result<String, anyhow::Error> {
-        Ok(format!("{:?}", self.database.get_entities()?))
-    }
-
     fn version_now(&self) -> Version {
         Version::new(Timestamp::now(), self.author)
     }
@@ -599,7 +575,7 @@ fn run_core_thread(
         };
         let public_key = secret_key.public();
         let endpoint_id = EndpointId::from(public_key);
-        let author = AuthorId::new(*public_key.as_bytes());
+        let author = AuthorId::from_slice(public_key.as_bytes());
 
         let database = Database::open(&data_dir).context("Failed to open database")?;
 

@@ -50,7 +50,7 @@ async fn main() {
     .expect("Should spawn core");
 
     if std::env::var("STELLAR_ADD_ENTITY").is_ok_and(|var| !var.is_empty()) {
-        core.add_random_entity().unwrap();
+        todo!()
     }
     if std::env::var("STELLAR_ADD_ENTITYKIND").is_ok_and(|var| !var.is_empty()) {
         core.create_schema_entity("Entity".to_string())

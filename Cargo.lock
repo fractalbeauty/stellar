@@ -4535,6 +4535,7 @@ dependencies = [
  "hegeltest",
  "hex",
  "postcard",
+ "rand 0.10.2",
  "serde",
  "stellar-uniffi",
  "testdir",

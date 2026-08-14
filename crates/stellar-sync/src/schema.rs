@@ -168,14 +168,14 @@ impl SchemaStore {
                     .context("Failed to read schema store path")?;
                 AutoCommit::load(&doc_bytes)
                     .context("Schema store was read but failed to load")?
-                    .with_actor(author.inner().into())
+                    .with_actor(author.as_slice().into())
             }
             _ => {
                 tracing::debug!(
                     "Schema store file does not exist or is inaccessible, creating new doc"
                 );
 
-                let mut doc = AutoCommit::new().with_actor(author.inner().into());
+                let mut doc = AutoCommit::new().with_actor(author.as_slice().into());
 
                 let initial_schema = Schema::default();
                 initial_schema
@@ -616,7 +616,8 @@ mod test {
         let dir = testdir::testdir!();
         tracing::debug!(?dir, "testdir");
         let task =
-            SchemaStoreTask::spawn(cancellation_token, dir, AuthorId::new([0u8; 32])).unwrap();
+            SchemaStoreTask::spawn(cancellation_token, dir, AuthorId::from_slice(&[0u8; 32]))
+                .unwrap();
 
         let mut watch_schema = task.watch_schema();
         assert!(watch_schema.borrow().is_none());
@@ -658,7 +659,8 @@ mod test {
         let dir = testdir::testdir!();
         tracing::debug!(?dir, "testdir");
         let task =
-            SchemaStoreTask::spawn(cancellation_token, dir, AuthorId::new([0u8; 32])).unwrap();
+            SchemaStoreTask::spawn(cancellation_token, dir, AuthorId::from_slice(&[0u8; 32]))
+                .unwrap();
 
         let mut watch_schema = task.watch_schema();
         assert!(watch_schema.borrow().is_none());

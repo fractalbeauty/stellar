@@ -4,7 +4,6 @@ use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
 use tracing::warn;
-use uuid::Uuid;
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
@@ -205,7 +204,7 @@ const ENTITY_ATTRIBUTE_PREFIX: u8 = 2u8;
 fn make_entity_metadata_key(entity: EntityId) -> [u8; 17] {
     let mut key = [0u8; 17];
     key[0] = ENTITY_METADATA_PREFIX;
-    key[1..17].copy_from_slice(entity.inner().as_bytes());
+    key[1..17].copy_from_slice(entity.as_slice());
     key
 }
 
@@ -213,24 +212,24 @@ fn parse_entity_metadata_key(key: Slice) -> Result<EntityId, anyhow::Error> {
     if key.len() != 17 {
         anyhow::bail!("wrong key len");
     }
-    let entity = EntityId::new(Uuid::from_slice(&key[1..17])?);
+    let entity = EntityId::from_slice(key[1..17].try_into().unwrap());
     Ok(entity)
 }
 
-fn make_entity_attribute_key(entity: EntityId, attribute: AttributeKind) -> [u8; 33] {
-    let mut key = [0u8; 33];
+fn make_entity_attribute_key(entity: EntityId, attribute: AttributeKind) -> [u8; 22] {
+    let mut key = [0u8; 22];
     key[0] = ENTITY_ATTRIBUTE_PREFIX;
-    key[1..17].copy_from_slice(entity.inner().as_bytes());
-    key[17..33].copy_from_slice(attribute.inner().as_bytes());
+    key[1..17].copy_from_slice(entity.as_slice());
+    key[17..22].copy_from_slice(attribute.as_slice());
     key
 }
 
 fn parse_entity_attribute_key(key: Slice) -> Result<(EntityId, AttributeKind), anyhow::Error> {
-    if key.len() != 33 {
+    if key.len() != 22 {
         anyhow::bail!("wrong key len");
     }
-    let entity = EntityId::new(Uuid::from_slice(&key[1..17])?);
-    let attribute = AttributeKind::new(Uuid::from_slice(&key[17..33])?);
+    let entity = EntityId::from_slice(key[1..17].try_into().unwrap());
+    let attribute = AttributeKind::from_bytes(key[17..22].try_into().unwrap());
     Ok((entity, attribute))
 }
 
@@ -383,23 +382,3 @@ pub mod hegel {
         }
     }
 }
-
-// TODO
-// fn sort_relation_key(
-//     a: EntityId,
-//     b: EntityId,
-//     a_kind: EntityKind,
-//     b_kind: EntityKind,
-// ) -> (EntityId, EntityId) {
-//     if a_kind == b_kind {
-//         if a.inner() < b.inner() {
-//             (a, b)
-//         } else {
-//             (b, a)
-//         }
-//     } else if a_kind.inner() < b_kind.inner() {
-//         (a, b)
-//     } else {
-//         (b, a)
-//     }
-// }

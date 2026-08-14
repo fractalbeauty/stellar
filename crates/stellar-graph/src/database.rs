@@ -23,7 +23,7 @@ impl Database {
         kind: EntityKind,
         version: Version,
     ) -> Result<EntityId, anyhow::Error> {
-        let entity = EntityId::random();
+        let entity = EntityId::random(kind);
 
         let value = EntityMetadataValue {
             kind,

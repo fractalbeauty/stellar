@@ -21,7 +21,6 @@ use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 use tracing::warn;
-use uuid::Uuid;
 
 /// Handle for a peer sync client task
 pub struct PeerSyncClientTask {}
@@ -290,11 +289,11 @@ impl EntitySymbol {
 
         // Sort attributes by kind
         let mut sorted_attributes = data.attributes.iter().collect::<Vec<_>>();
-        sorted_attributes.sort_by_key(|(attribute, _value)| attribute.inner());
+        sorted_attributes.sort_by_key(|(attribute, _value)| attribute.as_bytes());
 
         // Hash attributes
         for (attribute, value) in sorted_attributes {
-            hasher.write_u128(attribute.inner().as_u128());
+            hasher.write(attribute.as_slice());
             write_version(&mut hasher, value.version);
         }
 
@@ -309,23 +308,20 @@ impl stellar_riblt::Symbol for EntitySymbol {
 
     fn encode_to_bytes(&self) -> Vec<u8> {
         let mut buffer = vec![0u8; Self::BYTE_ARRAY_LENGTH];
-        buffer[0..16].copy_from_slice(&self.id.inner().as_u128().to_le_bytes());
+        buffer[0..16].copy_from_slice(self.id.as_slice());
         buffer[16..24].copy_from_slice(&self.hash.to_le_bytes());
         buffer
     }
 
     fn decode_from_bytes(bytes: &[u8]) -> Self {
-        let id = u128::from_le_bytes(bytes[0..16].try_into().unwrap());
+        let id = EntityId::from_bytes(bytes[0..16].try_into().unwrap());
         let hash = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
-        Self {
-            id: EntityId::new(Uuid::from_u128(id)),
-            hash,
-        }
+        Self { id, hash }
     }
 
     fn hash(&self) -> u64 {
         let mut hasher = SipHasher::new_with_keys(123, 456);
-        hasher.write_u128(self.id.inner().as_u128());
+        hasher.write(self.id.as_slice());
         hasher.write_u64(self.hash);
         hasher.finish()
     }
@@ -333,7 +329,7 @@ impl stellar_riblt::Symbol for EntitySymbol {
 
 fn write_version(hasher: &mut SipHasher, version: Version) {
     hasher.write_u64(version.timestamp().inner());
-    hasher.write(&version.author().inner());
+    hasher.write(version.author().as_slice());
 }
 
 pub struct SyncClientProtocol {
@@ -565,7 +561,6 @@ mod test {
         store::{EntityData, EntityMetadataValue, hegel::gen_entity_data},
     };
     use stellar_riblt::Symbol;
-    use uuid::Uuid;
 
     #[hegel::test]
     fn sync(tc: TestCase) {
@@ -745,9 +740,9 @@ mod test {
     fn make_empty_entity_data() -> EntityData {
         EntityData {
             metadata: EntityMetadataValue {
-                kind: EntityKind::new(Uuid::nil()),
+                kind: EntityKind::from_bytes([0u8; _]),
                 deleted: false,
-                deleted_version: Version::new(Timestamp::new(0), AuthorId::new(Default::default())),
+                deleted_version: Version::new(Timestamp::new(0), AuthorId::from_slice(&[0u8; _])),
             },
             attributes: HashMap::new(),
         }
