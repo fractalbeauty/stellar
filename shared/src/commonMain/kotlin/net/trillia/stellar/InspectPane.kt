@@ -1,6 +1,5 @@
 package net.trillia.stellar
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -23,11 +21,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,36 +48,39 @@ import stellar.shared.generated.resources.tahoma
 
 @Composable
 fun InspectPane() {
-    val myObj = mapOf(
-        "Field1" to "myfirst",
-        "Field2" to "mytwo!",
-        "Field3" to "mysan3333333563",
-    )
-
-    val myData = arrayOf(
+    val myObj =
         mapOf(
             "Field1" to "myfirst",
             "Field2" to "mytwo!",
             "Field3" to "mysan3333333563",
-        ),
-        mapOf(
-            "Field1" to "what",
-            "Field2" to "mytwo!",
-        ),
-        mapOf(
-            "Field0" to "0",
-            "Field2" to "w2323!",
-            "Field3" to "mysan3333333563",
         )
-    )
+
+    val myData =
+        arrayOf(
+            mapOf(
+                "Field1" to "myfirst",
+                "Field2" to "mytwo!",
+                "Field3" to "mysan3333333563",
+            ),
+            mapOf(
+                "Field1" to "what",
+                "Field2" to "mytwo!",
+            ),
+            mapOf(
+                "Field0" to "0",
+                "Field2" to "w2323!",
+                "Field3" to "mysan3333333563",
+            ),
+        )
 
     var selected by remember { mutableStateOf<Int?>(null) }
 
-    val fields = FieldSet(
-        FieldInfo("Field1", 50.dp),
-        FieldInfo("Field2", 90.dp),
-        FieldInfo("Field3", 96.dp)
-    )
+    val fields =
+        FieldSet(
+            FieldInfo("Field1", 50.dp),
+            FieldInfo("Field2", 90.dp),
+            FieldInfo("Field3", 96.dp),
+        )
 
     Column {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -96,7 +95,11 @@ fun InspectPane() {
 }
 
 @Composable
-fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
+fun Button(
+    label: String,
+    isDefault: Boolean = false,
+    onClick: () -> Unit,
+) {
     val tahoma = FontFamily(Font(Res.font.tahoma))
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
@@ -107,16 +110,17 @@ fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
     val shape = RoundedCornerShape(5.dp)
     val bg = Brush.verticalGradient(listOf(cBgHl, cBgBase), 4f, 15f)
     Row(
-        modifier = Modifier.clip(shape)
-            .widthIn(min = 78.dp)
-            .padding(2.dp)
-            .border(1.dp, Color(0xFF777777), shape = shape)
-            .clickable(onClick = onClick, interactionSource = interactionSource)
-            .run({
-                if (isPressed) background(cBgPressed, shape) else background(bg, shape)
-            }),
-        horizontalArrangement = Arrangement.Center
-
+        modifier =
+            Modifier
+                .clip(shape)
+                .widthIn(min = 78.dp)
+                .padding(2.dp)
+                .border(1.dp, Color(0xFF777777), shape = shape)
+                .clickable(onClick = onClick, interactionSource = interactionSource)
+                .run({
+                    if (isPressed) background(cBgPressed, shape) else background(bg, shape)
+                }),
+        horizontalArrangement = Arrangement.Center,
     ) {
         Text(
             label,
@@ -130,29 +134,34 @@ fun Button(label: String, isDefault: Boolean = false, onClick: () -> Unit) {
     }
 }
 
-
-data class FieldSet(val fields: List<FieldInfo>) {
+data class FieldSet(
+    val fields: List<FieldInfo>,
+) {
     constructor(vararg fieldInfo: FieldInfo) : this(listOf(*fieldInfo))
 }
 
-data class FieldInfo(val label: String, val width: Dp)
+data class FieldInfo(
+    val label: String,
+    val width: Dp,
+)
 
 @Composable
 private fun DataTable(
     myData: Array<Map<String, String>>,
     fields: FieldSet,
     selected: Int?,
-    onSelected: (newValue: Int?) -> Unit
+    onSelected: (newValue: Int?) -> Unit,
 ) {
     val bgInteractionSource = remember { MutableInteractionSource() }
 
     Box(
-        modifier = Modifier.combinedClickable(
-            onClick = {
-                onSelected(null)
-            },
-            interactionSource = bgInteractionSource,
-        )
+        modifier =
+            Modifier.combinedClickable(
+                onClick = {
+                    onSelected(null)
+                },
+                interactionSource = bgInteractionSource,
+            ),
     ) {
         Column {
             // draw headers
@@ -165,16 +174,19 @@ private fun DataTable(
             // draw rows
             myData.forEachIndexed { rowindex, row ->
                 val rowInteractionSource = remember { MutableInteractionSource() }
-                Row(modifier = Modifier.combinedClickable(onClick = {
-                    onSelected(rowindex)
-                }, interactionSource = rowInteractionSource)) {
+                Row(
+                    modifier =
+                        Modifier.combinedClickable(onClick = {
+                            onSelected(rowindex)
+                        }, interactionSource = rowInteractionSource),
+                ) {
                     val rowVals = fields.fields.map { row.get(it.label) }
                     rowVals.forEachIndexed { colindex, label ->
                         DataTableCell(
                             fields.fields[colindex],
                             label,
                             rowindex % 2 == 1,
-                            rowindex == selected
+                            rowindex == selected,
                         )
                     }
                 }
@@ -188,44 +200,62 @@ private fun DataTable(
         var widthSoFar = 0.dp
         fields.fields.forEach {
             VerticalDivider(
-                thickness = 1.dp, modifier = Modifier.offset(x = widthSoFar + it.width)
-                    .alpha(0.5F)
+                thickness = 1.dp,
+                modifier =
+                    Modifier
+                        .offset(x = widthSoFar + it.width)
+                        .alpha(0.5F),
             )
             widthSoFar += it.width
         }
     }
-
-
 }
 
 val inspectorFieldLabelHeight = 24.dp
 
 @Composable
-fun Inspector(obj: Map<String, String>, fields: FieldSet) {
-    Column() {
+fun Inspector(
+    obj: Map<String, String>,
+    fields: FieldSet,
+) {
+    Column {
         obj.entries.forEach {
             InspectorField(it.key, it.value, false, true)
         }
         // dummy field
-        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(top=inspectorFieldLabelHeight).height(32.dp).width(200.dp).background(Color(0xFFCCCCCC))) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier =
+                Modifier
+                    .padding(top = inspectorFieldLabelHeight)
+                    .height(32.dp)
+                    .width(200.dp)
+                    .background(Color(0xFFCCCCCC)),
+        ) {
             Text("+", fontWeight = FontWeight.Black, color = Color.White, fontSize = 2.em, lineHeight = 1.em)
         }
     }
 }
 
 @Composable
-private fun InspectorField(key: String, value: String, valIsRef: Boolean, valIsEditable: Boolean) {
+private fun InspectorField(
+    key: String,
+    value: String,
+    valIsRef: Boolean,
+    valIsEditable: Boolean,
+) {
     var valueState = rememberTextFieldState(value) // XXX
     Column {
         Text(key, modifier = Modifier.height(inspectorFieldLabelHeight))
         TextField(
             valueState,
             contentPadding = PaddingValues.Zero,
-            colors = TextFieldDefaults.colors(
-                unfocusedContainerColor = Color(0xFFEEEEEE),
-                focusedContainerColor = Color(0xFFDDDDDD)
-            ),
-            modifier = Modifier.height(32.dp).width(200.dp)
+            colors =
+                TextFieldDefaults.colors(
+                    unfocusedContainerColor = Color(0xFFEEEEEE),
+                    focusedContainerColor = Color(0xFFDDDDDD),
+                ),
+            modifier = Modifier.height(32.dp).width(200.dp),
         )
     }
 }
@@ -237,7 +267,7 @@ private fun DataTableCell(
     fieldInfo: FieldInfo,
     label: String?,
     secondary: Boolean,
-    selected: Boolean
+    selected: Boolean,
 ) {
     val tahoma = FontFamily(Font(Res.font.tahoma))
     Text(
@@ -248,15 +278,25 @@ private fun DataTableCell(
         lineHeight = 1.em,
         maxLines = 1,
         overflow = TextOverflow.MiddleEllipsis,
-        modifier = Modifier.width(fieldInfo.width).run(
-            {
-                if (selected) background(Color(0xFFB0D3FF)) else if (secondary) background(
-                    Color(
-                        0xFFEEEEEE
-                    )
-                ) else background(Color(0xFFFAFAFA))
-            }
-        ).padding(vertical = 2.dp).padding(start = fieldPadStart),
+        modifier =
+            Modifier
+                .width(fieldInfo.width)
+                .run(
+                    {
+                        if (selected) {
+                            background(Color(0xFFB0D3FF))
+                        } else if (secondary) {
+                            background(
+                                Color(
+                                    0xFFEEEEEE,
+                                ),
+                            )
+                        } else {
+                            background(Color(0xFFFAFAFA))
+                        }
+                    },
+                ).padding(vertical = 2.dp)
+                .padding(start = fieldPadStart),
     )
 }
 
@@ -272,8 +312,11 @@ private fun DataTableHeader(fieldInfo: FieldInfo) {
             lineHeight = 1.em,
             maxLines = 1,
             overflow = TextOverflow.MiddleEllipsis,
-            modifier = Modifier.width(fieldInfo.width).padding(vertical = 2.dp)
-                .padding(start = fieldPadStart),
+            modifier =
+                Modifier
+                    .width(fieldInfo.width)
+                    .padding(vertical = 2.dp)
+                    .padding(start = fieldPadStart),
         )
     }
 }
