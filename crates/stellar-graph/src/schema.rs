@@ -16,6 +16,8 @@ pub struct EntitySchema {
 #[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct RelationSchema {
     pub name: String,
+    pub source: EntityKind,
+    pub target: EntityKind,
     pub attributes: HashMap<AttributeKind, AttributeSchema>,
 }
 

@@ -329,29 +329,33 @@ impl Core {
         Ok(())
     }
 
-    /// Creates a relation in the schema.
+    /// Creates a relation in the schema, returning its ID.
     pub async fn create_schema_relation(
         &self,
-        relation: RelationKind,
         name: String,
-    ) -> Result<(), CoreError> {
-        let schema = self
+        source: EntityKind,
+        target: EntityKind,
+    ) -> Result<RelationKind, CoreError> {
+        let (schema, relation_kind) = self
             .schema
             .modify(move |schema| -> Result<_, anyhow::Error> {
+                let relation_kind = RelationKind::random();
                 schema.relations.insert(
-                    relation,
+                    relation_kind,
                     RelationSchema {
                         name,
+                        source,
+                        target,
                         attributes: HashMap::new(),
                     },
                 );
 
-                Ok(schema.clone())
+                Ok((schema.clone(), relation_kind))
             })
             .await?
             .context("Failed to modify schema")?;
         self.schema_change_handler.on_change(schema);
-        Ok(())
+        Ok(relation_kind)
     }
 
     /// Deletes a relation in the schema.

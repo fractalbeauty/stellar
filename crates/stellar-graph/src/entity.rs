@@ -56,55 +56,111 @@ impl FromStr for EntityKind {
     }
 }
 
-/// `a` must be less than `b` for uniqueness.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RelationKind {
-    a: EntityKind,
-    b: EntityKind,
-}
+impl automorph::Automorph for EntityKind {
+    type Changes = automorph::uuid_string::Changes;
 
-impl RelationKind {
-    pub fn new(a: EntityKind, b: EntityKind) -> Self {
-        if a.inner() < b.inner() {
-            Self { a, b }
-        } else {
-            Self { a: b, b: a }
-        }
+    type Cursor = automorph::uuid_string::Cursor;
+
+    fn save<D: automerge::transaction::Transactable + automerge::ReadDoc>(
+        &self,
+        doc: &mut D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+    ) -> automorph::Result<()> {
+        automorph::uuid_string::save(&self.0, doc, obj, prop)
+    }
+
+    fn load_at<D: automerge::ReadDoc>(
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+        heads: &[automerge::ChangeHash],
+    ) -> automorph::Result<Self> {
+        Ok(Self(automorph::uuid_string::load_at(
+            doc, obj, prop, heads,
+        )?))
+    }
+
+    fn diff_at<D: automerge::ReadDoc>(
+        &self,
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+        heads: &[automerge::ChangeHash],
+    ) -> automorph::Result<Self::Changes> {
+        automorph::uuid_string::diff_at(&self.0, doc, obj, prop, heads)
+    }
+
+    fn load<D: automerge::ReadDoc>(
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+    ) -> automorph::Result<Self> {
+        Ok(Self(automorph::uuid_string::load(doc, obj, prop)?))
+    }
+
+    fn update<D: automerge::ReadDoc>(
+        &mut self,
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+    ) -> automorph::Result<Self::Changes> {
+        automorph::uuid_string::update(&mut self.0, doc, obj, prop)
+    }
+
+    fn update_at<D: automerge::ReadDoc>(
+        &mut self,
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+        heads: &[automerge::ChangeHash],
+    ) -> automorph::Result<Self::Changes> {
+        automorph::uuid_string::update_at(&mut self.0, doc, obj, prop, heads)
+    }
+
+    fn diff<D: automerge::ReadDoc>(
+        &self,
+        doc: &D,
+        obj: impl AsRef<automerge::ObjId>,
+        prop: impl Into<automerge::Prop>,
+    ) -> automorph::Result<Self::Changes> {
+        automorph::uuid_string::diff(&self.0, doc, obj, prop)
     }
 }
 
-impl ToString for RelationKind {
-    fn to_string(&self) -> String {
-        format!("{},{}", self.a, self.b)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RelationKind(Uuid);
+
+impl RelationKind {
+    /// Constructs a [`RelationKind`] from a raw UUID.
+    pub fn new(inner: Uuid) -> Self {
+        Self(inner)
+    }
+
+    /// Generates a random relation kind ID.
+    pub fn random() -> Self {
+        Self(Uuid::new_v4())
+    }
+
+    /// Returns the inner UUID.
+    pub fn inner(&self) -> Uuid {
+        self.0
+    }
+}
+
+impl Display for RelationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
     }
 }
 
 impl FromStr for RelationKind {
-    type Err = anyhow::Error;
+    type Err = uuid::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let (a, b) = s
-            .split_once(',')
-            .ok_or_else(|| anyhow::anyhow!("Missing separator"))?;
-        let a = FromStr::from_str(a)?;
-        let b = FromStr::from_str(b)?;
-        Ok(Self::new(a, b))
+        FromStr::from_str(s).map(Self::new)
     }
 }
-
-uniffi::custom_type!(RelationKind, Vec<u8>, {
-    lower: |relation_kind| {
-        let mut bytes = [0u8; 32];
-        bytes[0..16].copy_from_slice(relation_kind.a.inner().as_bytes());
-        bytes[16..32].copy_from_slice(relation_kind.b.inner().as_bytes());
-        bytes.to_vec()
-    },
-    try_lift: |bytes| {
-        let a = EntityKind::new(Uuid::from_slice(&bytes[0..16])?);
-        let b = EntityKind::new(Uuid::from_slice(&bytes[16..32])?);
-        Ok(RelationKind::new(a, b))
-    },
-});
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AttributeKind(Uuid);
@@ -251,6 +307,10 @@ uniffi::custom_type!(EntityId, Vec<u8>, {
 uniffi::custom_type!(EntityKind, Vec<u8>, {
     lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
     try_lift: |bytes| Ok(EntityKind(Uuid::from_slice(&bytes)?)),
+});
+uniffi::custom_type!(RelationKind, Vec<u8>, {
+    lower: |relation_kind| relation_kind.inner().as_bytes().to_vec(),
+    try_lift: |bytes| Ok(RelationKind(Uuid::from_slice(&bytes)?)),
 });
 uniffi::custom_type!(AttributeKind, Vec<u8>, {
     lower: |entity_kind| entity_kind.inner().as_bytes().to_vec(),
