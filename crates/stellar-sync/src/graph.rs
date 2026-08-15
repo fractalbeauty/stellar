@@ -11,8 +11,8 @@ use std::{
     sync::Arc,
 };
 use stellar_graph::{
-    entity::{EntityId, Version},
-    store::EntityData,
+    entity::{EntityId, RelationId, Version},
+    store::{EntityData, RelationData},
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
@@ -54,7 +54,10 @@ impl PeerSyncClientTask {
         tracing::debug!("PeerSyncClient starting");
 
         let entities = database.get_entities().context("Failed to get entities")?;
-        let mut protocol = SyncClientProtocol::new(entities);
+        let relations = database
+            .get_relations()
+            .context("Failed to get relations")?;
+        let mut protocol = SyncClientProtocol::new(entities, relations);
 
         let _permit = sync_manager
             .acquire()
@@ -124,9 +127,13 @@ impl PeerSyncClientTask {
             let message = message.context("Failed to receive")?;
             tracing::trace!("PeerSyncClient received {message:?}");
 
-            let DifferenceServerMessage::Difference { client_difference } = message;
+            let DifferenceServerMessage::Difference {
+                client_difference_entities,
+                client_difference_relations,
+            } = message;
 
-            database.upsert_entities(client_difference)?;
+            database.upsert_entities(client_difference_entities)?;
+            database.upsert_relations(client_difference_relations)?;
         }
 
         tracing::debug!("PeerSyncClient finished");
@@ -167,7 +174,10 @@ impl PeerSyncServerTask {
         tracing::info!("PeerSyncServer starting");
 
         let entities = database.get_entities().context("Failed to get entities")?;
-        let mut protocol = SyncServerProtocol::new(entities);
+        let relations = database
+            .get_relations()
+            .context("Failed to get relations")?;
+        let mut protocol = SyncServerProtocol::new(entities, relations);
 
         let _permit = sync_manager
             .acquire()
@@ -227,16 +237,24 @@ impl PeerDifferenceServerTask {
         tracing::trace!("PeerSyncClient received {message:?}");
 
         let DifferenceClientMessage::Difference {
-            server_difference,
-            client_missing,
+            server_difference_entities,
+            server_difference_relations,
+            client_missing_entities,
+            client_missing_relations,
         } = message;
 
-        database.upsert_entities(server_difference)?;
+        database.upsert_entities(server_difference_entities)?;
+        database.upsert_relations(server_difference_relations)?;
 
-        let client_difference = database.get_entities_by_id(client_missing)?;
-        tx.send(DifferenceServerMessage::Difference { client_difference })
-            .await
-            .context("Failed to send DifferenceServerMessage")?;
+        let client_difference_entities = database.get_entities_by_id(client_missing_entities)?;
+        let client_difference_relations = database.get_relations_by_id(client_missing_relations)?;
+
+        tx.send(DifferenceServerMessage::Difference {
+            client_difference_entities,
+            client_difference_relations,
+        })
+        .await
+        .context("Failed to send DifferenceServerMessage")?;
 
         tracing::debug!("PeerSyncServer finished");
 
@@ -274,14 +292,22 @@ struct SyncPermit {
     inner: OwnedSemaphorePermit,
 }
 
+// We only use 63 bits from the hash, replacing one bit with entity/relation, to keep it a nice 24 bytes.
+// We use the lowest bit of the hash, so we also need to mask the lowest bit from the hash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EntitySymbol {
-    id: EntityId,
+pub struct GraphSymbol {
+    id: EntityOrRelationId,
     hash: u64,
 }
 
-impl EntitySymbol {
-    fn new(id: EntityId, data: &EntityData, key0: u64, key1: u64) -> Self {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EntityOrRelationId {
+    Entity(EntityId),
+    Relation(RelationId),
+}
+
+impl GraphSymbol {
+    fn from_entity(entity: EntityId, data: &EntityData, key0: u64, key1: u64) -> Self {
         let mut hasher = SipHasher::new_with_keys(key0, key1);
 
         // Hash deleted version
@@ -299,29 +325,84 @@ impl EntitySymbol {
 
         let hash = hasher.finish();
 
-        Self { id, hash }
+        // Discard last bit to match
+        let hash = hash & !1;
+
+        Self {
+            id: EntityOrRelationId::Entity(entity),
+            hash,
+        }
+    }
+
+    fn from_relation(relation: RelationId, data: &RelationData, key0: u64, key1: u64) -> Self {
+        let mut hasher = SipHasher::new_with_keys(key0, key1);
+
+        // Hash deleted version
+        write_version(&mut hasher, data.metadata.deleted_version);
+
+        // Sort attributes by kind
+        let mut sorted_attributes = data.attributes.iter().collect::<Vec<_>>();
+        sorted_attributes.sort_by_key(|(attribute, _value)| attribute.as_bytes());
+
+        // Hash attributes
+        for (attribute, value) in sorted_attributes {
+            hasher.write(attribute.as_slice());
+            write_version(&mut hasher, value.version);
+        }
+
+        let hash = hasher.finish();
+
+        // Discard last bit to match
+        let hash = hash & !1;
+
+        Self {
+            id: EntityOrRelationId::Relation(relation),
+            hash,
+        }
     }
 }
 
-impl stellar_riblt::Symbol for EntitySymbol {
+impl stellar_riblt::Symbol for GraphSymbol {
     const BYTE_ARRAY_LENGTH: usize = 24;
 
     fn encode_to_bytes(&self) -> Vec<u8> {
         let mut buffer = vec![0u8; Self::BYTE_ARRAY_LENGTH];
-        buffer[0..16].copy_from_slice(self.id.as_slice());
         buffer[16..24].copy_from_slice(&self.hash.to_le_bytes());
+        match self.id {
+            EntityOrRelationId::Entity(entity) => {
+                buffer[0..16].copy_from_slice(entity.as_slice());
+                buffer[16] &= !1;
+            }
+            EntityOrRelationId::Relation(relation) => {
+                buffer[0..16].copy_from_slice(relation.as_slice());
+                buffer[16] |= 1;
+            }
+        }
         buffer
     }
 
     fn decode_from_bytes(bytes: &[u8]) -> Self {
-        let id = EntityId::from_bytes(bytes[0..16].try_into().unwrap());
+        let id = if bytes[16] & 1 == 0 {
+            EntityOrRelationId::Entity(EntityId::from_bytes(bytes[0..16].try_into().unwrap()))
+        } else {
+            EntityOrRelationId::Relation(RelationId::from_bytes(bytes[0..16].try_into().unwrap()))
+        };
         let hash = u64::from_le_bytes(bytes[16..24].try_into().unwrap());
+        // Discard last bit to match
+        let hash = hash & !1;
         Self { id, hash }
     }
 
     fn hash(&self) -> u64 {
         let mut hasher = SipHasher::new_with_keys(123, 456);
-        hasher.write(self.id.as_slice());
+        match self.id {
+            EntityOrRelationId::Entity(entity) => {
+                hasher.write(entity.as_slice());
+            }
+            EntityOrRelationId::Relation(relation) => {
+                hasher.write(relation.as_slice());
+            }
+        }
         hasher.write_u64(self.hash);
         hasher.finish()
     }
@@ -334,22 +415,40 @@ fn write_version(hasher: &mut SipHasher, version: Version) {
 
 pub struct SyncClientProtocol {
     entities: HashMap<EntityId, EntityData>,
-    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
-    received: UnmanagedRatelessIBLT<EntitySymbol>,
-    result: Option<(HashSet<EntityId>, HashSet<EntityId>)>,
+    relations: HashMap<RelationId, RelationData>,
+    riblt: RatelessIBLT<GraphSymbol, Vec<GraphSymbol>>,
+    received: UnmanagedRatelessIBLT<GraphSymbol>,
+    result: Option<(
+        HashSet<EntityId>,
+        HashSet<RelationId>,
+        HashSet<EntityId>,
+        HashSet<RelationId>,
+    )>,
 }
 
 impl SyncClientProtocol {
-    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
+    pub fn new(
+        entities: HashMap<EntityId, EntityData>,
+        relations: HashMap<RelationId, RelationData>,
+    ) -> Self {
+        let key0 = 123;
+        let key1 = 456;
+
         let symbols = entities
             .iter()
-            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
+            .map(|(entity, data)| GraphSymbol::from_entity(*entity, data, key0, key1))
+            .chain(
+                relations
+                    .iter()
+                    .map(|(entity, data)| GraphSymbol::from_relation(*entity, data, key0, key1)),
+            )
             .collect::<Vec<_>>();
 
         let riblt = RatelessIBLT::new(symbols);
 
         Self {
             entities,
+            relations,
             riblt,
             received: UnmanagedRatelessIBLT::new(),
             result: None,
@@ -370,16 +469,28 @@ impl SyncClientProtocol {
                 let mut collapsed = self.riblt.collapse(&self.received);
                 let peeled = collapsed.peel_all_symbols();
                 if collapsed.is_empty() {
-                    let mut client_missing = HashSet::new();
-                    let mut server_missing = HashSet::new();
+                    let mut client_missing_entities = HashSet::new();
+                    let mut client_missing_relations = HashSet::new();
+                    let mut server_missing_entities = HashSet::new();
+                    let mut server_missing_relations = HashSet::new();
                     for symbol in peeled {
                         match symbol {
-                            PeelableResult::Local(symbol) => {
-                                server_missing.insert(symbol.id);
-                            }
-                            PeelableResult::Remote(symbol) => {
-                                client_missing.insert(symbol.id);
-                            }
+                            PeelableResult::Local(symbol) => match symbol.id {
+                                EntityOrRelationId::Entity(entity) => {
+                                    server_missing_entities.insert(entity);
+                                }
+                                EntityOrRelationId::Relation(relation) => {
+                                    server_missing_relations.insert(relation);
+                                }
+                            },
+                            PeelableResult::Remote(symbol) => match symbol.id {
+                                EntityOrRelationId::Entity(entity) => {
+                                    client_missing_entities.insert(entity);
+                                }
+                                EntityOrRelationId::Relation(relation) => {
+                                    client_missing_relations.insert(relation);
+                                }
+                            },
                             PeelableResult::NotPeelable => {
                                 // TODO: update stellar-riblt to remove this case
                                 unreachable!("peel_all_symbols only returns peeled symbols")
@@ -387,7 +498,12 @@ impl SyncClientProtocol {
                         }
                     }
 
-                    self.result = Some((client_missing, server_missing))
+                    self.result = Some((
+                        client_missing_entities,
+                        client_missing_relations,
+                        server_missing_entities,
+                        server_missing_relations,
+                    ))
                 }
             }
         }
@@ -402,9 +518,14 @@ impl SyncClientProtocol {
     /// `is_finished` must return true before calling `finish`.
     pub fn finish(self) -> DifferenceClientMessage {
         debug_assert!(self.is_finished());
-        let (client_missing, server_missing) = self.result.expect("should be finished");
+        let (
+            client_missing_entities,
+            client_missing_relations,
+            server_missing_entities,
+            server_missing_relations,
+        ) = self.result.expect("should be finished");
 
-        let server_difference = server_missing
+        let server_difference_entities = server_missing_entities
             .into_iter()
             .filter_map(|entity| {
                 let Some(data) = self.entities.get(&entity) else {
@@ -416,40 +537,67 @@ impl SyncClientProtocol {
                 Some((entity, data.clone()))
             })
             .collect();
+        let server_difference_relations = server_missing_relations
+            .into_iter()
+            .filter_map(|entity| {
+                let Some(data) = self.relations.get(&entity) else {
+                    warn!(
+                        "SyncServerMessage::Difference server_missing entity not in client relations"
+                    );
+                    return None;
+                };
+                Some((entity, data.clone()))
+            })
+            .collect();
 
         DifferenceClientMessage::Difference {
-            server_difference,
-            client_missing,
+            server_difference_entities,
+            server_difference_relations,
+            client_missing_entities,
+            client_missing_relations,
         }
     }
 }
 
 pub struct SyncServerProtocol {
     entities: HashMap<EntityId, EntityData>,
-    riblt: RatelessIBLT<EntitySymbol, Vec<EntitySymbol>>,
+    relations: HashMap<RelationId, RelationData>,
+    riblt: RatelessIBLT<GraphSymbol, Vec<GraphSymbol>>,
     next_index: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SyncServerMessage {
     CodedSymbols {
-        coded_symbols: Vec<CodedSymbol<EntitySymbol>>,
+        coded_symbols: Vec<CodedSymbol<GraphSymbol>>,
     },
 }
 
 impl SyncServerProtocol {
     const BATCH_CODED_SYMBOLS: usize = 10;
 
-    pub fn new(entities: HashMap<EntityId, EntityData>) -> Self {
+    pub fn new(
+        entities: HashMap<EntityId, EntityData>,
+        relations: HashMap<RelationId, RelationData>,
+    ) -> Self {
+        let key0 = 123;
+        let key1 = 456;
+
         let symbols = entities
             .iter()
-            .map(|(entity, data)| EntitySymbol::new(*entity, data, 123, 456))
+            .map(|(entity, data)| GraphSymbol::from_entity(*entity, data, key0, key1))
+            .chain(
+                relations
+                    .iter()
+                    .map(|(entity, data)| GraphSymbol::from_relation(*entity, data, key0, key1)),
+            )
             .collect::<Vec<_>>();
 
         let riblt = RatelessIBLT::new(symbols);
 
         Self {
             entities,
+            relations,
             riblt,
             next_index: Some(0),
         }
@@ -501,8 +649,10 @@ impl SyncServerMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceClientMessage {
     Difference {
-        server_difference: HashMap<EntityId, EntityData>,
-        client_missing: HashSet<EntityId>,
+        server_difference_entities: HashMap<EntityId, EntityData>,
+        server_difference_relations: HashMap<RelationId, RelationData>,
+        client_missing_entities: HashSet<EntityId>,
+        client_missing_relations: HashSet<RelationId>,
     },
 }
 
@@ -522,7 +672,8 @@ impl DifferenceClientMessage {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceServerMessage {
     Difference {
-        client_difference: HashMap<EntityId, EntityData>,
+        client_difference_entities: HashMap<EntityId, EntityData>,
+        client_difference_relations: HashMap<RelationId, RelationData>,
     },
 }
 
@@ -542,7 +693,7 @@ impl DifferenceServerMessage {
 #[cfg(test)]
 mod test {
     use crate::graph::{
-        DifferenceClientMessage, EntitySymbol, SyncClientProtocol, SyncServerProtocol,
+        DifferenceClientMessage, GraphSymbol, SyncClientProtocol, SyncServerProtocol,
     };
     use hegel::{
         Generator, TestCase,
@@ -555,15 +706,18 @@ mod test {
     };
     use stellar_graph::{
         entity::{
-            AuthorId, EntityId, EntityKind, Timestamp, Version,
-            hegel::{gen_entity_id, gen_version},
+            AuthorId, EntityId, Timestamp, Version,
+            hegel::{gen_entity_id, gen_relation_id, gen_version},
         },
-        store::{EntityData, EntityMetadataValue, hegel::gen_entity_data},
+        store::{
+            EntityData, EntityMetadataValue,
+            hegel::{gen_entity_data, gen_relation_data},
+        },
     };
     use stellar_riblt::Symbol;
 
     #[hegel::test]
-    fn sync(tc: TestCase) {
+    fn sync_entities(tc: TestCase) {
         let all_entities = tc.draw(gs::hashsets(gen_entity_id()));
 
         // client and server have a random prefix of all entities
@@ -606,24 +760,26 @@ mod test {
             .filter(|(entity, _)| !server_entities.contains(entity))
             .collect::<HashMap<_, _>>();
 
-        let client = SyncClientProtocol::new(client_data);
-        let server = SyncServerProtocol::new(server_data);
+        let client = SyncClientProtocol::new(client_data, HashMap::new());
+        let server = SyncServerProtocol::new(server_data, HashMap::new());
         let difference = run_client_and_server(client, server);
 
         let DifferenceClientMessage::Difference {
-            server_difference,
-            client_missing,
+            server_difference_entities,
+            server_difference_relations: _,
+            client_missing_entities,
+            client_missing_relations: _,
         } = difference;
 
         // client should be missing server-only entities
         assert_eq!(
-            client_missing, server_only_entities,
+            client_missing_entities, server_only_entities,
             "client should be missing server-only entities"
         );
 
         // server should be missing client-only data
         assert_eq!(
-            server_difference, client_only_data,
+            server_difference_entities, client_only_data,
             "server should be missing client-only data"
         );
     }
@@ -662,8 +818,8 @@ mod test {
         let entity = tc.draw(gen_entity_id());
         let data = tc.draw(gen_entity_data());
 
-        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
-        let symbol2 = EntitySymbol::new(entity, &data, key0, key1);
+        let symbol1 = GraphSymbol::from_entity(entity, &data, key0, key1);
+        let symbol2 = GraphSymbol::from_entity(entity, &data, key0, key1);
 
         assert_eq!(symbol1, symbol2);
     }
@@ -676,7 +832,7 @@ mod test {
         let entity = tc.draw(gen_entity_id());
         let data = tc.draw(gen_entity_data());
 
-        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
+        let symbol1 = GraphSymbol::from_entity(entity, &data, key0, key1);
 
         let mut new_data = data.clone();
         new_data.metadata.deleted_version =
@@ -684,7 +840,7 @@ mod test {
 
         tc.note(&format!("before / after = {data:?} / {new_data:?}"));
 
-        let symbol2 = EntitySymbol::new(entity, &new_data, key0, key1);
+        let symbol2 = GraphSymbol::from_entity(entity, &new_data, key0, key1);
 
         assert_ne!(
             symbol1, symbol2,
@@ -700,7 +856,7 @@ mod test {
         let entity = tc.draw(gen_entity_id());
         let data = tc.draw(gen_entity_data().filter(|data| !data.attributes.is_empty()));
 
-        let symbol1 = EntitySymbol::new(entity, &data, key0, key1);
+        let symbol1 = GraphSymbol::from_entity(entity, &data, key0, key1);
 
         let mut new_data = data.clone();
         let attribute_kind = new_data.attributes.keys().next().copied().unwrap();
@@ -715,7 +871,7 @@ mod test {
 
         tc.note(&format!("before / after = {data:?} / {new_data:?}"));
 
-        let symbol2 = EntitySymbol::new(entity, &new_data, key0, key1);
+        let symbol2 = GraphSymbol::from_entity(entity, &new_data, key0, key1);
 
         assert_ne!(
             symbol1, symbol2,
@@ -724,16 +880,30 @@ mod test {
     }
 
     #[hegel::test]
-    fn symbol_encode_decode_roundtrip(tc: TestCase) {
+    fn symbol_encode_decode_roundtrip_entity(tc: TestCase) {
         let key0 = tc.draw(gs::integers());
         let key1 = tc.draw(gs::integers());
 
         let entity = tc.draw(gen_entity_id());
         let data = tc.draw(gen_entity_data());
 
-        let symbol = EntitySymbol::new(entity, &data, key0, key1);
+        let symbol = GraphSymbol::from_entity(entity, &data, key0, key1);
 
-        let decoded = EntitySymbol::decode_from_bytes(&symbol.encode_to_bytes());
+        let decoded = GraphSymbol::decode_from_bytes(&symbol.encode_to_bytes());
+        assert_eq!(decoded, symbol);
+    }
+
+    #[hegel::test]
+    fn symbol_encode_decode_roundtrip_relation(tc: TestCase) {
+        let key0 = tc.draw(gs::integers());
+        let key1 = tc.draw(gs::integers());
+
+        let relation = tc.draw(gen_relation_id());
+        let data = tc.draw(gen_relation_data());
+
+        let symbol = GraphSymbol::from_relation(relation, &data, key0, key1);
+
+        let decoded = GraphSymbol::decode_from_bytes(&symbol.encode_to_bytes());
         assert_eq!(decoded, symbol);
     }
 

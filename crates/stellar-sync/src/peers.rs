@@ -19,7 +19,12 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use stellar_graph::{database::Database, entity::EntityId, schema::Schema, store::EntityData};
+use stellar_graph::{
+    database::Database,
+    entity::{EntityId, RelationId},
+    schema::Schema,
+    store::{EntityData, RelationData},
+};
 use tokio::sync::{mpsc, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -391,6 +396,18 @@ pub trait PeersDatabasePort: Send + Sync {
 
     fn upsert_entities(&self, entities: HashMap<EntityId, EntityData>)
     -> Result<(), anyhow::Error>;
+
+    fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error>;
+
+    fn get_relations_by_id(
+        &self,
+        relations: HashSet<RelationId>,
+    ) -> Result<HashMap<RelationId, RelationData>, anyhow::Error>;
+
+    fn upsert_relations(
+        &self,
+        relations: HashMap<RelationId, RelationData>,
+    ) -> Result<(), anyhow::Error>;
 }
 
 pub struct PeersDatabaseAdapter {
@@ -427,6 +444,33 @@ impl PeersDatabasePort for PeersDatabaseAdapter {
         // TODO: batch this somewhere (maybe a level above this; inside peer, outside database)
         for (entity, data) in entities {
             self.database.upsert_entity(entity, data)?;
+        }
+        Ok(())
+    }
+
+    fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error> {
+        self.database.get_relations()
+    }
+
+    fn get_relations_by_id(
+        &self,
+        relations: HashSet<RelationId>,
+    ) -> Result<HashMap<RelationId, RelationData>, anyhow::Error> {
+        // TODO: optimize this
+        let mut all_relations = self.get_relations()?;
+        Ok(relations
+            .into_iter()
+            .filter_map(|relation| all_relations.remove(&relation).map(|data| (relation, data)))
+            .collect())
+    }
+
+    fn upsert_relations(
+        &self,
+        relations: HashMap<RelationId, RelationData>,
+    ) -> Result<(), anyhow::Error> {
+        // TODO: batch this somewhere (maybe a level above this; inside peer, outside database)
+        for (relation, data) in relations {
+            self.database.upsert_relation(relation, data)?;
         }
         Ok(())
     }
