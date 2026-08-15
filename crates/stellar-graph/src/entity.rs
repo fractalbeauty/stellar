@@ -67,6 +67,72 @@ impl FromStr for EntityId {
     }
 }
 
+/// A relation ID, consisting of a [`RelationKind`] and some random bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RelationId([u8; 16]);
+
+impl RelationId {
+    /// Constructs a [`RelationId`] from a byte array.
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+
+    /// Constructs a [`RelationId`] from a byte slice.
+    pub fn from_slice(bytes: &[u8; 16]) -> Self {
+        Self(*bytes)
+    }
+
+    /// Generates a new random [`RelationId`] with the given [`RelationKind`].
+    pub fn random(kind: RelationKind) -> Self {
+        let random: [u8; 11] = rand::random();
+
+        let mut bytes = [0u8; 16];
+        bytes[0..5].copy_from_slice(&kind.as_bytes());
+        bytes[5..15].copy_from_slice(&random);
+
+        Self::from_bytes(bytes)
+    }
+
+    /// Returns the [`RelationId`] as a byte array.
+    pub fn as_bytes(&self) -> [u8; 16] {
+        self.0
+    }
+
+    /// Returns the [`RelationId`] as a byte slice.
+    pub fn as_slice(&self) -> &[u8; 16] {
+        &self.0
+    }
+
+    /// Returns the [`RelationKind`] of this [`RelationId`].
+    pub fn kind(&self) -> RelationKind {
+        RelationKind::from_bytes(self.0[0..5].try_into().unwrap())
+    }
+}
+
+impl std::fmt::Debug for RelationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("RelationId")
+            .field(&hex::encode(self.0))
+            .finish()
+    }
+}
+
+impl Display for RelationId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl FromStr for RelationId {
+    type Err = hex::FromHexError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut bytes = [0u8; 16];
+        hex::decode_to_slice(s.as_bytes(), &mut bytes)?;
+        Ok(Self(bytes))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
 #[automorph(transparent)]
 pub struct EntityKind([u8; 5]);
