@@ -1,9 +1,8 @@
-use crate::entity::{AttributeKind, EntityId, EntityKind, RelationId, Value, Version};
+use crate::entity::{AttributeKind, EntityId, RelationId, Value, Version};
 use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::Path};
-use tracing::warn;
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
@@ -16,7 +15,7 @@ impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
         let database = Database::builder(path).open()?;
 
-        let keyspace = database.keyspace("graph", KeyspaceCreateOptions::default)?;
+        let keyspace = database.keyspace("graph_v1", KeyspaceCreateOptions::default)?;
 
         Ok(Self { database, keyspace })
     }
@@ -26,7 +25,7 @@ impl Store {
         entity: EntityId,
     ) -> Result<Option<EntityMetadataValue>, anyhow::Error> {
         let key = make_entity_metadata_key(entity);
-        let value = self
+        let metadata = self
             .keyspace
             .get(key)?
             .map(|value| {
@@ -34,13 +33,29 @@ impl Store {
                     .context("Failed to parse metadata value")
             })
             .transpose()?;
-        Ok(value)
+        Ok(metadata)
+    }
+
+    pub fn get_relation_metadata(
+        &self,
+        relation: RelationId,
+    ) -> Result<Option<RelationMetadataValue>, anyhow::Error> {
+        let key = make_relation_metadata_key(relation);
+        let metadata = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<RelationMetadataValue>(value.as_ref())
+                    .context("Failed to parse metadata value")
+            })
+            .transpose()?;
+        Ok(metadata)
     }
 
     pub fn merge_entity_metadata(
         &self,
         entity: EntityId,
-        value: EntityMetadataValue,
+        incoming: EntityMetadataValue,
     ) -> Result<(), anyhow::Error> {
         let key = make_entity_metadata_key(entity);
 
@@ -53,38 +68,38 @@ impl Store {
             })
             .transpose()?;
 
-        // TODO: don't write if the incoming value was older. this might not apply if there are multiple metadata fields to be merged eventually
-        let merged_value = if let Some(existing) = existing {
-            if value.kind != existing.kind {
-                warn!("merge_entity_metadata new kind != existing kind");
-            }
-
-            let (deleted, deleted_version) = Version::latest_version(
-                value.deleted,
-                value.deleted_version,
-                existing.deleted,
-                existing.deleted_version,
-            );
-            EntityMetadataValue {
-                kind: existing.kind,
-                deleted,
-                deleted_version,
+        if let Some(existing) = existing {
+            if incoming
+                .deleted_version
+                .greater_than(existing.deleted_version)
+            {
+                // changed
+                let metadata = postcard::to_allocvec(&EntityMetadataValue {
+                    deleted: incoming.deleted,
+                    deleted_version: incoming.deleted_version,
+                })?;
+                self.keyspace.insert(key, metadata)?;
+                Ok(())
+            } else {
+                // unchanged
+                Ok(())
             }
         } else {
-            value
-        };
-
-        let merged_value = postcard::to_allocvec(&merged_value)?;
-        self.keyspace.insert(key, merged_value)?;
-
-        Ok(())
+            // new
+            let metadata = postcard::to_allocvec(&EntityMetadataValue {
+                deleted: incoming.deleted,
+                deleted_version: incoming.deleted_version,
+            })?;
+            self.keyspace.insert(key, metadata)?;
+            Ok(())
+        }
     }
 
     pub fn merge_entity_attribute(
         &self,
         entity: EntityId,
         attribute: AttributeKind,
-        value: EntityAttributeValue,
+        incoming: EntityAttributeValue,
     ) -> Result<(), anyhow::Error> {
         let key = make_entity_attribute_key(entity, attribute);
 
@@ -97,23 +112,153 @@ impl Store {
             })
             .transpose()?;
 
-        // TODO: don't write if the incoming value was older
-        let merged_value = if let Some(existing) = existing {
-            let (value, version) = Version::latest_version(
-                value.value,
-                value.version,
-                existing.value,
-                existing.version,
-            );
-            EntityAttributeValue { value, version }
+        if let Some(existing) = existing {
+            if incoming.version.greater_than(existing.version) {
+                // changed
+                let metadata = postcard::to_allocvec(&EntityAttributeValue {
+                    value: incoming.value,
+                    version: incoming.version,
+                })?;
+                self.keyspace.insert(key, metadata)?;
+                Ok(())
+            } else {
+                // unchanged
+                Ok(())
+            }
         } else {
-            value
-        };
+            // new
+            let metadata = postcard::to_allocvec(&EntityAttributeValue {
+                value: incoming.value,
+                version: incoming.version,
+            })?;
+            self.keyspace.insert(key, metadata)?;
+            Ok(())
+        }
+    }
 
-        let merged_value = postcard::to_allocvec(&merged_value)?;
-        self.keyspace.insert(key, merged_value)?;
+    pub fn merge_relation_metadata(
+        &self,
+        relation: RelationId,
+        incoming: RelationMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        let key = make_relation_metadata_key(relation);
 
-        Ok(())
+        let existing = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<RelationMetadataValue>(value.as_ref())
+                    .context("Failed to parse metadata value")
+            })
+            .transpose()?;
+
+        if let Some(existing) = existing {
+            if incoming.source != existing.source {
+                tracing::warn!("merge_relation_metadata incoming.source != existing.source");
+            }
+            if incoming.target != existing.target {
+                tracing::warn!("merge_relation_metadata incoming.target != existing.target");
+            }
+
+            if incoming
+                .deleted_version
+                .greater_than(existing.deleted_version)
+            {
+                // changed
+                let metadata = postcard::to_allocvec(&RelationMetadataValue {
+                    source: incoming.source,
+                    target: incoming.target,
+                    deleted: incoming.deleted,
+                    deleted_version: incoming.deleted_version,
+                })?;
+                self.keyspace.insert(key, metadata)?;
+
+                let source_index = postcard::to_allocvec(&RelationIndexValue {
+                    other: incoming.target,
+                    deleted: incoming.deleted,
+                })?;
+                let source_key = make_relation_source_key(incoming.source, relation);
+                self.keyspace.insert(source_key, source_index)?;
+
+                let target_index = postcard::to_allocvec(&RelationIndexValue {
+                    other: incoming.source,
+                    deleted: incoming.deleted,
+                })?;
+                let target_key = make_relation_target_key(incoming.target, relation);
+                self.keyspace.insert(target_key, target_index)?;
+
+                Ok(())
+            } else {
+                // unchanged
+                Ok(())
+            }
+        } else {
+            // new
+            let metadata = postcard::to_allocvec(&RelationMetadataValue {
+                source: incoming.source,
+                target: incoming.target,
+                deleted: incoming.deleted,
+                deleted_version: incoming.deleted_version,
+            })?;
+            self.keyspace.insert(key, metadata)?;
+
+            let source_index = postcard::to_allocvec(&RelationIndexValue {
+                other: incoming.target,
+                deleted: incoming.deleted,
+            })?;
+            let source_key = make_relation_source_key(incoming.source, relation);
+            self.keyspace.insert(source_key, source_index)?;
+
+            let target_index = postcard::to_allocvec(&RelationIndexValue {
+                other: incoming.source,
+                deleted: incoming.deleted,
+            })?;
+            let target_key = make_relation_target_key(incoming.target, relation);
+            self.keyspace.insert(target_key, target_index)?;
+
+            Ok(())
+        }
+    }
+
+    pub fn merge_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        incoming: RelationAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        let key = make_relation_attribute_key(relation, attribute);
+
+        let existing = self
+            .keyspace
+            .get(key)?
+            .map(|value| {
+                postcard::from_bytes::<RelationAttributeValue>(value.as_ref())
+                    .context("Failed to parse attribute value")
+            })
+            .transpose()?;
+
+        if let Some(existing) = existing {
+            if incoming.version.greater_than(existing.version) {
+                // changed
+                let metadata = postcard::to_allocvec(&RelationAttributeValue {
+                    value: incoming.value,
+                    version: incoming.version,
+                })?;
+                self.keyspace.insert(key, metadata)?;
+                Ok(())
+            } else {
+                // unchanged
+                Ok(())
+            }
+        } else {
+            // new
+            let metadata = postcard::to_allocvec(&RelationAttributeValue {
+                value: incoming.value,
+                version: incoming.version,
+            })?;
+            self.keyspace.insert(key, metadata)?;
+            Ok(())
+        }
     }
 
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
@@ -177,6 +322,72 @@ impl Store {
 
         Ok(entities)
     }
+
+    pub fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error> {
+        let metadata_iter = self
+            .keyspace
+            .prefix([RELATION_METADATA_PREFIX])
+            .map(|guard| {
+                let (key, value) = guard.into_inner().context("Fjall error reading metadata")?;
+
+                let key =
+                    parse_relation_metadata_key(key).context("Failed to parse metadata key")?;
+                let value = postcard::from_bytes::<RelationMetadataValue>(value.as_ref())
+                    .context("Failed to parse metadata value")?;
+
+                Ok::<_, anyhow::Error>((key, value))
+            });
+
+        let mut attributes_iter = self
+            .keyspace
+            .prefix([RELATION_ATTRIBUTE_PREFIX])
+            .map(|guard| {
+                let (key, value) = guard
+                    .into_inner()
+                    .context("Fjall error reading attribute")?;
+
+                let key =
+                    parse_relation_attribute_key(key).context("Failed to parse attribute key")?;
+                let value = postcard::from_bytes::<RelationAttributeValue>(value.as_ref())
+                    .context("Failed to parse attribute value")?;
+
+                Ok::<_, anyhow::Error>((key, value))
+            })
+            .peekable();
+
+        let mut relations = HashMap::new();
+
+        for next in metadata_iter {
+            let (relation, metadata) = next?;
+
+            let mut attributes = HashMap::new();
+
+            while attributes_iter.peek().is_some_and(|next| {
+                let Ok(((attribute_relation, _attribute_kind), _attribute_value)) = next else {
+                    // Error, enter loop to bail out
+                    return true;
+                };
+
+                // Enter loop if this attribute is for the current relation
+                *attribute_relation == relation
+            }) {
+                let ((_attribute_relation, attribute_kind), attribute_value) =
+                    attributes_iter.next().expect("peek returned Some")?;
+
+                attributes.insert(attribute_kind, attribute_value);
+            }
+
+            relations.insert(
+                relation,
+                RelationData {
+                    metadata,
+                    attributes,
+                },
+            );
+        }
+
+        Ok(relations)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,7 +398,6 @@ pub struct EntityData {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityMetadataValue {
-    pub kind: EntityKind,
     pub deleted: bool,
     pub deleted_version: Version,
 }
@@ -196,6 +406,32 @@ pub struct EntityMetadataValue {
 pub struct EntityAttributeValue {
     pub value: Value,
     pub version: Version,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationData {
+    pub metadata: RelationMetadataValue,
+    pub attributes: HashMap<AttributeKind, RelationAttributeValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationMetadataValue {
+    pub source: EntityId,
+    pub target: EntityId,
+    pub deleted: bool,
+    pub deleted_version: Version,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationAttributeValue {
+    pub value: Value,
+    pub version: Version,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationIndexValue {
+    pub other: EntityId,
+    pub deleted: bool,
 }
 
 const ENTITY_METADATA_PREFIX: u8 = 1u8;
@@ -280,10 +516,10 @@ fn parse_relation_attribute_key(key: Slice) -> Result<(RelationId, AttributeKind
 // prefix + source entity ID + relation ID
 //
 // Supports range query for all of an entity's outgoing relations, ordered by kind
-fn make_relation_source_key(source_entity: EntityId, relation: RelationId) -> [u8; 33] {
+fn make_relation_source_key(source: EntityId, relation: RelationId) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = RELATION_SOURCE_PREFIX;
-    key[1..17].copy_from_slice(source_entity.as_slice());
+    key[1..17].copy_from_slice(source.as_slice());
     key[17..33].copy_from_slice(relation.as_slice());
     key
 }
@@ -292,18 +528,18 @@ fn parse_relation_source_key(key: Slice) -> Result<(EntityId, RelationId), anyho
     if key.len() != 33 {
         anyhow::bail!("wrong key len");
     }
-    let source_entity = EntityId::from_slice(key[1..17].try_into().unwrap());
+    let source = EntityId::from_slice(key[1..17].try_into().unwrap());
     let relation = RelationId::from_bytes(key[17..33].try_into().unwrap());
-    Ok((source_entity, relation))
+    Ok((source, relation))
 }
 
 // prefix + target entity ID + relation ID
 //
 // Supports range query for all of an entity's incoming relations, ordered by kind
-fn make_relation_target_key(target_entity: EntityId, relation: RelationId) -> [u8; 33] {
+fn make_relation_target_key(target: EntityId, relation: RelationId) -> [u8; 33] {
     let mut key = [0u8; 33];
     key[0] = RELATION_TARGET_PREFIX;
-    key[1..17].copy_from_slice(target_entity.as_slice());
+    key[1..17].copy_from_slice(target.as_slice());
     key[17..33].copy_from_slice(relation.as_slice());
     key
 }
@@ -312,9 +548,9 @@ fn parse_relation_target_key(key: Slice) -> Result<(EntityId, RelationId), anyho
     if key.len() != 33 {
         anyhow::bail!("wrong key len");
     }
-    let target_entity = EntityId::from_slice(key[1..17].try_into().unwrap());
+    let target = EntityId::from_slice(key[1..17].try_into().unwrap());
     let relation = RelationId::from_bytes(key[17..33].try_into().unwrap());
-    Ok((target_entity, relation))
+    Ok((target, relation))
 }
 
 #[cfg(test)]
@@ -322,25 +558,21 @@ mod test {
     use crate::{
         entity::{
             Version,
-            hegel::{
-                gen_attribute_kind, gen_entity_id, gen_entity_kind, gen_relation_id, gen_value,
-                gen_version,
-            },
+            hegel::{gen_attribute_kind, gen_entity_id, gen_relation_id, gen_value, gen_version},
         },
         store::{
-            EntityMetadataValue, Store, hegel::gen_entity_data, make_entity_attribute_key,
-            make_entity_metadata_key, make_relation_attribute_key, make_relation_metadata_key,
-            make_relation_source_key, make_relation_target_key, parse_entity_attribute_key,
-            parse_entity_metadata_key, parse_relation_attribute_key, parse_relation_metadata_key,
-            parse_relation_source_key, parse_relation_target_key,
+            EntityAttributeValue, EntityMetadataValue, Store,
+            hegel::{gen_entity_data, gen_relation_data},
+            make_entity_attribute_key, make_entity_metadata_key, make_relation_attribute_key,
+            make_relation_metadata_key, make_relation_source_key, make_relation_target_key,
+            parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
+            parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
         },
     };
     use hegel::{Generator, TestCase, generators as gs};
     use uuid::Uuid;
 
-    use super::EntityAttributeValue;
-
-    #[hegel::test]
+    #[hegel::test(test_cases = 10)]
     fn retrieve_entities(tc: TestCase) {
         let store = Store::open(
             testdir::testdir!()
@@ -367,7 +599,34 @@ mod test {
         assert_eq!(result, entities);
     }
 
-    #[hegel::test]
+    #[hegel::test(test_cases = 10)]
+    fn retrieve_relations(tc: TestCase) {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let relations = tc.draw(gs::hashmaps(gen_relation_id(), gen_relation_data()));
+
+        for (relation, data) in relations.clone() {
+            store
+                .merge_relation_metadata(relation, data.metadata)
+                .expect("should merge relation metadata");
+
+            for (attribute, value) in data.attributes {
+                store
+                    .merge_relation_attribute(relation, attribute, value)
+                    .expect("should merge relation attribute");
+            }
+        }
+
+        let result = store.get_relations().expect("should get relations");
+        assert_eq!(result, relations);
+    }
+
+    #[hegel::test(test_cases = 10)]
     fn merge_entity_attribute(tc: TestCase) {
         let store = Store::open(
             testdir::testdir!()
@@ -382,7 +641,6 @@ mod test {
             .merge_entity_metadata(
                 entity,
                 EntityMetadataValue {
-                    kind: tc.draw(gen_entity_kind()),
                     deleted: false,
                     deleted_version: tc.draw(gen_version()),
                 },
@@ -491,31 +749,34 @@ mod test {
 
     #[hegel::test]
     fn relation_source_key(tc: TestCase) {
-        let source_entity = tc.draw(gen_entity_id());
+        let source = tc.draw(gen_entity_id());
         let relation = tc.draw(gen_relation_id());
 
-        let key = make_relation_source_key(source_entity, relation);
+        let key = make_relation_source_key(source, relation);
         let parsed = parse_relation_source_key(key.into()).expect("should parse");
 
-        assert_eq!(parsed, (source_entity, relation));
+        assert_eq!(parsed, (source, relation));
     }
 
     #[hegel::test]
     fn relation_target_key(tc: TestCase) {
-        let target_entity = tc.draw(gen_entity_id());
+        let target = tc.draw(gen_entity_id());
         let relation = tc.draw(gen_relation_id());
 
-        let key = make_relation_target_key(target_entity, relation);
+        let key = make_relation_target_key(target, relation);
         let parsed = parse_relation_target_key(key.into()).expect("should parse");
 
-        assert_eq!(parsed, (target_entity, relation));
+        assert_eq!(parsed, (target, relation));
     }
 }
 
 pub mod hegel {
     use crate::{
-        entity::hegel::{gen_attribute_kind, gen_entity_kind, gen_value, gen_version},
-        store::{EntityAttributeValue, EntityData, EntityMetadataValue},
+        entity::hegel::{gen_attribute_kind, gen_entity_id, gen_value, gen_version},
+        store::{
+            EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
+            RelationData, RelationMetadataValue,
+        },
     };
     use hegel::{TestCase, compose, generators as gs};
 
@@ -523,7 +784,6 @@ pub mod hegel {
     pub fn gen_entity_data(tc: TestCase) -> EntityData {
         EntityData {
             metadata: EntityMetadataValue {
-                kind: tc.draw(gen_entity_kind()),
                 deleted: tc.draw(gs::booleans()),
                 deleted_version: tc.draw(gen_version()),
             },
@@ -531,6 +791,27 @@ pub mod hegel {
                 gen_attribute_kind(),
                 compose!(|tc| {
                     EntityAttributeValue {
+                        value: tc.draw(gen_value()),
+                        version: tc.draw(gen_version()),
+                    }
+                }),
+            )),
+        }
+    }
+
+    #[hegel::composite]
+    pub fn gen_relation_data(tc: TestCase) -> RelationData {
+        RelationData {
+            metadata: RelationMetadataValue {
+                source: tc.draw(gen_entity_id()),
+                target: tc.draw(gen_entity_id()),
+                deleted: tc.draw(gs::booleans()),
+                deleted_version: tc.draw(gen_version()),
+            },
+            attributes: tc.draw(gs::hashmaps(
+                gen_attribute_kind(),
+                compose!(|tc| {
+                    RelationAttributeValue {
                         value: tc.draw(gen_value()),
                         version: tc.draw(gen_version()),
                     }

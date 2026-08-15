@@ -740,7 +740,6 @@ mod test {
     fn make_empty_entity_data() -> EntityData {
         EntityData {
             metadata: EntityMetadataValue {
-                kind: EntityKind::from_bytes([0u8; _]),
                 deleted: false,
                 deleted_version: Version::new(Timestamp::new(0), AuthorId::from_slice(&[0u8; _])),
             },

@@ -344,16 +344,22 @@ impl Version {
     pub fn latest_version<T>(a: T, a_version: Self, b: T, b_version: Self) -> (T, Self) {
         debug_assert_ne!(a_version, b_version, "can't compare equal versions");
 
-        let a_timestamp = a_version.timestamp().inner();
-        let b_timestamp = b_version.timestamp().inner();
-        let a_author = a_version.author().as_bytes();
-        let b_author = b_version.author().as_bytes();
-
-        if (a_timestamp, a_author) > (b_timestamp, b_author) {
+        if a_version.greater_than(b_version) {
             (a, a_version)
         } else {
             (b, b_version)
         }
+    }
+
+    pub fn greater_than(self, other: Self) -> bool {
+        debug_assert_ne!(self, other, "can't compare equal versions");
+
+        let a_timestamp = self.timestamp().inner();
+        let b_timestamp = other.timestamp().inner();
+        let a_author = self.author().as_bytes();
+        let b_author = other.author().as_bytes();
+
+        (a_timestamp, a_author) > (b_timestamp, b_author)
     }
 }
 

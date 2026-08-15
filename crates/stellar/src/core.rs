@@ -141,7 +141,8 @@ impl Core {
                 Some((
                     entity,
                     CoreEntity {
-                        kind: data.metadata.kind,
+                        // TODO
+                        kind: entity.kind(),
                         attributes: data
                             .attributes
                             .into_iter()
