@@ -482,7 +482,10 @@ mod test {
 }
 
 pub mod hegel {
-    use crate::entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version};
+    use crate::entity::{
+        AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
+        Version,
+    };
     use hegel::{
         TestCase, compose,
         generators::{self as gs},
@@ -516,8 +519,18 @@ pub mod hegel {
     }
 
     #[hegel::composite]
+    pub fn gen_relation_id(tc: TestCase) -> RelationId {
+        RelationId::from_bytes(tc.draw(gs::arrays(gs::integers())))
+    }
+
+    #[hegel::composite]
     pub fn gen_entity_kind(tc: TestCase) -> EntityKind {
         EntityKind::from_bytes(tc.draw(gs::arrays(gs::integers())))
+    }
+
+    #[hegel::composite]
+    pub fn gen_relation_kind(tc: TestCase) -> RelationKind {
+        RelationKind::from_bytes(tc.draw(gs::arrays(gs::integers())))
     }
 
     #[hegel::composite]

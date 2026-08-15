@@ -1,4 +1,4 @@
-use crate::entity::{AttributeKind, EntityId, EntityKind, Value, Version};
+use crate::entity::{AttributeKind, EntityId, EntityKind, RelationId, Value, Version};
 use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
@@ -200,7 +200,14 @@ pub struct EntityAttributeValue {
 
 const ENTITY_METADATA_PREFIX: u8 = 1u8;
 const ENTITY_ATTRIBUTE_PREFIX: u8 = 2u8;
+const RELATION_METADATA_PREFIX: u8 = 3u8;
+const RELATION_ATTRIBUTE_PREFIX: u8 = 4u8;
+const RELATION_SOURCE_PREFIX: u8 = 5u8;
+const RELATION_TARGET_PREFIX: u8 = 6u8;
 
+// prefix + entity ID
+//
+// EntityId starts with EntityKind so we can do range queries over kinds later
 fn make_entity_metadata_key(entity: EntityId) -> [u8; 17] {
     let mut key = [0u8; 17];
     key[0] = ENTITY_METADATA_PREFIX;
@@ -216,6 +223,7 @@ fn parse_entity_metadata_key(key: Slice) -> Result<EntityId, anyhow::Error> {
     Ok(entity)
 }
 
+// prefix + entity ID + attribute ID
 fn make_entity_attribute_key(entity: EntityId, attribute: AttributeKind) -> [u8; 22] {
     let mut key = [0u8; 22];
     key[0] = ENTITY_ATTRIBUTE_PREFIX;
@@ -233,14 +241,99 @@ fn parse_entity_attribute_key(key: Slice) -> Result<(EntityId, AttributeKind), a
     Ok((entity, attribute))
 }
 
+// prefix + relation ID
+//
+// RelationId starts with RelationKind so we can do range queries over kinds later
+fn make_relation_metadata_key(relation: RelationId) -> [u8; 17] {
+    let mut key = [0u8; 17];
+    key[0] = RELATION_METADATA_PREFIX;
+    key[1..17].copy_from_slice(relation.as_slice());
+    key
+}
+
+fn parse_relation_metadata_key(key: Slice) -> Result<RelationId, anyhow::Error> {
+    if key.len() != 17 {
+        anyhow::bail!("wrong key len");
+    }
+    let relation = RelationId::from_slice(key[1..17].try_into().unwrap());
+    Ok(relation)
+}
+
+// prefix + relation ID + attribute kind
+fn make_relation_attribute_key(relation: RelationId, attribute: AttributeKind) -> [u8; 22] {
+    let mut key = [0u8; 22];
+    key[0] = RELATION_ATTRIBUTE_PREFIX;
+    key[1..17].copy_from_slice(relation.as_slice());
+    key[17..22].copy_from_slice(attribute.as_slice());
+    key
+}
+
+fn parse_relation_attribute_key(key: Slice) -> Result<(RelationId, AttributeKind), anyhow::Error> {
+    if key.len() != 22 {
+        anyhow::bail!("wrong key len");
+    }
+    let relation = RelationId::from_slice(key[1..17].try_into().unwrap());
+    let attribute = AttributeKind::from_bytes(key[17..22].try_into().unwrap());
+    Ok((relation, attribute))
+}
+
+// prefix + source entity ID + relation ID
+//
+// Supports range query for all of an entity's outgoing relations, ordered by kind
+fn make_relation_source_key(source_entity: EntityId, relation: RelationId) -> [u8; 33] {
+    let mut key = [0u8; 33];
+    key[0] = RELATION_SOURCE_PREFIX;
+    key[1..17].copy_from_slice(source_entity.as_slice());
+    key[17..33].copy_from_slice(relation.as_slice());
+    key
+}
+
+fn parse_relation_source_key(key: Slice) -> Result<(EntityId, RelationId), anyhow::Error> {
+    if key.len() != 33 {
+        anyhow::bail!("wrong key len");
+    }
+    let source_entity = EntityId::from_slice(key[1..17].try_into().unwrap());
+    let relation = RelationId::from_bytes(key[17..33].try_into().unwrap());
+    Ok((source_entity, relation))
+}
+
+// prefix + target entity ID + relation ID
+//
+// Supports range query for all of an entity's incoming relations, ordered by kind
+fn make_relation_target_key(target_entity: EntityId, relation: RelationId) -> [u8; 33] {
+    let mut key = [0u8; 33];
+    key[0] = RELATION_TARGET_PREFIX;
+    key[1..17].copy_from_slice(target_entity.as_slice());
+    key[17..33].copy_from_slice(relation.as_slice());
+    key
+}
+
+fn parse_relation_target_key(key: Slice) -> Result<(EntityId, RelationId), anyhow::Error> {
+    if key.len() != 33 {
+        anyhow::bail!("wrong key len");
+    }
+    let target_entity = EntityId::from_slice(key[1..17].try_into().unwrap());
+    let relation = RelationId::from_bytes(key[17..33].try_into().unwrap());
+    Ok((target_entity, relation))
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
         entity::{
             Version,
-            hegel::{gen_attribute_kind, gen_entity_id, gen_entity_kind, gen_value, gen_version},
+            hegel::{
+                gen_attribute_kind, gen_entity_id, gen_entity_kind, gen_relation_id, gen_value,
+                gen_version,
+            },
         },
-        store::{EntityMetadataValue, Store, hegel::gen_entity_data},
+        store::{
+            EntityMetadataValue, Store, hegel::gen_entity_data, make_entity_attribute_key,
+            make_entity_metadata_key, make_relation_attribute_key, make_relation_metadata_key,
+            make_relation_source_key, make_relation_target_key, parse_entity_attribute_key,
+            parse_entity_metadata_key, parse_relation_attribute_key, parse_relation_metadata_key,
+            parse_relation_source_key, parse_relation_target_key,
+        },
     };
     use hegel::{Generator, TestCase, generators as gs};
     use uuid::Uuid;
@@ -352,6 +445,70 @@ mod test {
                 version: latest_version
             }
         );
+    }
+
+    #[hegel::test]
+    fn entity_metadata_key(tc: TestCase) {
+        let entity = tc.draw(gen_entity_id());
+
+        let key = make_entity_metadata_key(entity);
+        let parsed = parse_entity_metadata_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, entity);
+    }
+
+    #[hegel::test]
+    fn entity_attribute_key(tc: TestCase) {
+        let entity = tc.draw(gen_entity_id());
+        let attribute = tc.draw(gen_attribute_kind());
+
+        let key = make_entity_attribute_key(entity, attribute);
+        let parsed = parse_entity_attribute_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, (entity, attribute));
+    }
+
+    #[hegel::test]
+    fn relation_metadata_key(tc: TestCase) {
+        let relation = tc.draw(gen_relation_id());
+
+        let key = make_relation_metadata_key(relation);
+        let parsed = parse_relation_metadata_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, relation);
+    }
+
+    #[hegel::test]
+    fn relation_attribute_key(tc: TestCase) {
+        let relation = tc.draw(gen_relation_id());
+        let attribute = tc.draw(gen_attribute_kind());
+
+        let key = make_relation_attribute_key(relation, attribute);
+        let parsed = parse_relation_attribute_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, (relation, attribute));
+    }
+
+    #[hegel::test]
+    fn relation_source_key(tc: TestCase) {
+        let source_entity = tc.draw(gen_entity_id());
+        let relation = tc.draw(gen_relation_id());
+
+        let key = make_relation_source_key(source_entity, relation);
+        let parsed = parse_relation_source_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, (source_entity, relation));
+    }
+
+    #[hegel::test]
+    fn relation_target_key(tc: TestCase) {
+        let target_entity = tc.draw(gen_entity_id());
+        let relation = tc.draw(gen_relation_id());
+
+        let key = make_relation_target_key(target_entity, relation);
+        let parsed = parse_relation_target_key(key.into()).expect("should parse");
+
+        assert_eq!(parsed, (target_entity, relation));
     }
 }
 
