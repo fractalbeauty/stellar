@@ -1,0 +1,23 @@
+[package]
+name = "stellar-import"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.103"
+dua-core = "3.1.0"
+lofty = "0.25.1"
+rayon = "1.12.0"
+tokio = { version = "1.52.3", features = [] }
+tokio-util = "0.7.18"
+tracing = "0.1.44"
+uniffi = "0.29.4"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = [
+    "macros",
+    "signal",
+    "rt-multi-thread",
+    "time",
+] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
