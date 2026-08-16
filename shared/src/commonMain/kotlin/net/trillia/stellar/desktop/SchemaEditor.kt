@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.trillia.stellar.Button
 import net.trillia.stellar.SchemaManager
+import net.trillia.stellar.comparable
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
 import uniffi.stellar.logError
@@ -36,7 +37,7 @@ fun SchemaEditor(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        schema.entities.entries.sortedBy { it.key }.forEach { (entityKind, entitySchema) ->
+        schema.entities.entries.sortedBy { it.key.comparable() }.forEach { (entityKind, entitySchema) ->
             Column {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(entitySchema.name)
