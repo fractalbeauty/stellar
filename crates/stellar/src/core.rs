@@ -8,8 +8,8 @@ use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
 use stellar_graph::entity::{
-    AttributeKind, AuthorId, EntityId, EntityKind, RelationKind, Timestamp, Value, ValueKind,
-    Version,
+    AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
+    ValueKind, Version,
 };
 use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, Schema};
 use stellar_log::LogGuard;
@@ -177,6 +177,68 @@ impl Core {
     /// Deletes an entity.
     pub fn delete_entity(&self, entity: EntityId) -> Result<(), CoreError> {
         self.database.delete_entity(entity, self.version_now())?;
+        Ok(())
+    }
+
+    /// Gets all non-deleted relations.
+    pub fn get_relations(&self) -> Result<HashMap<RelationId, CoreRelation>, CoreError> {
+        let relations = self.database.get_relations()?;
+        Ok(relations
+            .into_iter()
+            .filter_map(|(relation, data)| {
+                if data.metadata.deleted {
+                    return None;
+                }
+
+                Some((
+                    relation,
+                    CoreRelation {
+                        // TODO
+                        kind: relation.kind(),
+                        source: data.metadata.source,
+                        target: data.metadata.target,
+                        attributes: data
+                            .attributes
+                            .into_iter()
+                            .map(|(attribute, value)| {
+                                (attribute, CoreAttribute { value: value.value })
+                            })
+                            .collect(),
+                    },
+                ))
+            })
+            .collect())
+    }
+
+    /// Creates a relation of the given kind, returning its ID.
+    pub fn create_relation(
+        &self,
+        kind: RelationKind,
+        source: EntityId,
+        target: EntityId,
+    ) -> Result<RelationId, CoreError> {
+        let relation = self
+            .database
+            .create_relation(kind, source, target, self.version_now())?;
+        Ok(relation)
+    }
+
+    /// Sets a relation's attribute for a relation to a value.
+    pub fn set_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        value: Value,
+    ) -> Result<(), CoreError> {
+        self.database
+            .set_relation_attribute(relation, attribute, value, self.version_now())?;
+        Ok(())
+    }
+
+    /// Deletes a relation.
+    pub fn delete_relation(&self, relation: RelationId) -> Result<(), CoreError> {
+        self.database
+            .delete_relation(relation, self.version_now())?;
         Ok(())
     }
 
@@ -510,6 +572,14 @@ impl std::fmt::Debug for Core {
 #[derive(uniffi::Record)]
 pub struct CoreEntity {
     kind: EntityKind,
+    attributes: HashMap<AttributeKind, CoreAttribute>,
+}
+
+#[derive(uniffi::Record)]
+pub struct CoreRelation {
+    kind: RelationKind,
+    source: EntityId,
+    target: EntityId,
     attributes: HashMap<AttributeKind, CoreAttribute>,
 }
 

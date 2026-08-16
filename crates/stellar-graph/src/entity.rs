@@ -423,6 +423,10 @@ uniffi::custom_type!(EntityId, Vec<u8>, {
     lower: |entity| entity.as_bytes().to_vec(),
     try_lift: |bytes| Ok(EntityId::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift EntityId"))?)),
 });
+uniffi::custom_type!(RelationId, Vec<u8>, {
+    lower: |relation| relation.as_bytes().to_vec(),
+    try_lift: |bytes| Ok(RelationId::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift RelationId"))?)),
+});
 uniffi::custom_type!(EntityKind, Vec<u8>, {
     lower: |entity_kind| entity_kind.as_bytes().to_vec(),
     try_lift: |bytes| Ok(EntityKind::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift EntityKind"))?)),
