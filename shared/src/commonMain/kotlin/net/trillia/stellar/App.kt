@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
+import net.trillia.stellar.desktop.Importer
 import net.trillia.stellar.desktop.SchemaEditor
 import net.trillia.stellar.mobile.SessionsScreen
 import uniffi.stellar.Core
@@ -46,12 +47,14 @@ fun App(
                         Button("schema", onClick = { screen = 0 })
                         Button("devices", onClick = { screen = 1 })
                         Button("inspect", onClick = { screen = 2 })
+                        Button("import", onClick = { screen = 3 })
                     }
 
                     when (screen) {
                         0 -> SchemaEditor(core, schemaManager)
                         1 -> SessionsScreen(core = core, devicesManager = devicesManager)
                         2 -> InspectPane()
+                        3 -> Importer(core = core)
                     }
                 }
             }
