@@ -177,7 +177,7 @@ impl SchemaStore {
 
                 let mut doc = AutoCommit::new().with_actor(author.as_slice().into());
 
-                let initial_schema = Schema::default();
+                let initial_schema = Schema::new_default();
                 initial_schema
                     .save(&mut doc, &ROOT, "schema")
                     .context("Failed to save initial schema to doc")?;

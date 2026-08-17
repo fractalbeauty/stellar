@@ -552,6 +552,22 @@ impl Core {
         Ok(())
     }
 
+    /// Resets the schema to a new default schema.
+    ///
+    /// This will break existing entities!
+    pub async fn dangerously_reset_schema(&self) -> Result<(), CoreError> {
+        let schema = self
+            .schema
+            .modify(move |schema| {
+                *schema = Schema::new_default();
+
+                schema.clone()
+            })
+            .await?;
+        self.schema_change_handler.on_change(schema);
+        Ok(())
+    }
+
     pub fn start_import(
         &self,
         roots: Vec<String>,

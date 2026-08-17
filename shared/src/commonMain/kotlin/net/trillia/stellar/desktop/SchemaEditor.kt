@@ -92,5 +92,15 @@ fun SchemaEditor(
                 }
             }
         })
+
+        Button("reset schema", onClick = {
+            coroutineScope.launch {
+                try {
+                    core.dangerouslyResetSchema()
+                } catch (e: CoreException) {
+                    logError("$e")
+                }
+            }
+        })
     }
 }
