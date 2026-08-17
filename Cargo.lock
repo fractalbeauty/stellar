@@ -4611,6 +4611,7 @@ dependencies = [
  "jni 0.21.1",
  "ndk-context",
  "stellar-graph",
+ "stellar-import",
  "stellar-log",
  "stellar-sync",
  "stellar-uniffi",

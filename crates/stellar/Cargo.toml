@@ -9,6 +9,7 @@ name = "stellar"
 
 [dependencies]
 stellar-graph = { path = "../stellar-graph" }
+stellar-import = { path = "../stellar-import" }
 stellar-log = { path = "../stellar-log" }
 stellar-sync = { path = "../stellar-sync" }
 stellar-uniffi = { path = "../stellar-uniffi" }

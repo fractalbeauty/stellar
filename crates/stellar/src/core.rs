@@ -12,6 +12,7 @@ use stellar_graph::entity::{
     ValueKind, Version,
 };
 use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, Schema};
+use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
@@ -24,6 +25,8 @@ use uuid::Uuid;
 
 #[derive(uniffi::Object)]
 pub struct Core {
+    runtime_handle: tokio::runtime::Handle,
+
     cancellation_token: CancellationToken,
     database: Database,
     schema: SchemaStoreTask,
@@ -548,6 +551,20 @@ impl Core {
         self.schema_change_handler.on_change(schema);
         Ok(())
     }
+
+    pub fn start_import(
+        &self,
+        roots: Vec<String>,
+        event_handler: Arc<dyn ImportEventHandler>,
+    ) -> Result<(), CoreError> {
+        let _guard = self.runtime_handle.enter();
+        ImportTask::spawn(
+            self.cancellation_token.child_token(),
+            event_handler,
+            roots.into_iter().map(Into::into).collect(),
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(uniffi::Record)]
@@ -718,6 +735,7 @@ fn run_core_thread(
         });
 
         let core = Core {
+            runtime_handle: tokio::runtime::Handle::current(),
             cancellation_token: cancellation_token.clone(),
             database,
             schema,
