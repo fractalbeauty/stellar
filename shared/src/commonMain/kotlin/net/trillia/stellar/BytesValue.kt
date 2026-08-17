@@ -1,9 +1,15 @@
 package net.trillia.stellar
 
-class ComparableByteArray(
+data class BytesValue(
     val bytes: ByteArray,
-) : Comparable<ComparableByteArray> {
-    override fun compareTo(other: ComparableByteArray): Int {
+) : Comparable<BytesValue> {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): BytesValue = BytesValue(bytes)
+    }
+
+    fun toByteArray(): ByteArray = this.bytes
+
+    override fun compareTo(other: BytesValue): Int {
         if (this.bytes.size != other.bytes.size) {
             return this.bytes.size.compareTo(other.bytes.size)
         }
@@ -18,12 +24,9 @@ class ComparableByteArray(
     }
 
     override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (other !is ComparableByteArray) return false
+        if (other !is BytesValue) return false
         return this.bytes.contentEquals(other.bytes)
     }
 
     override fun hashCode(): Int = this.bytes.contentHashCode()
 }
-
-fun ByteArray.comparable() = ComparableByteArray(this)

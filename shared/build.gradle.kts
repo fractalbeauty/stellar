@@ -116,6 +116,31 @@ uniffi {
             lift = "kotlin.uuid.Uuid.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
+        customType("EntityId") {
+            typeName = "net.trillia.stellar.BytesValue"
+            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("RelationId") {
+            typeName = "net.trillia.stellar.BytesValue"
+            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("EntityKind") {
+            typeName = "net.trillia.stellar.BytesValue"
+            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("RelationKind") {
+            typeName = "net.trillia.stellar.BytesValue"
+            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
+        customType("AttributeKind") {
+            typeName = "net.trillia.stellar.BytesValue"
+            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            lower = "{}.toByteArray()"
+        }
     }
 }
 
