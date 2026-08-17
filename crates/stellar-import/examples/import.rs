@@ -1,5 +1,5 @@
 use std::{sync::Arc, time::Duration};
-use stellar_import::import::{ImportEventHandler, ImportTask};
+use stellar_import::import::{ImportEventHandler, ImportEventScannedFile, ImportTask};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
@@ -39,7 +39,7 @@ impl ImportEventHandler for ExampleImportEventHandler {
         println!("pending: {path}");
     }
 
-    fn on_scanned_file(&self) {
-        todo!()
+    fn on_scanned_file(&self, file: ImportEventScannedFile) {
+        println!("scanned {} -> {:?}", file.path, file.tags)
     }
 }

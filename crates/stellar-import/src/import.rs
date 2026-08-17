@@ -1,6 +1,6 @@
 use lofty::file::TaggedFileExt;
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
 /// Foreign trait for receiving import events.
@@ -8,7 +8,13 @@ use tokio_util::sync::CancellationToken;
 pub trait ImportEventHandler: Send + Sync {
     fn on_pending_file(&self, path: String);
 
-    fn on_scanned_file(&self);
+    fn on_scanned_file(&self, file: ImportEventScannedFile);
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ImportEventScannedFile {
+    pub path: String,
+    pub tags: HashMap<String, String>,
 }
 
 /// Handle to an import task.
@@ -72,80 +78,118 @@ impl Import {
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
     ) -> Result<(), anyhow::Error> {
-        tokio::task::spawn_blocking(move || {
-            dua_core::walk_roots(
-                roots.into_iter().enumerate(),
-                // TODO
-                4,
-                dua_core::Order::Completion,
-                |_, _| true,
-            )
-            .inspect(|(_, entry)| {
-                let path = match entry {
-                    dua_core::RootEvent::Entry(Ok(entry)) => {
-                        if !entry.file_type.is_file() {
-                            return;
-                        }
-                        entry.path().to_string_lossy().to_string()
-                    }
-                    _ => return,
-                };
-                // TODO: batch?
-                event_handler.on_pending_file(path);
-            })
-            .filter_map(|(_, entry)| {
-                let path = match entry {
-                    dua_core::RootEvent::Entry(entry) => match entry {
-                        Ok(entry) => {
-                            if !entry.file_type.is_file() {
+        let (path_tx, path_rx) = std::sync::mpsc::channel();
+
+        tokio::task::spawn_blocking({
+            let cancellation_token = cancellation_token.clone();
+            let event_handler = event_handler.clone();
+            move || {
+                dua_core::walk_roots(
+                    roots.into_iter().enumerate(),
+                    // TODO
+                    4,
+                    dua_core::Order::Completion,
+                    move |_, _| {
+                        // Stop descending if cancelled
+                        !cancellation_token.is_cancelled()
+                    },
+                )
+                .filter_map(|(_, entry)| {
+                    let path = match entry {
+                        dua_core::RootEvent::Entry(entry) => match entry {
+                            Ok(entry) => {
+                                if !entry.file_type.is_file() {
+                                    return None;
+                                }
+                                entry.path()
+                            }
+                            Err(e) => {
+                                // TODO: report error to UI
+                                tracing::error!("Error while walking : {e:?}");
                                 return None;
                             }
-                            entry.path()
-                        }
-                        Err(e) => {
-                            // TODO: report error to UI
-                            tracing::error!("Error while walking : {e:?}");
-                            return None;
-                        }
-                    },
-                    dua_core::RootEvent::Finished => return None,
-                };
+                        },
+                        dua_core::RootEvent::Finished => return None,
+                    };
 
-                // Skip if the file has no extension or the extension is not in Lofty's list of common audio extensions
-                if path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_none_or(|extension| !lofty::file::EXTENSIONS.contains(&extension))
-                {
-                    return None;
-                }
+                    // Skip if the file has no extension or the extension is not in Lofty's list of common audio extensions
+                    if path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .is_none_or(|extension| !lofty::file::EXTENSIONS.contains(&extension))
+                    {
+                        return None;
+                    }
 
-                Some(path)
-            })
-            .par_bridge()
-            .for_each(|path| {
-                let file = match lofty::read_from_path(&path) {
-                    Ok(file) => file,
-                    Err(e) => {
-                        // TODO: report error to UI
-                        tracing::error!(?path, "Failed to read file: {e:#}");
+                    // TODO: batch?
+                    event_handler.on_pending_file(path.to_string_lossy().to_string());
+
+                    Some(path)
+                })
+                .for_each(|path| {
+                    let _ = path_tx.send(path);
+                });
+
+                tracing::info!("Import walk finished");
+            }
+        });
+
+        tokio::task::spawn_blocking({
+            let cancellation_token = cancellation_token.clone();
+            move || {
+                path_rx.into_iter().par_bridge().for_each(|path| {
+                    // Stop processing if cancelled
+                    if cancellation_token.is_cancelled() {
                         return;
                     }
-                };
 
-                let Some(tag) = file.primary_tag().or_else(|| file.first_tag()) else {
-                    // TODO: report error to UI
-                    tracing::error!(?path, "Failed to get file tags");
-                    return;
-                };
+                    let file = match lofty::read_from_path(&path) {
+                        Ok(file) => file,
+                        Err(e) => {
+                            // TODO: report error to UI
+                            tracing::error!(?path, "Failed to read file: {e:#}");
+                            return;
+                        }
+                    };
 
-                println!(
-                    "{:?} {} {:?}",
-                    rayon::current_thread_index(),
-                    path.display(),
-                    tag.items().map(|item| item.key()).collect::<Vec<_>>()
-                );
-            });
+                    let event_tags = match file.primary_tag().or_else(|| file.first_tag()) {
+                        Some(tag) => {
+                            let mut event_tags = HashMap::new();
+
+                            for item in tag.items() {
+                                let key = format!("{:?}", item.key());
+                                let value = item
+                                    .value()
+                                    // TODO
+                                    .clone()
+                                    .into_string()
+                                    .unwrap_or_else(|| "<bytes>".to_string());
+
+                                event_tags
+                                    .entry(key)
+                                    .and_modify(|existing: &mut String| {
+                                        existing.push_str(", ");
+                                        existing.push_str(&value);
+                                    })
+                                    .or_insert(value);
+                            }
+
+                            event_tags
+                        }
+                        None => {
+                            tracing::debug!(?path, "File has no tags");
+                            HashMap::new()
+                        }
+                    };
+
+                    event_handler.on_scanned_file(ImportEventScannedFile {
+                        path: path.to_string_lossy().to_string(),
+                        tags: event_tags,
+                    });
+                });
+
+                tracing::info!("Import scan finished");
+            }
         });
 
         loop {
