@@ -7,12 +7,16 @@ use pin_project_lite::pin_project;
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
+    collections::HashMap,
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
     time::Duration,
 };
-use stellar_graph::{entity::AuthorId, schema::Schema};
+use stellar_graph::{
+    entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
+    schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
+};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Sleep,
@@ -177,7 +181,7 @@ impl SchemaStore {
 
                 let mut doc = AutoCommit::new().with_actor(author.as_slice().into());
 
-                let initial_schema = Schema::new_default();
+                let initial_schema = default_schema();
                 initial_schema
                     .save(&mut doc, &ROOT, "schema")
                     .context("Failed to save initial schema to doc")?;
@@ -596,6 +600,88 @@ impl SchemaSyncServerMessage {
     pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
         postcard::from_bytes(bytes)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+}
+
+/// Creates a new schema with the default configuration.
+pub fn default_schema() -> Schema {
+    let song = EntityKind::random();
+    let song_schema = EntitySchema {
+        name: "Song".to_string(),
+        attributes: HashMap::from([(
+            AttributeKind::random(),
+            AttributeSchema {
+                name: "Title".to_string(),
+                value: ValueKind::Text,
+            },
+        )]),
+    };
+
+    let album = EntityKind::random();
+    let album_schema = EntitySchema {
+        name: "Album".to_string(),
+        attributes: HashMap::from([(
+            AttributeKind::random(),
+            AttributeSchema {
+                name: "Title".to_string(),
+                value: ValueKind::Text,
+            },
+        )]),
+    };
+
+    let artist = EntityKind::random();
+    let artist_schema = EntitySchema {
+        name: "Artist".to_string(),
+        attributes: HashMap::from([(
+            AttributeKind::random(),
+            AttributeSchema {
+                name: "Name".to_string(),
+                value: ValueKind::Text,
+            },
+        )]),
+    };
+
+    let album_song = RelationKind::random();
+    let album_song_schema = RelationSchema {
+        name: "Track".to_string(),
+        source: album,
+        target: song,
+        attributes: HashMap::from([(
+            AttributeKind::random(),
+            AttributeSchema {
+                name: "Track Number".to_string(),
+                value: ValueKind::Number,
+            },
+        )]),
+    };
+
+    let album_artist = RelationKind::random();
+    let album_artist_schema = RelationSchema {
+        name: "Album Artist".to_string(),
+        source: album,
+        target: artist,
+        attributes: HashMap::new(),
+    };
+
+    let song_artist = RelationKind::random();
+    let song_artist_schema = RelationSchema {
+        name: "Song Artist".to_string(),
+        source: song,
+        target: artist,
+        attributes: HashMap::new(),
+    };
+
+    Schema {
+        entities: HashMap::from([
+            (song, song_schema),
+            (album, album_schema),
+            (artist, artist_schema),
+        ]),
+        relations: HashMap::from([
+            (album_song, album_song_schema),
+            (album_artist, album_artist_schema),
+            (song_artist, song_artist_schema),
+        ]),
     }
 }
 

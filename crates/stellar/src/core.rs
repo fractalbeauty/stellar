@@ -16,7 +16,7 @@ use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
-use stellar_sync::schema::SchemaStoreTask;
+use stellar_sync::schema::{SchemaStoreTask, default_schema};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -559,7 +559,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                *schema = Schema::new_default();
+                *schema = default_schema();
 
                 schema.clone()
             })
