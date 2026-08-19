@@ -133,6 +133,9 @@ impl FromStr for RelationId {
     }
 }
 
+/// A kind of entity in the graph, identified by 5 random bytes.
+///
+/// The pattern `XX 00 00 00 00` is reserved for application-defined kinds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
 #[automorph(transparent)]
 pub struct EntityKind([u8; 5]);
@@ -149,8 +152,20 @@ impl EntityKind {
     }
 
     /// Generates a new random [`EntityKind`].
+    ///
+    /// The kind is guaranteed not to be reserved.
     pub fn random() -> Self {
-        Self(rand::random())
+        let kind = Self(rand::random());
+        if kind.is_reserved() {
+            Self::random()
+        } else {
+            kind
+        }
+    }
+
+    /// Returns whether the [`EntityKind`] is a reserved kind.
+    pub fn is_reserved(self) -> bool {
+        self.as_slice()[1..5].iter().all(|byte| *byte == 0)
     }
 
     /// Returns the [`EntityKind`] as a byte array.
@@ -188,6 +203,9 @@ impl FromStr for EntityKind {
     }
 }
 
+/// A kind of relation in the graph, identified by 5 random bytes.
+///
+/// The pattern `XX 00 00 00 00` is reserved for application-defined kinds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
 #[automorph(transparent)]
 pub struct RelationKind([u8; 5]);
@@ -204,8 +222,20 @@ impl RelationKind {
     }
 
     /// Generates a new random [`RelationKind`].
+    ///
+    /// The kind is guaranteed not to be reserved.
     pub fn random() -> Self {
-        Self(rand::random())
+        let kind = Self(rand::random());
+        if kind.is_reserved() {
+            Self::random()
+        } else {
+            kind
+        }
+    }
+
+    /// Returns whether the [`RelationKind`] is a reserved kind.
+    pub fn is_reserved(self) -> bool {
+        self.as_slice()[1..5].iter().all(|byte| *byte == 0)
     }
 
     /// Returns the [`RelationKind`] as a byte array.
@@ -443,7 +473,7 @@ uniffi::custom_type!(AttributeKind, Vec<u8>, {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        Version,
+        EntityKind, RelationKind, Version,
         hegel::{gen_author_id, gen_timestamp},
     };
     use hegel::{Generator, TestCase};
@@ -488,6 +518,19 @@ mod test {
         } else {
             assert_eq!(latest, ("version2", version2));
         }
+    }
+
+    #[test]
+    fn reserved_kinds() {
+        assert!(EntityKind::from_bytes([00, 00, 00, 00, 00]).is_reserved());
+        assert!(EntityKind::from_bytes([01, 00, 00, 00, 00]).is_reserved());
+        assert!(!EntityKind::from_bytes([00, 01, 00, 00, 00]).is_reserved());
+        assert!(!EntityKind::from_bytes([01, 01, 00, 00, 00]).is_reserved());
+
+        assert!(RelationKind::from_bytes([00, 00, 00, 00, 00]).is_reserved());
+        assert!(RelationKind::from_bytes([01, 00, 00, 00, 00]).is_reserved());
+        assert!(!RelationKind::from_bytes([00, 01, 00, 00, 00]).is_reserved());
+        assert!(!RelationKind::from_bytes([01, 01, 00, 00, 00]).is_reserved());
     }
 }
 
