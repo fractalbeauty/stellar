@@ -353,6 +353,7 @@ impl FromStr for AttributeKind {
 pub enum ValueKind {
     Text,
     Number,
+    Bytes,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
@@ -360,6 +361,8 @@ pub enum Value {
     Text(String),
     /// Cannot be NaN or infinity.
     Number(f64),
+    // TODO: maybe Arc<[u8]>
+    Bytes(Vec<u8>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
