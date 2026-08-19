@@ -289,7 +289,7 @@ pub struct AttributeKind([u8; 5]);
 
 impl AttributeKind {
     /// Constructs an [`AttributeKind`] from a byte array.
-    pub fn from_bytes(bytes: [u8; 5]) -> Self {
+    pub const fn from_bytes(bytes: [u8; 5]) -> Self {
         Self(bytes)
     }
 
@@ -619,9 +619,12 @@ pub mod hegel {
     pub fn gen_value(tc: TestCase) -> Value {
         tc.draw(one_of!(
             compose!(|tc| { Value::Text(tc.draw(gs::text())) }),
-            compose!(|tc| {
-                Value::Number(tc.draw(gs::floats().allow_nan(false).allow_infinity(false)))
-            }),
+            compose!(|tc| { Value::Number(tc.draw(gen_value_number())) }),
         ))
+    }
+
+    #[hegel::composite]
+    pub fn gen_value_number(tc: TestCase) -> f64 {
+        tc.draw(gs::floats().allow_nan(false).allow_infinity(false))
     }
 }
