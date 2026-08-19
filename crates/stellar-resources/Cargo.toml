@@ -1,0 +1,10 @@
+[package]
+name = "stellar-resources"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stellar-graph = { path = "../stellar-graph" }
+
+anyhow = "1.0.103"
+tracing = "0.1.44"

@@ -4923,6 +4923,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-resources"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "stellar-graph",
+ "tracing",
+]
+
+[[package]]
 name = "stellar-riblt"
 version = "0.1.0"
 dependencies = [

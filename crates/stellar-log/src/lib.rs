@@ -10,7 +10,7 @@ use tracing_subscriber::{
 /// - `warn` by default
 /// - `stellar_*=debug`: include debug logs from us
 /// - `iroh=error`: suppress noisy warnings from Iroh
-const DEFAULT_ENV_FILTER: &str = "warn,stellar=debug,stellar_graph=debug,stellar_import=debug,stellar_log=debug,stellar_sync=debug,stellar_riblt=debug,iroh=error";
+const DEFAULT_ENV_FILTER: &str = "warn,stellar=debug,stellar_graph=debug,stellar_import=debug,stellar_log=debug,stellar_resources=debug,stellar_sync=debug,stellar_riblt=debug,iroh=error";
 
 /// Initialize logging.
 ///
