@@ -151,6 +151,11 @@ impl EntityKind {
         Self(*bytes)
     }
 
+    /// Constructs a reserved [`EntityKind`] from a byte.
+    pub const fn new_reserved(byte: u8) -> Self {
+        Self([byte, 0, 0, 0, 0])
+    }
+
     /// Generates a new random [`EntityKind`].
     ///
     /// The kind is guaranteed not to be reserved.
@@ -219,6 +224,11 @@ impl RelationKind {
     /// Constructs a [`RelationKind`] from a byte slice.
     pub fn from_slice(bytes: &[u8; 5]) -> Self {
         Self(*bytes)
+    }
+
+    /// Constructs a reserved [`RelationKind`] from a byte.
+    pub const fn new_reserved(byte: u8) -> Self {
+        Self([byte, 0, 0, 0, 0])
     }
 
     /// Generates a new random [`RelationKind`].
@@ -476,7 +486,7 @@ mod test {
         EntityKind, RelationKind, Version,
         hegel::{gen_author_id, gen_timestamp},
     };
-    use hegel::{Generator, TestCase};
+    use hegel::{Generator, TestCase, generators as gs};
 
     #[hegel::test]
     fn latest_version_same_timestamp(tc: TestCase) {
@@ -531,6 +541,12 @@ mod test {
         assert!(RelationKind::from_bytes([01, 00, 00, 00, 00]).is_reserved());
         assert!(!RelationKind::from_bytes([00, 01, 00, 00, 00]).is_reserved());
         assert!(!RelationKind::from_bytes([01, 01, 00, 00, 00]).is_reserved());
+    }
+
+    #[hegel::test]
+    fn new_reserved_is_reserved(tc: TestCase) {
+        let kind = EntityKind::new_reserved(tc.draw(gs::integers()));
+        assert!(kind.is_reserved())
     }
 }
 
