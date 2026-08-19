@@ -17,6 +17,7 @@ use stellar_graph::{
     entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
 };
+use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Sleep,
@@ -671,16 +672,26 @@ pub fn default_schema() -> Schema {
         attributes: HashMap::new(),
     };
 
+    let song_audio_resource = RelationKind::random();
+    let song_audio_resource_schema = RelationSchema {
+        name: "Song Audio Resource".to_string(),
+        source: song,
+        target: AUDIO_RESOURCE_ENTITY,
+        attributes: HashMap::new(),
+    };
+
     Schema {
         entities: HashMap::from([
             (song, song_schema),
             (album, album_schema),
             (artist, artist_schema),
+            (AUDIO_RESOURCE_ENTITY, audio_resource_schema()),
         ]),
         relations: HashMap::from([
             (album_song, album_song_schema),
             (album_artist, album_artist_schema),
             (song_artist, song_artist_schema),
+            (song_audio_resource, song_audio_resource_schema),
         ]),
     }
 }
