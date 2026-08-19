@@ -624,7 +624,11 @@ mod test {
 
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
-        assert!(watch_schema.borrow().as_ref().unwrap().entities.is_empty());
+        let initial_num_entities = 3;
+        assert_eq!(
+            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            initial_num_entities
+        );
 
         let entity_kind = EntityKind::random();
         task.modify(move |schema| {
@@ -667,7 +671,11 @@ mod test {
 
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
-        assert!(watch_schema.borrow().as_ref().unwrap().entities.is_empty());
+        let initial_num_entities = 3;
+        assert_eq!(
+            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            initial_num_entities
+        );
 
         task.modify(move |schema| {
             schema.entities.insert(
@@ -694,6 +702,9 @@ mod test {
 
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
-        assert_eq!(watch_schema.borrow().as_ref().unwrap().entities.len(), 2);
+        assert_eq!(
+            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            initial_num_entities + 2
+        );
     }
 }
