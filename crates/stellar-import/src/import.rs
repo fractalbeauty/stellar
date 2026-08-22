@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 use stellar_graph::{
+    database::Database,
     entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, ValueKind},
     schema::Schema,
 };
@@ -41,6 +42,7 @@ pub struct ImportTask {
 impl ImportTask {
     pub fn spawn(
         cancellation_token: CancellationToken,
+        database: Arc<dyn ImportDatabasePort>,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
         schema: Schema,
@@ -52,7 +54,7 @@ impl ImportTask {
             let cancellation_token = cancellation_token.clone();
             let message_tx = message_tx.clone();
             async move {
-                let mut import = match Import::init(schema, song_entity) {
+                let mut import = match Import::init(database, schema, song_entity) {
                     Ok(import) => import,
                     Err(e) => {
                         tracing::error!("Import task failed to init: {e:?}");
@@ -100,6 +102,8 @@ impl ImportTask {
 }
 
 struct Import {
+    database: Arc<dyn ImportDatabasePort>,
+
     schema: Schema,
     song_entity: EntityKind,
 
@@ -107,8 +111,14 @@ struct Import {
 }
 
 impl Import {
-    fn init(schema: Schema, song_entity: EntityKind) -> Result<Self, anyhow::Error> {
+    fn init(
+        database: Arc<dyn ImportDatabasePort>,
+        schema: Schema,
+        song_entity: EntityKind,
+    ) -> Result<Self, anyhow::Error> {
         Ok(Self {
+            database,
+
             schema,
             song_entity,
 
@@ -519,4 +529,51 @@ impl Changes {
             }
         }
     }
+}
+
+pub trait ImportDatabasePort: Send + Sync {
+    fn find_entity(
+        &self,
+        kind: AttributeKind,
+        attributes: HashMap<AttributeKind, Value>,
+    ) -> Option<EntityId>;
+
+    fn find_relation(
+        &self,
+        kind: RelationKind,
+        source: EntityId,
+        target: EntityId,
+        attributes: HashMap<AttributeKind, Value>,
+    ) -> Option<RelationId>;
+}
+
+pub struct ImportDatabaseAdapter {
+    database: Database,
+}
+
+impl ImportDatabaseAdapter {
+    pub fn new(database: Database) -> Arc<Self> {
+        Arc::new(Self { database })
+    }
+}
+
+impl ImportDatabasePort for ImportDatabaseAdapter {
+    fn find_entity(
+        &self,
+        kind: AttributeKind,
+        attributes: HashMap<AttributeKind, Value>,
+    ) -> Option<EntityId> {
+        todo!()
+    }
+
+    fn find_relation(
+        &self,
+        kind: RelationKind,
+        source: EntityId,
+        target: EntityId,
+        attributes: HashMap<AttributeKind, Value>,
+    ) -> Option<RelationId> {
+        todo!()
+    }
+    //
 }

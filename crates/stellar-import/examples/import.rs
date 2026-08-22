@@ -4,7 +4,7 @@ use stellar_graph::{
     schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
 };
 use stellar_import::{
-    import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
+    import::{ImportDatabasePort, ImportEventHandler, ImportEventScannedFile, ImportTask},
     rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
@@ -182,6 +182,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let cancellation_token = CancellationToken::new();
     let task = ImportTask::spawn(
         cancellation_token,
+        Arc::new(ExampleDatabasePort),
         event_handler.clone(),
         vec![dir.into()],
         schema,
@@ -219,5 +220,27 @@ impl ImportEventHandler for ExampleImportEventHandler {
 
     fn on_scan_finished(&self) {
         self.scan_finished.notify_one();
+    }
+}
+
+struct ExampleDatabasePort;
+
+impl ImportDatabasePort for ExampleDatabasePort {
+    fn find_entity(
+        &self,
+        kind: AttributeKind,
+        attributes: HashMap<AttributeKind, stellar_graph::entity::Value>,
+    ) -> Option<stellar_graph::entity::EntityId> {
+        None
+    }
+
+    fn find_relation(
+        &self,
+        kind: RelationKind,
+        source: stellar_graph::entity::EntityId,
+        target: stellar_graph::entity::EntityId,
+        attributes: HashMap<AttributeKind, stellar_graph::entity::Value>,
+    ) -> Option<stellar_graph::entity::RelationId> {
+        None
     }
 }
