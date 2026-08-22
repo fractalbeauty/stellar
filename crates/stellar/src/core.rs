@@ -13,6 +13,7 @@ use stellar_graph::entity::{
 };
 use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, Schema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
+use stellar_import::ports::ImportDatabaseAdapter;
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
@@ -576,6 +577,7 @@ impl Core {
         let _guard = self.runtime_handle.enter();
         ImportTask::spawn(
             self.cancellation_token.child_token(),
+            ImportDatabaseAdapter::new(self.database.clone()),
             event_handler,
             roots.into_iter().map(Into::into).collect(),
             todo!(),
