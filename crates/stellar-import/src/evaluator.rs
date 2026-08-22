@@ -41,7 +41,7 @@ impl<'a> Evaluator<'a> {
         let rule = &self.rules.rule;
 
         for file in files {
-            let song_attributes = file.attributes(&rule.attributes);
+            let song_attributes: HashMap<AttributeKind, Value> = file.attributes(&rule.attributes);
 
             let entity = self
                 .changes
@@ -54,6 +54,47 @@ impl<'a> Evaluator<'a> {
 
         for (kind, created_entities) in &self.changes.create_entities {
             let existing = self.database.get_entities_by_kind(*kind)?;
+
+            let key_attributes = self.rules.iter_entity_key_attributes(*kind);
+
+            // If there are no key attributes, don't merge anything
+            if key_attributes.len() == 0 {
+                continue;
+            }
+
+            // Build index by key attributes
+            let index = existing
+                .iter()
+                .filter_map(|(id, existing)| {
+                    let mut values = Vec::with_capacity(key_attributes.len());
+                    for key_attribute in key_attributes.clone() {
+                        let Some(value) = existing.attributes.get(&key_attribute) else {
+                            return None;
+                        };
+                        values.push(value.value.clone());
+                    }
+
+                    Some((values, *id))
+                })
+                .collect::<HashMap<_, _>>();
+
+            'entity: for created_entity in created_entities {
+                let mut values = Vec::with_capacity(key_attributes.len());
+                for key_attribute in key_attributes.clone() {
+                    let Some(value) = created_entity.attributes.get(&key_attribute) else {
+                        continue 'entity;
+                    };
+                    values.push(value.clone());
+                }
+
+                let existing = index.get(&values).copied();
+                if let Some(existing) = existing {
+                    println!(
+                        "detected {:?} is a duplictae of {:?}, not implemented",
+                        created_entity, existing
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -66,12 +107,7 @@ impl<'a> Evaluator<'a> {
         relation_rule: &RelationRule,
     ) {
         let other_attributes = file.attributes(&relation_rule.other_attributes);
-        let other_key_attributes = self
-            .rules
-            .entity_key_attributes
-            .get(&relation_rule.other)
-            .map(|attributes| attributes.into_iter().copied())
-            .unwrap_or_default();
+        let other_key_attributes = self.rules.iter_entity_key_attributes(relation_rule.other);
 
         let other = self.changes.find_or_create_entity(
             relation_rule.other,
@@ -87,10 +123,7 @@ impl<'a> Evaluator<'a> {
         let relation_attributes = file.attributes(&relation_rule.relation_attributes);
         let relation_key_attributes = self
             .rules
-            .relation_key_attributes
-            .get(&relation_rule.relation)
-            .map(|attributes| attributes.into_iter().copied())
-            .unwrap_or_default();
+            .iter_relation_key_attributes(relation_rule.relation);
 
         self.changes.find_or_create_relation(
             relation_rule.relation,
@@ -106,19 +139,19 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, PartialEq, Default)]
 pub struct Changes {
     pub create_entities: HashMap<EntityKind, Vec<CreateEntityChange>>,
     pub create_relations: HashMap<RelationKind, Vec<CreateRelationChange>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CreateEntityChange {
     pub id: EntityId,
     pub attributes: HashMap<AttributeKind, Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct CreateRelationChange {
     pub id: RelationId,
     pub source: EntityId,
@@ -328,5 +361,114 @@ impl EvaluatorFile {
         self.tags
             .as_ref()
             .and_then(|tags| tags.get_string(item_key))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        evaluator::{Evaluator, EvaluatorFile},
+        ports::ImportDatabasePort,
+        rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
+    };
+    use lofty::tag::{Accessor, Tag};
+    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+    use stellar_graph::{
+        entity::{
+            AttributeKind, AuthorId, EntityId, EntityKind, RelationKind, Timestamp, Value,
+            ValueKind, Version,
+        },
+        store::{EntityAttributeValue, EntityData, EntityMetadataValue},
+    };
+
+    struct TestImportDatabaseAdapter {
+        entities: HashMap<EntityId, EntityData>,
+    }
+
+    impl ImportDatabasePort for TestImportDatabaseAdapter {
+        fn get_entities_by_kind(
+            &self,
+            kind: stellar_graph::entity::EntityKind,
+        ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
+            Ok(self
+                .entities
+                .clone()
+                .into_iter()
+                .filter(|(id, _)| id.kind() == kind)
+                .collect())
+        }
+    }
+
+    #[test]
+    fn merges_with_database() {
+        let song = EntityKind::random();
+        let song_title = AttributeKind::random();
+
+        let album = EntityKind::random();
+        let album_title = AttributeKind::random();
+
+        let album_song = RelationKind::random();
+
+        let rules = Rules {
+            rule: Rule {
+                attributes: vec![AttributeRule {
+                    attribute: song_title,
+                    value: ValueKind::Text,
+                    tag: TagKind::TrackTitle,
+                }],
+                relations: vec![RelationRule {
+                    relation: album_song,
+                    other: album,
+                    direction: RelationRuleDirection::Incoming,
+                    relation_attributes: vec![],
+                    other_attributes: vec![AttributeRule {
+                        attribute: album_title,
+                        value: ValueKind::Text,
+                        tag: TagKind::AlbumTitle,
+                    }],
+                    nested_relations: vec![],
+                }],
+            },
+            entity_key_attributes: HashMap::from([(album, vec![album_title])]),
+            relation_key_attributes: HashMap::new(),
+        };
+
+        let existing_album = EntityId::random(album);
+
+        let empty_version = Version::new(Timestamp::new(0), AuthorId::from_bytes([0u8; 32]));
+
+        let database: Arc<dyn ImportDatabasePort> = Arc::new(TestImportDatabaseAdapter {
+            entities: HashMap::from([(
+                existing_album,
+                EntityData {
+                    metadata: EntityMetadataValue {
+                        deleted: false,
+                        deleted_version: empty_version.clone(),
+                    },
+                    attributes: HashMap::from([(
+                        album_title,
+                        EntityAttributeValue {
+                            value: Value::Text("test album".to_string()),
+                            version: empty_version.clone(),
+                        },
+                    )]),
+                },
+            )]),
+        });
+
+        let files = [EvaluatorFile {
+            path: PathBuf::from("test song.mp3"),
+            tags: Some({
+                let mut tag = Tag::new(lofty::tag::TagType::Id3v2);
+                tag.set_title("test song".to_string());
+                tag.set_album("test album".to_string());
+                tag
+            }),
+        }];
+
+        let changes = Evaluator::run(&rules, &database, song, &files).expect("should run");
+
+        // TODO
+        assert_eq!(changes.create_entities, HashMap::new());
     }
 }

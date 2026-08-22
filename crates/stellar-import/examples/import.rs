@@ -182,7 +182,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let cancellation_token = CancellationToken::new();
     let task = ImportTask::spawn(
         cancellation_token,
-        Arc::new(ExampleDatabasePort),
+        Arc::new(ExampleImportDatabaseAdapter),
         event_handler.clone(),
         vec![dir.into()],
         schema,
@@ -223,9 +223,9 @@ impl ImportEventHandler for ExampleImportEventHandler {
     }
 }
 
-struct ExampleDatabasePort;
+struct ExampleImportDatabaseAdapter;
 
-impl ImportDatabasePort for ExampleDatabasePort {
+impl ImportDatabasePort for ExampleImportDatabaseAdapter {
     fn get_entities_by_kind(
         &self,
         kind: EntityKind,
