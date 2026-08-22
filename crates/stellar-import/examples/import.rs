@@ -3,7 +3,10 @@ use stellar_graph::{
     entity::{AttributeKind, EntityKind, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
 };
-use stellar_import::import::{ImportEventHandler, ImportEventScannedFile, ImportTask};
+use stellar_import::{
+    import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
+    rules::{Rule, Rules, TagKind, TagRule},
+};
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -22,10 +25,11 @@ async fn main() -> Result<(), anyhow::Error> {
     tracing::info!("Scanning {}", dir);
 
     let song = EntityKind::random();
+    let song_title = AttributeKind::random();
     let song_schema = EntitySchema {
         name: "Song".to_string(),
         attributes: HashMap::from([(
-            AttributeKind::random(),
+            song_title,
             AttributeSchema {
                 name: "Title".to_string(),
                 value: ValueKind::Text,
@@ -49,6 +53,17 @@ async fn main() -> Result<(), anyhow::Error> {
         relations: HashMap::from([(song_audio_resource, song_audio_resource_schema)]),
     };
 
+    let rules = Rules {
+        rules: vec![Rule::TagRule(TagRule {
+            attribute: song_title,
+            value: ValueKind::Text,
+            tag: TagKind::TrackTitle,
+        })],
+    };
+
+    dbg!(&schema);
+    dbg!(&rules);
+
     let event_handler = Arc::new(ExampleImportEventHandler::default());
 
     let cancellation_token = CancellationToken::new();
@@ -63,7 +78,7 @@ async fn main() -> Result<(), anyhow::Error> {
     event_handler.scan_finished.notified().await;
     tracing::info!("Scan finished");
 
-    task.import();
+    task.import(rules);
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutting down");

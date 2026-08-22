@@ -1,9 +1,21 @@
-use lofty::file::TaggedFileExt;
+use lofty::{
+    file::TaggedFileExt,
+    tag::{ItemKey, Tag},
+};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use stellar_graph::{entity::EntityKind, schema::Schema};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    path::PathBuf,
+    sync::Arc,
+};
+use stellar_graph::{
+    entity::{AttributeKind, EntityKind, Value, ValueKind},
+    schema::Schema,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+use crate::rules::{Rule, Rules};
 
 /// Foreign trait for receiving import events.
 #[uniffi::export(with_foreign)]
@@ -38,8 +50,9 @@ impl ImportTask {
 
         tokio::spawn({
             let cancellation_token = cancellation_token.clone();
+            let message_tx = message_tx.clone();
             async move {
-                let mut import = match Import::init() {
+                let mut import = match Import::init(schema, song_entity) {
                     Ok(import) => import,
                     Err(e) => {
                         tracing::error!("Import task failed to init: {e:?}");
@@ -48,7 +61,13 @@ impl ImportTask {
                 };
 
                 let result = import
-                    .run(cancellation_token, event_handler, roots, message_rx)
+                    .run(
+                        cancellation_token,
+                        event_handler,
+                        roots,
+                        message_tx,
+                        message_rx,
+                    )
                     .await;
 
                 if let Err(error) = result {
@@ -75,18 +94,26 @@ impl ImportTask {
     }
 
     /// Import with the configured settings.
-    pub fn import(&self) {
-        let _ = self.message_tx.send(ImportMessage::Import);
+    pub fn import(&self, rules: Rules) {
+        let _ = self.message_tx.send(ImportMessage::Import(rules));
     }
 }
 
 struct Import {
-    files: Vec<ImportScanFile>,
+    schema: Schema,
+    song_entity: EntityKind,
+
+    files: Vec<ImportMessageScannedFile>,
 }
 
 impl Import {
-    fn init() -> Result<Self, anyhow::Error> {
-        Ok(Self { files: Vec::new() })
+    fn init(schema: Schema, song_entity: EntityKind) -> Result<Self, anyhow::Error> {
+        Ok(Self {
+            schema,
+            song_entity,
+
+            files: Vec::new(),
+        })
     }
 
     async fn run(
@@ -94,6 +121,7 @@ impl Import {
         cancellation_token: CancellationToken,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
+        message_tx: mpsc::UnboundedSender<ImportMessage>,
         mut message_rx: mpsc::UnboundedReceiver<ImportMessage>,
     ) -> Result<(), anyhow::Error> {
         let (path_tx, path_rx) = std::sync::mpsc::channel();
@@ -154,6 +182,7 @@ impl Import {
 
         tokio::task::spawn_blocking({
             let cancellation_token = cancellation_token.clone();
+            let message_tx = message_tx.clone();
             move || {
                 path_rx.into_iter().par_bridge().for_each(|path| {
                     // Stop processing if cancelled
@@ -170,7 +199,9 @@ impl Import {
                         }
                     };
 
-                    let event_tags = match file.primary_tag().or_else(|| file.first_tag()) {
+                    let tags = file.primary_tag().or_else(|| file.first_tag());
+
+                    let event_tags = match tags {
                         Some(tag) => {
                             let mut event_tags = HashMap::new();
 
@@ -204,6 +235,11 @@ impl Import {
                         path: path.to_string_lossy().to_string(),
                         tags: event_tags,
                     });
+
+                    let _ = message_tx.send(ImportMessage::ScannedFile(ImportMessageScannedFile {
+                        path,
+                        tags: tags.cloned(),
+                    }));
                 });
 
                 tracing::info!("Import scan finished");
@@ -239,18 +275,81 @@ impl Import {
 
     async fn handle_message(&mut self, message: ImportMessage) -> Result<(), anyhow::Error> {
         match message {
-            ImportMessage::Import => {
-                unimplemented!();
+            ImportMessage::Import(rules) => self.handle_import(rules),
+            ImportMessage::ScannedFile(file) => {
+                self.files.push(file);
                 Ok(())
             }
         }
     }
+
+    fn handle_import(&mut self, rules: Rules) -> Result<(), anyhow::Error> {
+        let mut changes = Changes::default();
+
+        for file in &self.files {
+            let mut attributes = HashMap::new();
+
+            for rule in &rules.rules {
+                match rule {
+                    Rule::TagRule(rule) => match rule.value {
+                        ValueKind::Text => {
+                            if let Some(text) = file.get_text(rule.tag.to_lofty()) {
+                                attributes.insert(rule.attribute, Value::Text(text.to_string()));
+                            }
+                        }
+                        ValueKind::Number => unimplemented!(),
+                        ValueKind::Bytes => unimplemented!(),
+                    },
+                }
+            }
+
+            changes.create_entity(self.song_entity, CreateEntityChange { attributes });
+        }
+
+        dbg!(changes);
+
+        Ok(())
+    }
 }
 
 enum ImportMessage {
-    Import,
+    Import(Rules),
+
+    ScannedFile(ImportMessageScannedFile),
 }
 
-struct ImportScanFile {
+struct ImportMessageScannedFile {
     path: PathBuf,
+    tags: Option<Tag>,
+}
+
+impl ImportMessageScannedFile {
+    fn get_text(&self, item_key: ItemKey) -> Option<&str> {
+        self.tags
+            .as_ref()
+            .and_then(|tags| tags.get_string(item_key))
+    }
+}
+
+#[derive(Debug, Default)]
+struct Changes {
+    create_entities: HashMap<EntityKind, Vec<CreateEntityChange>>,
+}
+
+#[derive(Debug, Default)]
+struct CreateEntityChange {
+    attributes: HashMap<AttributeKind, Value>,
+}
+
+impl Changes {
+    fn create_entity(&mut self, entity: EntityKind, change: CreateEntityChange) {
+        match self.create_entities.entry(entity) {
+            Entry::Occupied(entry) => {
+                entry.into_mut().push(change);
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(vec![change]);
+            }
+        };
+    }
 }
