@@ -1,3 +1,4 @@
+use ordered_float::OrderedFloat;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr, time::SystemTime};
 
@@ -356,13 +357,19 @@ pub enum ValueKind {
     Bytes,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, uniffi::Enum)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum Value {
     Text(String),
     /// Cannot be NaN or infinity.
-    Number(f64),
+    Number(OrderedFloat<f64>),
     // TODO: maybe Arc<[u8]>
     Bytes(Vec<u8>),
+}
+
+impl Value {
+    pub fn number_from_f64(value: f64) -> Self {
+        Self::Number(value.into())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -481,6 +488,13 @@ uniffi::custom_type!(RelationKind, Vec<u8>, {
 uniffi::custom_type!(AttributeKind, Vec<u8>, {
     lower: |attribute_kind| attribute_kind.as_bytes().to_vec(),
     try_lift: |bytes| Ok(AttributeKind::from_bytes(bytes.try_into().map_err(|_| anyhow::anyhow!("Failed to lift AttributeKind"))?)),
+});
+
+type OrderedFloatF64 = OrderedFloat<f64>;
+uniffi::custom_type!(OrderedFloatF64, f64, {
+    remote,
+    lower: |ordered_float| ordered_float.into_inner(),
+    try_lift: |float| Ok(float.into()),
 });
 
 #[cfg(test)]
@@ -630,7 +644,7 @@ pub mod hegel {
     pub fn gen_value(tc: TestCase) -> Value {
         tc.draw(one_of!(
             compose!(|tc| { Value::Text(tc.draw(gs::text())) }),
-            compose!(|tc| { Value::Number(tc.draw(gen_value_number())) }),
+            compose!(|tc| { Value::Number(tc.draw(gen_value_number()).into()) }),
         ))
     }
 

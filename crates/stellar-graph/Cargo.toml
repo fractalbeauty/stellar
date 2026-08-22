@@ -18,6 +18,7 @@ tracing = "0.1.44"
 uniffi = "0.29.4"
 uuid = { version = "1.23.4", features = ["serde", "v4"] }
 rand = "0.10.2"
+ordered-float = { version = "5.5.0", features = ["serde"] }
 
 [dev-dependencies]
 testdir = "0.10.0"

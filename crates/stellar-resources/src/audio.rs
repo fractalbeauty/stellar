@@ -131,7 +131,7 @@ impl AudioResource {
             (
                 AUDIO_RESOURCE_SIZE,
                 EntityAttributeValue {
-                    value: Value::Number(self.size as f64),
+                    value: Value::number_from_f64(self.size as f64),
                     version: self.size_version,
                 },
             ),
@@ -145,7 +145,7 @@ impl AudioResource {
             (
                 AUDIO_RESOURCE_DURATION,
                 EntityAttributeValue {
-                    value: Value::Number(self.duration),
+                    value: Value::number_from_f64(self.duration as f64),
                     version: self.duration_version,
                 },
             ),
@@ -204,7 +204,7 @@ fn get_number_attribute(
     let Value::Number(value) = value else {
         return None;
     };
-    Some((*value, *version))
+    Some((**value, *version))
 }
 
 fn get_bytes_attribute(

@@ -314,7 +314,7 @@ impl EvaluatorFile {
                     if let Some(text) = self.get_text(attribute_rule.tag.to_lofty()) {
                         let number = text.parse::<f64>().expect("TODO");
 
-                        attributes.insert(attribute_rule.attribute, Value::Number(number));
+                        attributes.insert(attribute_rule.attribute, Value::number_from_f64(number));
                     }
                 }
                 ValueKind::Bytes => unimplemented!(),
