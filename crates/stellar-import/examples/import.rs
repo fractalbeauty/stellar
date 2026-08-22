@@ -124,22 +124,53 @@ async fn main() -> Result<(), anyhow::Error> {
                 value: ValueKind::Text,
                 tag: TagKind::TrackTitle,
             }],
-            relations: vec![RelationRule {
-                relation: album_song,
-                other: album,
-                direction: RelationRuleDirection::Incoming,
-                relation_attributes: vec![AttributeRule {
-                    attribute: album_track_number,
-                    value: ValueKind::Number,
-                    tag: TagKind::TrackNumber,
-                }],
-                other_group_attributes: vec![AttributeRule {
-                    attribute: album_title,
-                    value: ValueKind::Text,
-                    tag: TagKind::AlbumTitle,
-                }],
-                other_extra_attributes: vec![],
-            }],
+            relations: vec![
+                RelationRule {
+                    relation: album_song,
+                    other: album,
+                    direction: RelationRuleDirection::Incoming,
+                    relation_key_attributes: vec![AttributeRule {
+                        attribute: album_track_number,
+                        value: ValueKind::Number,
+                        tag: TagKind::TrackNumber,
+                    }],
+                    relation_extra_attributes: vec![],
+                    other_key_attributes: vec![AttributeRule {
+                        attribute: album_title,
+                        value: ValueKind::Text,
+                        tag: TagKind::AlbumTitle,
+                    }],
+                    other_extra_attributes: vec![],
+                    nested_relations: vec![RelationRule {
+                        relation: album_artist,
+                        other: artist,
+                        direction: RelationRuleDirection::Outgoing,
+                        relation_key_attributes: vec![],
+                        relation_extra_attributes: vec![],
+                        other_key_attributes: vec![AttributeRule {
+                            attribute: artist_name,
+                            value: ValueKind::Text,
+                            tag: TagKind::AlbumArtist,
+                        }],
+                        other_extra_attributes: vec![],
+                        nested_relations: vec![],
+                    }],
+                },
+                RelationRule {
+                    relation: song_artist,
+                    other: artist,
+                    direction: RelationRuleDirection::Outgoing,
+                    relation_key_attributes: vec![],
+                    relation_extra_attributes: vec![],
+                    other_key_attributes: vec![AttributeRule {
+                        attribute: artist_name,
+                        value: ValueKind::Text,
+                        tag: TagKind::TrackArtist,
+                    }],
+                    other_extra_attributes: vec![],
+                    nested_relations: vec![],
+                },
+            ],
         },
     };
 
