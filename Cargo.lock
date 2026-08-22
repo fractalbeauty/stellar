@@ -4900,6 +4900,8 @@ dependencies = [
  "dua-core",
  "lofty",
  "rayon",
+ "stellar-graph",
+ "stellar-resources",
  "tokio",
  "tokio-util",
  "tracing",

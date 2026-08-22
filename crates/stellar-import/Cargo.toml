@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+stellar-graph = { path = "../stellar-graph" }
+stellar-resources = { path = "../stellar-resources" }
+
 anyhow = "1.0.103"
 dua-core = "3.1.0"
 lofty = "0.25.1"

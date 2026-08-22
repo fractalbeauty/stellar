@@ -1,14 +1,16 @@
 use lofty::file::TaggedFileExt;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use stellar_graph::{entity::EntityKind, schema::Schema};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 /// Foreign trait for receiving import events.
 #[uniffi::export(with_foreign)]
 pub trait ImportEventHandler: Send + Sync {
     fn on_pending_file(&self, path: String);
-
     fn on_scanned_file(&self, file: ImportEventScannedFile);
+    fn on_scan_finished(&self);
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
@@ -21,6 +23,7 @@ pub struct ImportEventScannedFile {
 #[derive(Debug, Clone)]
 pub struct ImportTask {
     cancellation_token: CancellationToken,
+    message_tx: mpsc::UnboundedSender<ImportMessage>,
 }
 
 impl ImportTask {
@@ -28,7 +31,11 @@ impl ImportTask {
         cancellation_token: CancellationToken,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
+        schema: Schema,
+        song_entity: EntityKind,
     ) -> Result<Self, anyhow::Error> {
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
+
         tokio::spawn({
             let cancellation_token = cancellation_token.clone();
             async move {
@@ -40,7 +47,9 @@ impl ImportTask {
                     }
                 };
 
-                let result = import.run(cancellation_token, event_handler, roots).await;
+                let result = import
+                    .run(cancellation_token, event_handler, roots, message_rx)
+                    .await;
 
                 if let Err(error) = result {
                     tracing::error!("Import task errored: {error:?}");
@@ -50,7 +59,10 @@ impl ImportTask {
             }
         });
 
-        Ok(Self { cancellation_token })
+        Ok(Self {
+            cancellation_token,
+            message_tx,
+        })
     }
 
     // Cancel the import task. This must be called when the UI is done with the import,
@@ -60,6 +72,11 @@ impl ImportTask {
     // to the host object via ImportEventHandler.
     pub fn cancel(&self) {
         self.cancellation_token.cancel();
+    }
+
+    /// Import with the configured settings.
+    pub fn import(&self) {
+        let _ = self.message_tx.send(ImportMessage::Import);
     }
 }
 
@@ -77,6 +94,7 @@ impl Import {
         cancellation_token: CancellationToken,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
+        mut message_rx: mpsc::UnboundedReceiver<ImportMessage>,
     ) -> Result<(), anyhow::Error> {
         let (path_tx, path_rx) = std::sync::mpsc::channel();
 
@@ -189,11 +207,26 @@ impl Import {
                 });
 
                 tracing::info!("Import scan finished");
+
+                event_handler.on_scan_finished();
             }
         });
 
         loop {
             tokio::select! {
+                result = message_rx.recv() => {
+                    match result {
+                        Some(message) => {
+                            if let Err(e) = self.handle_message(message).await {
+                                tracing::error!("Import failed to handle message: {e:#}");
+                            }
+                        },
+                        None => {
+                            tracing::debug!("Import message rx closed");
+                        },
+                    }
+                }
+
                 _ = cancellation_token.cancelled() => {
                     tracing::debug!("Import task cancelled");
                     break;
@@ -203,6 +236,19 @@ impl Import {
 
         Ok(())
     }
+
+    async fn handle_message(&mut self, message: ImportMessage) -> Result<(), anyhow::Error> {
+        match message {
+            ImportMessage::Import => {
+                unimplemented!();
+                Ok(())
+            }
+        }
+    }
+}
+
+enum ImportMessage {
+    Import,
 }
 
 struct ImportScanFile {
