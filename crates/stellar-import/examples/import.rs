@@ -130,30 +130,26 @@ async fn main() -> Result<(), anyhow::Error> {
                     relation: album_song,
                     other: album,
                     direction: RelationRuleDirection::Incoming,
-                    relation_key_attributes: vec![AttributeRule {
+                    relation_attributes: vec![AttributeRule {
                         attribute: album_track_number,
                         value: ValueKind::Number,
                         tag: TagKind::TrackNumber,
                     }],
-                    relation_extra_attributes: vec![],
-                    other_key_attributes: vec![AttributeRule {
+                    other_attributes: vec![AttributeRule {
                         attribute: album_title,
                         value: ValueKind::Text,
                         tag: TagKind::AlbumTitle,
                     }],
-                    other_extra_attributes: vec![],
                     nested_relations: vec![RelationRule {
                         relation: album_artist,
                         other: artist,
                         direction: RelationRuleDirection::Outgoing,
-                        relation_key_attributes: vec![],
-                        relation_extra_attributes: vec![],
-                        other_key_attributes: vec![AttributeRule {
+                        relation_attributes: vec![],
+                        other_attributes: vec![AttributeRule {
                             attribute: artist_name,
                             value: ValueKind::Text,
                             tag: TagKind::AlbumArtist,
                         }],
-                        other_extra_attributes: vec![],
                         nested_relations: vec![],
                     }],
                 },
@@ -161,18 +157,21 @@ async fn main() -> Result<(), anyhow::Error> {
                     relation: song_artist,
                     other: artist,
                     direction: RelationRuleDirection::Outgoing,
-                    relation_key_attributes: vec![],
-                    relation_extra_attributes: vec![],
-                    other_key_attributes: vec![AttributeRule {
+                    relation_attributes: vec![],
+                    other_attributes: vec![AttributeRule {
                         attribute: artist_name,
                         value: ValueKind::Text,
                         tag: TagKind::TrackArtist,
                     }],
-                    other_extra_attributes: vec![],
                     nested_relations: vec![],
                 },
             ],
         },
+        entity_key_attributes: HashMap::from([
+            (album, vec![album_title]),
+            (artist, vec![artist_name]),
+        ]),
+        relation_key_attributes: HashMap::new(),
     };
 
     dbg!(&schema);
@@ -227,21 +226,13 @@ impl ImportEventHandler for ExampleImportEventHandler {
 struct ExampleDatabasePort;
 
 impl ImportDatabasePort for ExampleDatabasePort {
-    fn find_entity(
+    fn get_entities_by_kind(
         &self,
-        kind: AttributeKind,
-        attributes: HashMap<AttributeKind, stellar_graph::entity::Value>,
-    ) -> Option<stellar_graph::entity::EntityId> {
-        None
-    }
-
-    fn find_relation(
-        &self,
-        kind: RelationKind,
-        source: stellar_graph::entity::EntityId,
-        target: stellar_graph::entity::EntityId,
-        attributes: HashMap<AttributeKind, stellar_graph::entity::Value>,
-    ) -> Option<stellar_graph::entity::RelationId> {
-        None
+        kind: EntityKind,
+    ) -> Result<
+        HashMap<stellar_graph::entity::EntityId, stellar_graph::store::EntityData>,
+        anyhow::Error,
+    > {
+        Ok(HashMap::new())
     }
 }

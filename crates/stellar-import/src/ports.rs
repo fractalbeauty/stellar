@@ -1,23 +1,15 @@
 use std::{collections::HashMap, sync::Arc};
 use stellar_graph::{
     database::Database,
-    entity::{AttributeKind, EntityId, RelationId, RelationKind, Value},
+    entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value},
+    store::EntityData,
 };
 
 pub trait ImportDatabasePort: Send + Sync {
-    fn find_entity(
+    fn get_entities_by_kind(
         &self,
-        kind: AttributeKind,
-        attributes: HashMap<AttributeKind, Value>,
-    ) -> Option<EntityId>;
-
-    fn find_relation(
-        &self,
-        kind: RelationKind,
-        source: EntityId,
-        target: EntityId,
-        attributes: HashMap<AttributeKind, Value>,
-    ) -> Option<RelationId>;
+        kind: EntityKind,
+    ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
 }
 
 pub struct ImportDatabaseAdapter {
@@ -31,21 +23,15 @@ impl ImportDatabaseAdapter {
 }
 
 impl ImportDatabasePort for ImportDatabaseAdapter {
-    fn find_entity(
+    fn get_entities_by_kind(
         &self,
-        kind: AttributeKind,
-        attributes: HashMap<AttributeKind, Value>,
-    ) -> Option<EntityId> {
-        todo!()
-    }
-
-    fn find_relation(
-        &self,
-        kind: RelationKind,
-        source: EntityId,
-        target: EntityId,
-        attributes: HashMap<AttributeKind, Value>,
-    ) -> Option<RelationId> {
-        todo!()
+        kind: EntityKind,
+    ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
+        // TODO: optimize
+        let entities = self.database.get_entities()?;
+        Ok(entities
+            .into_iter()
+            .filter(|(id, _)| id.kind() == kind)
+            .collect())
     }
 }

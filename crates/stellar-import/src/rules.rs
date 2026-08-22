@@ -1,9 +1,12 @@
 use lofty::tag::ItemKey;
+use std::collections::HashMap;
 use stellar_graph::entity::{AttributeKind, EntityKind, RelationKind, ValueKind};
 
 #[derive(Debug)]
 pub struct Rules {
     pub rule: Rule,
+    pub entity_key_attributes: HashMap<EntityKind, Vec<AttributeKind>>,
+    pub relation_key_attributes: HashMap<RelationKind, Vec<AttributeKind>>,
 }
 
 #[derive(Debug)]
@@ -24,10 +27,8 @@ pub struct RelationRule {
     pub relation: RelationKind,
     pub other: EntityKind,
     pub direction: RelationRuleDirection,
-    pub relation_key_attributes: Vec<AttributeRule>,
-    pub relation_extra_attributes: Vec<AttributeRule>,
-    pub other_key_attributes: Vec<AttributeRule>,
-    pub other_extra_attributes: Vec<AttributeRule>,
+    pub relation_attributes: Vec<AttributeRule>,
+    pub other_attributes: Vec<AttributeRule>,
     pub nested_relations: Vec<RelationRule>,
 }
 
