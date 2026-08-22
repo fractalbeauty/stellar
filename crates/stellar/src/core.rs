@@ -578,6 +578,8 @@ impl Core {
             self.cancellation_token.child_token(),
             event_handler,
             roots.into_iter().map(Into::into).collect(),
+            todo!(),
+            todo!(),
         )?;
         Ok(())
     }

@@ -9,13 +9,13 @@ use std::{
     sync::Arc,
 };
 use stellar_graph::{
-    entity::{AttributeKind, EntityKind, Value, ValueKind},
+    entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, ValueKind},
     schema::Schema,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::rules::{Rule, Rules};
+use crate::rules::{AttributeRule, RelationRuleDirection, Rules};
 
 /// Foreign trait for receiving import events.
 #[uniffi::export(with_foreign)]
@@ -286,24 +286,38 @@ impl Import {
     fn handle_import(&mut self, rules: Rules) -> Result<(), anyhow::Error> {
         let mut changes = Changes::default();
 
+        // TODO: multiple rules
+        let rule = &rules.rule;
+
         for file in &self.files {
-            let mut attributes = HashMap::new();
+            let song_attributes = file.attributes(&rule.attributes);
 
-            for rule in &rules.rules {
-                match rule {
-                    Rule::TagRule(rule) => match rule.value {
-                        ValueKind::Text => {
-                            if let Some(text) = file.get_text(rule.tag.to_lofty()) {
-                                attributes.insert(rule.attribute, Value::Text(text.to_string()));
-                            }
-                        }
-                        ValueKind::Number => unimplemented!(),
-                        ValueKind::Bytes => unimplemented!(),
-                    },
-                }
+            let entity =
+                changes.find_or_create_entity(self.song_entity, song_attributes, HashMap::new());
+
+            for relation_rule in &rule.relations {
+                let relation_attributes = file.attributes(&relation_rule.relation_attributes);
+                let other_group_attributes = file.attributes(&relation_rule.other_group_attributes);
+                let other_extra_attributes = file.attributes(&relation_rule.other_extra_attributes);
+
+                let other = changes.find_or_create_entity(
+                    relation_rule.other,
+                    other_group_attributes,
+                    other_extra_attributes,
+                );
+
+                let (source, target) = match relation_rule.direction {
+                    RelationRuleDirection::Incoming => (other, entity),
+                    RelationRuleDirection::Outgoing => (entity, other),
+                };
+
+                changes.create_relation(
+                    relation_rule.relation,
+                    source,
+                    target,
+                    relation_attributes,
+                );
             }
-
-            changes.create_entity(self.song_entity, CreateEntityChange { attributes });
         }
 
         dbg!(changes);
@@ -324,6 +338,30 @@ struct ImportMessageScannedFile {
 }
 
 impl ImportMessageScannedFile {
+    fn attributes(&self, rules: &[AttributeRule]) -> HashMap<AttributeKind, Value> {
+        let mut attributes = HashMap::new();
+
+        for attribute_rule in rules {
+            match attribute_rule.value {
+                ValueKind::Text => {
+                    if let Some(text) = self.get_text(attribute_rule.tag.to_lofty()) {
+                        attributes.insert(attribute_rule.attribute, Value::Text(text.to_string()));
+                    }
+                }
+                ValueKind::Number => {
+                    if let Some(text) = self.get_text(attribute_rule.tag.to_lofty()) {
+                        let number = text.parse::<f64>().expect("TODO");
+
+                        attributes.insert(attribute_rule.attribute, Value::Number(number));
+                    }
+                }
+                ValueKind::Bytes => unimplemented!(),
+            };
+        }
+
+        attributes
+    }
+
     fn get_text(&self, item_key: ItemKey) -> Option<&str> {
         self.tags
             .as_ref()
@@ -334,16 +372,85 @@ impl ImportMessageScannedFile {
 #[derive(Debug, Default)]
 struct Changes {
     create_entities: HashMap<EntityKind, Vec<CreateEntityChange>>,
+    create_relations: HashMap<RelationKind, Vec<CreateRelationChange>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct CreateEntityChange {
+    id: EntityId,
+    attributes: HashMap<AttributeKind, Value>,
+}
+
+#[derive(Debug)]
+struct CreateRelationChange {
+    id: RelationId,
+    source: EntityId,
+    target: EntityId,
     attributes: HashMap<AttributeKind, Value>,
 }
 
 impl Changes {
-    fn create_entity(&mut self, entity: EntityKind, change: CreateEntityChange) {
-        match self.create_entities.entry(entity) {
+    fn find_or_create_entity(
+        &mut self,
+        entity: EntityKind,
+        group_attributes: HashMap<AttributeKind, Value>,
+        extra_attributes: HashMap<AttributeKind, Value>,
+    ) -> EntityId {
+        let existing = self
+            .create_entities
+            .get_mut(&entity)
+            .and_then(|created_entities| {
+                created_entities.iter_mut().find(|created_entity| {
+                    group_attributes.iter().all(|(group_attribute, value)| {
+                        created_entity
+                            .attributes
+                            .get(group_attribute)
+                            .is_some_and(|existing_value| existing_value == value)
+                    })
+                })
+            });
+
+        match existing {
+            Some(existing) => {
+                // TODO: merge extra_attributes
+
+                existing.id
+            }
+            None => {
+                let id = EntityId::random(entity);
+                let change = CreateEntityChange {
+                    id,
+                    // TODO: merge extra_attributes
+                    attributes: group_attributes,
+                };
+                match self.create_entities.entry(entity) {
+                    Entry::Occupied(entry) => {
+                        entry.into_mut().push(change);
+                    }
+                    Entry::Vacant(entry) => {
+                        entry.insert(vec![change]);
+                    }
+                };
+                id
+            }
+        }
+    }
+
+    fn create_relation(
+        &mut self,
+        relation: RelationKind,
+        source: EntityId,
+        target: EntityId,
+        attributes: HashMap<AttributeKind, Value>,
+    ) -> RelationId {
+        let id = RelationId::random(relation);
+        let change = CreateRelationChange {
+            id,
+            source,
+            target,
+            attributes,
+        };
+        match self.create_relations.entry(relation) {
             Entry::Occupied(entry) => {
                 entry.into_mut().push(change);
             }
@@ -351,5 +458,6 @@ impl Changes {
                 entry.insert(vec![change]);
             }
         };
+        id
     }
 }

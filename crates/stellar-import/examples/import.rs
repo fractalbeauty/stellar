@@ -5,7 +5,7 @@ use stellar_graph::{
 };
 use stellar_import::{
     import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
-    rules::{Rule, Rules, TagKind, TagRule},
+    rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::sync::Notify;
@@ -37,6 +37,63 @@ async fn main() -> Result<(), anyhow::Error> {
         )]),
     };
 
+    let album = EntityKind::random();
+    let album_title = AttributeKind::random();
+    let album_schema = EntitySchema {
+        name: "Album".to_string(),
+        attributes: HashMap::from([(
+            album_title,
+            AttributeSchema {
+                name: "Title".to_string(),
+                value: ValueKind::Text,
+            },
+        )]),
+    };
+
+    let artist = EntityKind::random();
+    let artist_name = AttributeKind::random();
+    let artist_schema = EntitySchema {
+        name: "Artist".to_string(),
+        attributes: HashMap::from([(
+            artist_name,
+            AttributeSchema {
+                name: "Name".to_string(),
+                value: ValueKind::Text,
+            },
+        )]),
+    };
+
+    let album_song = RelationKind::random();
+    let album_track_number = AttributeKind::random();
+    let album_song_schema = RelationSchema {
+        name: "Track".to_string(),
+        source: album,
+        target: song,
+        attributes: HashMap::from([(
+            album_track_number,
+            AttributeSchema {
+                name: "Track Number".to_string(),
+                value: ValueKind::Number,
+            },
+        )]),
+    };
+
+    let album_artist = RelationKind::random();
+    let album_artist_schema = RelationSchema {
+        name: "Album Artist".to_string(),
+        source: album,
+        target: artist,
+        attributes: HashMap::new(),
+    };
+
+    let song_artist = RelationKind::random();
+    let song_artist_schema = RelationSchema {
+        name: "Song Artist".to_string(),
+        source: song,
+        target: artist,
+        attributes: HashMap::new(),
+    };
+
     let song_audio_resource = RelationKind::random();
     let song_audio_resource_schema = RelationSchema {
         name: "Song Audio Resource".to_string(),
@@ -48,17 +105,42 @@ async fn main() -> Result<(), anyhow::Error> {
     let schema = Schema {
         entities: HashMap::from([
             (song, song_schema),
+            (album, album_schema),
+            (artist, artist_schema),
             (AUDIO_RESOURCE_ENTITY, audio_resource_schema()),
         ]),
-        relations: HashMap::from([(song_audio_resource, song_audio_resource_schema)]),
+        relations: HashMap::from([
+            (album_song, album_song_schema),
+            (album_artist, album_artist_schema),
+            (song_artist, song_artist_schema),
+            (song_audio_resource, song_audio_resource_schema),
+        ]),
     };
 
     let rules = Rules {
-        rules: vec![Rule::TagRule(TagRule {
-            attribute: song_title,
-            value: ValueKind::Text,
-            tag: TagKind::TrackTitle,
-        })],
+        rule: Rule {
+            attributes: vec![AttributeRule {
+                attribute: song_title,
+                value: ValueKind::Text,
+                tag: TagKind::TrackTitle,
+            }],
+            relations: vec![RelationRule {
+                relation: album_song,
+                other: album,
+                direction: RelationRuleDirection::Incoming,
+                relation_attributes: vec![AttributeRule {
+                    attribute: album_track_number,
+                    value: ValueKind::Number,
+                    tag: TagKind::TrackNumber,
+                }],
+                other_group_attributes: vec![AttributeRule {
+                    attribute: album_title,
+                    value: ValueKind::Text,
+                    tag: TagKind::AlbumTitle,
+                }],
+                other_extra_attributes: vec![],
+            }],
+        },
     };
 
     dbg!(&schema);
