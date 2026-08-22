@@ -4,7 +4,8 @@ use stellar_graph::{
     schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
 };
 use stellar_import::{
-    import::{ImportDatabasePort, ImportEventHandler, ImportEventScannedFile, ImportTask},
+    import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
+    ports::ImportDatabasePort,
     rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
