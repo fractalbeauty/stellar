@@ -721,7 +721,7 @@ mod test {
 
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
-        let initial_num_entities = 3;
+        let initial_num_entities = 4;
         assert_eq!(
             watch_schema.borrow().as_ref().unwrap().entities.len(),
             initial_num_entities
@@ -768,7 +768,7 @@ mod test {
 
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
-        let initial_num_entities = 3;
+        let initial_num_entities = 4;
         assert_eq!(
             watch_schema.borrow().as_ref().unwrap().entities.len(),
             initial_num_entities
