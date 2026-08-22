@@ -22,7 +22,7 @@ impl EntityId {
 
         let mut bytes = [0u8; 16];
         bytes[0..5].copy_from_slice(&kind.as_bytes());
-        bytes[5..15].copy_from_slice(&random);
+        bytes[5..16].copy_from_slice(&random);
 
         Self::from_bytes(bytes)
     }
@@ -88,7 +88,7 @@ impl RelationId {
 
         let mut bytes = [0u8; 16];
         bytes[0..5].copy_from_slice(&kind.as_bytes());
-        bytes[5..15].copy_from_slice(&random);
+        bytes[5..16].copy_from_slice(&random);
 
         Self::from_bytes(bytes)
     }
@@ -486,7 +486,7 @@ uniffi::custom_type!(AttributeKind, Vec<u8>, {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        EntityKind, RelationKind, Version,
+        AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Version,
         hegel::{gen_author_id, gen_timestamp},
     };
     use hegel::{Generator, TestCase, generators as gs};
@@ -531,6 +531,17 @@ mod test {
         } else {
             assert_eq!(latest, ("version2", version2));
         }
+    }
+
+    #[test]
+    fn random() {
+        let entity = EntityKind::random();
+        EntityId::random(entity);
+
+        let relation = RelationKind::random();
+        RelationId::random(relation);
+
+        AttributeKind::random();
     }
 
     #[test]
