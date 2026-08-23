@@ -3,11 +3,11 @@ package net.trillia.stellar.desktop.table
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,6 +28,7 @@ fun Table(
     onSelected: (newValue: Int?) -> Unit,
 ) {
     val bgInteractionSource = remember { MutableInteractionSource() }
+    val listState = rememberLazyListState()
 
     Box(
         modifier =
@@ -38,35 +39,22 @@ fun Table(
                 interactionSource = bgInteractionSource,
             ),
     ) {
-        LazyColumn {
-            // draw headers
+        TableStripes(listState)
+
+        LazyColumn(state = listState) {
+            // draw header
             stickyHeader {
-                Row {
-                    fields.fields.forEach {
-                        TableColumnHeader(it)
-                    }
-                }
+                TableHeader(fields)
             }
 
             // draw rows
             itemsIndexed(data) { rowIndex, row ->
-                val rowInteractionSource = remember { MutableInteractionSource() }
-                Row(
-                    modifier =
-                        Modifier.combinedClickable(onClick = {
-                            onSelected(rowIndex)
-                        }, interactionSource = rowInteractionSource),
-                ) {
-                    val rowVals = fields.fields.map { row.get(it.label) }
-                    rowVals.forEachIndexed { colIndex, label ->
-                        TableCell(
-                            fields.fields[colIndex],
-                            label,
-                            rowIndex % 2 == 1,
-                            rowIndex == selected,
-                        )
-                    }
-                }
+                TableRow(
+                    fields = fields,
+                    row = row,
+                    selected = rowIndex == selected,
+                    onSelected = { onSelected(rowIndex) },
+                )
             }
         }
 
@@ -87,6 +75,8 @@ fun Table(
         }
     }
 }
+
+val tableRowHeight = 20.dp
 
 data class FieldSet(
     val fields: List<FieldInfo>,
