@@ -6,8 +6,8 @@ use crate::{
     },
     protocol::StreamHeader,
     schema::{
-        PeerSchemaClientTask, PeerSchemaServerTask, SchemaStoreTask, SchemaSyncClientMessage,
-        SchemaSyncServerMessage,
+        PeerSchemaClientTask, PeerSchemaServerTask, Schema, SchemaStoreTask,
+        SchemaSyncClientMessage, SchemaSyncServerMessage,
     },
 };
 use anyhow::Context;
@@ -22,7 +22,6 @@ use std::{
 use stellar_graph::{
     database::Database,
     entity::{EntityId, RelationId},
-    schema::GraphSchema,
     store::{EntityData, RelationData},
 };
 use tokio::sync::{mpsc, watch};
@@ -478,7 +477,7 @@ impl PeersDatabasePort for PeersDatabaseAdapter {
 
 #[async_trait]
 pub trait PeersSchemaPort: Send + Sync {
-    fn watch_schema(&self) -> watch::Receiver<Option<GraphSchema>>;
+    fn watch_schema(&self) -> watch::Receiver<Option<Schema>>;
 
     async fn fork_doc(&self) -> Result<AutoCommit, anyhow::Error>;
 
@@ -497,7 +496,7 @@ impl PeersSchemaAdapter {
 
 #[async_trait]
 impl PeersSchemaPort for PeersSchemaAdapter {
-    fn watch_schema(&self) -> watch::Receiver<Option<GraphSchema>> {
+    fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
         self.schema.watch_schema()
     }
 

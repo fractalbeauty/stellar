@@ -18,7 +18,9 @@ use stellar_graph::{
     entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema},
 };
-use stellar_import::rules::Rules;
+use stellar_import::rules::{
+    AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind,
+};
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -32,14 +34,14 @@ use tokio_util::{
 
 #[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct Schema {
-    graph: GraphSchema,
-    import_rules: Rules,
+    pub graph: GraphSchema,
+    pub import_rules: Rules,
 }
 
 /// Handle to the schema store task.
 #[derive(Debug, Clone)]
 pub struct SchemaStoreTask {
-    schema_rx: watch::Receiver<Option<GraphSchema>>,
+    schema_rx: watch::Receiver<Option<Schema>>,
     message_tx: mpsc::UnboundedSender<SchemaStoreMessage>,
 }
 
@@ -50,7 +52,7 @@ impl SchemaStoreTask {
         data_dir: impl AsRef<Path>,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
-        let store_path = data_dir.as_ref().join("schema_v1");
+        let store_path = data_dir.as_ref().join("schema_v2");
 
         let (schema_tx, schema_rx) = watch::channel(None);
         let (message_tx, message_rx) = mpsc::unbounded_channel();
@@ -79,7 +81,7 @@ impl SchemaStoreTask {
 
     pub async fn modify<F, R>(&self, operation: F) -> Result<R, anyhow::Error>
     where
-        F: FnOnce(&mut GraphSchema) -> R + Send + 'static,
+        F: FnOnce(&mut Schema) -> R + Send + 'static,
         R: Send + 'static,
     {
         let operation = wrap_modify_closure(operation);
@@ -104,7 +106,7 @@ impl SchemaStoreTask {
         Ok(*result)
     }
 
-    pub fn watch_schema(&self) -> watch::Receiver<Option<GraphSchema>> {
+    pub fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
         self.schema_rx.clone()
     }
 
@@ -144,9 +146,9 @@ impl SchemaStoreTask {
 
 fn wrap_modify_closure<F, R>(
     operation: F,
-) -> Box<dyn FnOnce(&mut GraphSchema) -> Box<dyn Any + Send> + Send>
+) -> Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>
 where
-    F: FnOnce(&mut GraphSchema) -> R + Send + 'static,
+    F: FnOnce(&mut Schema) -> R + Send + 'static,
     R: Send + 'static,
 {
     Box::new(move |schema| -> Box<dyn Any + Send> {
@@ -164,7 +166,7 @@ impl SchemaStore {
     async fn run(
         &mut self,
         author: AuthorId,
-        schema_tx: watch::Sender<Option<GraphSchema>>,
+        schema_tx: watch::Sender<Option<Schema>>,
         mut message_rx: mpsc::UnboundedReceiver<SchemaStoreMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<(), anyhow::Error> {
@@ -200,8 +202,8 @@ impl SchemaStore {
         };
 
         {
-            let schema = GraphSchema::load(&doc, &ROOT, "schema")
-                .context("Failed to load schema from doc")?;
+            let schema =
+                Schema::load(&doc, &ROOT, "schema").context("Failed to load schema from doc")?;
 
             schema_tx.send_replace(Some(schema));
         }
@@ -243,7 +245,7 @@ impl SchemaStore {
 
     async fn handle_message(
         &mut self,
-        schema_tx: &watch::Sender<Option<GraphSchema>>,
+        schema_tx: &watch::Sender<Option<Schema>>,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
         message: SchemaStoreMessage,
@@ -263,7 +265,7 @@ impl SchemaStore {
                         tracing::debug!("SchemaStore applied SchemaStoreMessage::Modify")
                     }
                     None => {
-                        let mut schema = match GraphSchema::load(doc, &ROOT, "schema")
+                        let mut schema = match Schema::load(doc, &ROOT, "schema")
                             .context("Failed to load schema from doc")
                         {
                             Ok(schema) => schema,
@@ -305,7 +307,7 @@ impl SchemaStore {
                     }
                 }
 
-                let schema = match GraphSchema::load(doc, &ROOT, "schema")
+                let schema = match Schema::load(doc, &ROOT, "schema")
                     .context("Failed to load schema from doc")
                 {
                     Ok(schema) => schema,
@@ -333,7 +335,7 @@ impl SchemaStore {
         &mut self,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
-        schema_tx: &watch::Sender<Option<GraphSchema>>,
+        schema_tx: &watch::Sender<Option<Schema>>,
     ) -> Result<(), anyhow::Error> {
         match batch.as_mut().as_pin_mut() {
             Some(batch) => {
@@ -372,7 +374,7 @@ impl SchemaStore {
 
 enum SchemaStoreMessage {
     Modify {
-        operation: Box<dyn FnOnce(&mut GraphSchema) -> Box<dyn Any + Send> + Send>,
+        operation: Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>,
         result_tx: oneshot::Sender<Option<Box<dyn Any + Send>>>,
     },
     ForkDocForSync {
@@ -386,7 +388,7 @@ enum SchemaStoreMessage {
 
 pin_project! {
     struct SchemaEditBatch {
-        schema: GraphSchema,
+        schema: Schema,
         #[pin]
         save_timeout: Sleep,
     }
@@ -611,12 +613,13 @@ impl SchemaSyncServerMessage {
 }
 
 /// Creates a new schema with the default configuration.
-pub fn default_schema() -> GraphSchema {
+pub fn default_schema() -> Schema {
     let song = EntityKind::random();
+    let song_title = AttributeKind::random();
     let song_schema = EntitySchema {
         name: "Song".to_string(),
         attributes: HashMap::from([(
-            AttributeKind::random(),
+            song_title,
             AttributeSchema {
                 name: "Title".to_string(),
                 value: ValueKind::Text,
@@ -625,10 +628,11 @@ pub fn default_schema() -> GraphSchema {
     };
 
     let album = EntityKind::random();
+    let album_title = AttributeKind::random();
     let album_schema = EntitySchema {
         name: "Album".to_string(),
         attributes: HashMap::from([(
-            AttributeKind::random(),
+            album_title,
             AttributeSchema {
                 name: "Title".to_string(),
                 value: ValueKind::Text,
@@ -637,10 +641,11 @@ pub fn default_schema() -> GraphSchema {
     };
 
     let artist = EntityKind::random();
+    let artist_name = AttributeKind::random();
     let artist_schema = EntitySchema {
         name: "Artist".to_string(),
         attributes: HashMap::from([(
-            AttributeKind::random(),
+            artist_name,
             AttributeSchema {
                 name: "Name".to_string(),
                 value: ValueKind::Text,
@@ -649,12 +654,13 @@ pub fn default_schema() -> GraphSchema {
     };
 
     let album_song = RelationKind::random();
+    let album_track_number = AttributeKind::random();
     let album_song_schema = RelationSchema {
         name: "Track".to_string(),
         source: album,
         target: song,
         attributes: HashMap::from([(
-            AttributeKind::random(),
+            album_track_number,
             AttributeSchema {
                 name: "Track Number".to_string(),
                 value: ValueKind::Number,
@@ -686,7 +692,7 @@ pub fn default_schema() -> GraphSchema {
         attributes: HashMap::new(),
     };
 
-    GraphSchema {
+    let graph = GraphSchema {
         entities: HashMap::from([
             (song, song_schema),
             (album, album_schema),
@@ -699,6 +705,67 @@ pub fn default_schema() -> GraphSchema {
             (song_artist, song_artist_schema),
             (song_audio_resource, song_audio_resource_schema),
         ]),
+    };
+
+    let import_rules = Rules {
+        rule: Rule {
+            attributes: vec![AttributeRule {
+                attribute: song_title,
+                value: ValueKind::Text,
+                tag: TagKind::TrackTitle,
+            }],
+            relations: vec![
+                RelationRule {
+                    relation: album_song,
+                    other: album,
+                    direction: RelationRuleDirection::Incoming,
+                    relation_attributes: vec![AttributeRule {
+                        attribute: album_track_number,
+                        value: ValueKind::Number,
+                        tag: TagKind::TrackNumber,
+                    }],
+                    other_attributes: vec![AttributeRule {
+                        attribute: album_title,
+                        value: ValueKind::Text,
+                        tag: TagKind::AlbumTitle,
+                    }],
+                    nested_relations: vec![RelationRule {
+                        relation: album_artist,
+                        other: artist,
+                        direction: RelationRuleDirection::Outgoing,
+                        relation_attributes: vec![],
+                        other_attributes: vec![AttributeRule {
+                            attribute: artist_name,
+                            value: ValueKind::Text,
+                            tag: TagKind::AlbumArtist,
+                        }],
+                        nested_relations: vec![],
+                    }],
+                },
+                RelationRule {
+                    relation: song_artist,
+                    other: artist,
+                    direction: RelationRuleDirection::Outgoing,
+                    relation_attributes: vec![],
+                    other_attributes: vec![AttributeRule {
+                        attribute: artist_name,
+                        value: ValueKind::Text,
+                        tag: TagKind::TrackArtist,
+                    }],
+                    nested_relations: vec![],
+                },
+            ],
+        },
+        entity_key_attributes: HashMap::from([
+            (album, vec![album_title]),
+            (artist, vec![artist_name]),
+        ]),
+        relation_key_attributes: HashMap::new(),
+    };
+
+    Schema {
+        graph,
+        import_rules,
     }
 }
 
@@ -729,13 +796,13 @@ mod test {
         assert!(watch_schema.borrow().is_some());
         let initial_num_entities = 4;
         assert_eq!(
-            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            watch_schema.borrow().as_ref().unwrap().graph.entities.len(),
             initial_num_entities
         );
 
         let entity_kind = EntityKind::random();
         task.modify(move |schema| {
-            schema.entities.insert(
+            schema.graph.entities.insert(
                 entity_kind,
                 EntitySchema {
                     name: "entity".to_string(),
@@ -753,6 +820,7 @@ mod test {
                 .borrow()
                 .as_ref()
                 .unwrap()
+                .graph
                 .entities
                 .contains_key(&entity_kind)
         );
@@ -776,12 +844,12 @@ mod test {
         assert!(watch_schema.borrow().is_some());
         let initial_num_entities = 4;
         assert_eq!(
-            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            watch_schema.borrow().as_ref().unwrap().graph.entities.len(),
             initial_num_entities
         );
 
         task.modify(move |schema| {
-            schema.entities.insert(
+            schema.graph.entities.insert(
                 EntityKind::random(),
                 EntitySchema {
                     name: "entity1".to_string(),
@@ -792,7 +860,7 @@ mod test {
         .await
         .unwrap();
         task.modify(move |schema| {
-            schema.entities.insert(
+            schema.graph.entities.insert(
                 EntityKind::random(),
                 EntitySchema {
                     name: "entity2".to_string(),
@@ -806,7 +874,7 @@ mod test {
         watch_schema.changed().await.unwrap();
         assert!(watch_schema.borrow().is_some());
         assert_eq!(
-            watch_schema.borrow().as_ref().unwrap().entities.len(),
+            watch_schema.borrow().as_ref().unwrap().graph.entities.len(),
             initial_num_entities + 2
         );
     }

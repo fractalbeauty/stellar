@@ -11,13 +11,13 @@ use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
     ValueKind, Version,
 };
-use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, GraphSchema};
+use stellar_graph::schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_import::ports::ImportDatabaseAdapter;
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
-use stellar_sync::schema::{SchemaStoreTask, default_schema};
+use stellar_sync::schema::{Schema, SchemaStoreTask, default_schema};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -252,7 +252,7 @@ impl Core {
             .schema
             .modify(move |schema| -> Result<_, anyhow::Error> {
                 let entity_kind = EntityKind::random();
-                schema.entities.insert(
+                schema.graph.entities.insert(
                     entity_kind,
                     EntitySchema {
                         name,
@@ -273,7 +273,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let removed = schema.entities.remove(&entity);
+                let removed = schema.graph.entities.remove(&entity);
                 if removed.is_none() {
                     anyhow::bail!("Entity kind does not exist");
                 }
@@ -295,7 +295,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                let Some(entity_schema) = schema.graph.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
                 };
 
@@ -319,7 +319,7 @@ impl Core {
         let (schema, attribute_kind) = self
             .schema
             .modify(move |schema| {
-                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                let Some(entity_schema) = schema.graph.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
                 };
 
@@ -345,7 +345,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                let Some(entity_schema) = schema.graph.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
                 };
 
@@ -373,7 +373,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(entity_schema) = schema.entities.get_mut(&entity) else {
+                let Some(entity_schema) = schema.graph.entities.get_mut(&entity) else {
                     anyhow::bail!("Entity kind does not exist");
                 };
 
@@ -407,7 +407,7 @@ impl Core {
             .schema
             .modify(move |schema| -> Result<_, anyhow::Error> {
                 let relation_kind = RelationKind::random();
-                schema.relations.insert(
+                schema.graph.relations.insert(
                     relation_kind,
                     RelationSchema {
                         name,
@@ -430,7 +430,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let removed = schema.relations.remove(&relation);
+                let removed = schema.graph.relations.remove(&relation);
                 if removed.is_none() {
                     anyhow::bail!("Relation kind does not exist");
                 }
@@ -452,7 +452,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                let Some(relation_schema) = schema.graph.relations.get_mut(&relation) else {
                     anyhow::bail!("Relation kind does not exist");
                 };
 
@@ -476,7 +476,7 @@ impl Core {
         let (schema, attribute_kind) = self
             .schema
             .modify(move |schema| {
-                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                let Some(relation_schema) = schema.graph.relations.get_mut(&relation) else {
                     anyhow::bail!("Relation kind does not exist");
                 };
 
@@ -502,7 +502,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                let Some(relation_schema) = schema.graph.relations.get_mut(&relation) else {
                     anyhow::bail!("Relation kind does not exist");
                 };
 
@@ -530,7 +530,7 @@ impl Core {
         let schema = self
             .schema
             .modify(move |schema| {
-                let Some(relation_schema) = schema.relations.get_mut(&relation) else {
+                let Some(relation_schema) = schema.graph.relations.get_mut(&relation) else {
                     anyhow::bail!("Relation kind does not exist");
                 };
 
@@ -637,7 +637,7 @@ pub trait DevicesChangeHandler: Send + Sync {
 /// Foreign trait for receiving schema change events.
 #[uniffi::export(with_foreign)]
 pub trait SchemaChangeHandler: Send + Sync {
-    fn on_change(&self, schema: GraphSchema);
+    fn on_change(&self, schema: Schema);
 }
 
 fn run_core_thread(
