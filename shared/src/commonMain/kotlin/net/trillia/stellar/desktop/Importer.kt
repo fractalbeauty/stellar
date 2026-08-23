@@ -51,6 +51,9 @@ fun Importer(core: Core) {
                                     override fun onScannedFile(file: ImportEventScannedFile) {
                                         files[file.path] = file.tags
                                     }
+
+                                    override fun onScanFinished() {
+                                    }
                                 },
                             )
                         } catch (e: CoreException) {

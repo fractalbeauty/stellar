@@ -40,7 +40,7 @@ fun SchemaEditor(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        schema.entities.entries.sortedBy { it.key }.forEach { (entityKind, entitySchema) ->
+        schema.graph.entities.entries.sortedBy { it.key }.forEach { (entityKind, entitySchema) ->
             Column {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(entitySchema.name)
@@ -77,7 +77,7 @@ fun SchemaEditor(
                         }
                     })
 
-                    schema.relations.entries
+                    schema.graph.relations.entries
                         .filter {
                             it.value.source == entityKind
                         }.sortedBy { it.key }
@@ -86,13 +86,13 @@ fun SchemaEditor(
                                 core,
                                 true,
                                 entitySchema.name,
-                                schema.entities[relationSchema.target]?.name ?: "?",
+                                schema.graph.entities[relationSchema.target]?.name ?: "?",
                                 relationKind,
                                 relationSchema,
                             )
                         }
 
-                    schema.relations.entries
+                    schema.graph.relations.entries
                         .filter {
                             it.value.target == entityKind
                         }.sortedBy { it.key }
@@ -101,7 +101,7 @@ fun SchemaEditor(
                                 core,
                                 false,
                                 entitySchema.name,
-                                schema.entities[relationSchema.source]?.name ?: "?",
+                                schema.graph.entities[relationSchema.source]?.name ?: "?",
                                 relationKind,
                                 relationSchema,
                             )
