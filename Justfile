@@ -26,6 +26,9 @@ run-desktop:
 run-desktop-hot:
   ./gradlew :desktopApp:hotRun --auto
 
+run-desktop-release:
+  ./gradlew :desktopApp:runDistributable
+
 run-android:
   ./gradlew :androidApp:installDebug
   adb shell am start -n net.trillia.stellar/.MainActivity
