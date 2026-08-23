@@ -53,7 +53,7 @@ fun App(
                     when (screen) {
                         0 -> SchemaEditor(core, schemaManager)
                         1 -> SessionsScreen(core = core, devicesManager = devicesManager)
-                        2 -> InspectPane()
+                        2 -> InspectPane(core = core, schemaManager = schemaManager)
                         3 -> Importer(core = core)
                     }
                 }

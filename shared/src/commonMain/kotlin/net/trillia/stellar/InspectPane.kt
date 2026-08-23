@@ -24,6 +24,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,7 +38,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -45,51 +45,65 @@ import androidx.compose.ui.unit.sp
 import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
+import uniffi.stellar.Core
+import uniffi.stellar_graph.Value
+import kotlin.collections.associate
 
 @Composable
-fun InspectPane() {
-    val myObj =
-        mapOf(
-            "Field1" to "myfirst",
-            "Field2" to "mytwo!",
-            "Field3" to "mysan3333333563",
+fun InspectPane(
+    core: Core,
+    schemaManager: SchemaManager,
+) {
+    val entities =
+        remember {
+            core.getEntities()
+        }
+    val schemaNullable by schemaManager.schemaState.collectAsState()
+
+    val schema = schemaNullable ?: return
+
+    var selectedEntity by remember { mutableStateOf(schema.importRules.songEntity) }
+
+    val selectedEntitySchema = schema.graph.entities[selectedEntity] ?: return
+
+    val selectedEntityFields =
+        FieldSet(
+            selectedEntitySchema.attributes.map { it -> FieldInfo(it.value.name, 300.dp) },
         )
 
-    val myData =
-        arrayOf(
-            mapOf(
-                "Field1" to "myfirst",
-                "Field2" to "mytwo!",
-                "Field3" to "mysan3333333563",
-            ),
-            mapOf(
-                "Field1" to "what",
-                "Field2" to "mytwo!",
-            ),
-            mapOf(
-                "Field0" to "0",
-                "Field2" to "w2323!",
-                "Field3" to "mysan3333333563",
-            ),
-        )
+    val selectedEntityEntities = entities.filterValues { it.kind == selectedEntity }
+    val selectedEntityData =
+        selectedEntityEntities
+            .map {
+                it.value.attributes.entries.associate { attributeEntry ->
+                    val name = selectedEntitySchema.attributes[attributeEntry.key]?.name ?: attributeEntry.key.toString()
+                    val value =
+                        when (val attributeValue = attributeEntry.value.value) {
+                            is Value.Bytes -> "<bytes>"
+                            is Value.Number -> attributeValue.v1.toString()
+                            is Value.Text -> attributeValue.v1
+                        }
+                    name to value
+                }
+            }.toTypedArray()
 
     var selected by remember { mutableStateOf<Int?>(null) }
-
-    val fields =
-        FieldSet(
-            FieldInfo("Field1", 50.dp),
-            FieldInfo("Field2", 90.dp),
-            FieldInfo("Field3", 96.dp),
-        )
 
     Column {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button("OK") {}
             Button("Cancel long action") {}
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            schema.graph.entities.forEach {
+                Button(it.value.name, onClick = { selectedEntity = it.key })
+            }
+        }
+
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
-            DataTable(myData, fields, selected, { selected = it })
-            selected?.let { Inspector(myData[it], fields) }
+            DataTable(selectedEntityData, selectedEntityFields, selected, { selected = it })
+
+            selected?.let { Inspector(selectedEntityData[it], selectedEntityFields) }
         }
     }
 }
@@ -321,10 +335,10 @@ private fun DataTableHeader(fieldInfo: FieldInfo) {
     }
 }
 
-@Composable
-@Preview
-fun InspectPanePreview() {
-    Box(modifier = Modifier.padding(16.dp)) {
-        InspectPane()
-    }
-}
+// @Composable
+// @Preview
+// fun InspectPanePreview() {
+//    Box(modifier = Modifier.padding(16.dp)) {
+//        InspectPane()
+//    }
+// }
