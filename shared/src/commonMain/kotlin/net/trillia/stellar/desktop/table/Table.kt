@@ -2,6 +2,7 @@ package net.trillia.stellar.desktop.table
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,9 +11,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
@@ -22,7 +30,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 fun Table(
-    myData: Array<Map<String, String>>,
+    myData: List<Map<String, String>>,
     fields: FieldSet,
     selected: Int?,
     onSelected: (newValue: Int?) -> Unit,
@@ -38,21 +46,23 @@ fun Table(
                 interactionSource = bgInteractionSource,
             ),
     ) {
-        Column {
+        LazyColumn {
             // draw headers
-            Row {
-                fields.fields.forEach {
-                    TableColumnHeader(it)
+            stickyHeader {
+                Row {
+                    fields.fields.forEach {
+                        TableColumnHeader(it)
+                    }
                 }
             }
 
             // draw rows
-            myData.forEachIndexed { rowindex, row ->
+            itemsIndexed(myData) { rowIndex, row ->
                 val rowInteractionSource = remember { MutableInteractionSource() }
                 Row(
                     modifier =
                         Modifier.combinedClickable(onClick = {
-                            onSelected(rowindex)
+                            onSelected(rowIndex)
                         }, interactionSource = rowInteractionSource),
                 ) {
                     val rowVals = fields.fields.map { row.get(it.label) }
@@ -60,8 +70,8 @@ fun Table(
                         TableCell(
                             fields.fields[colindex],
                             label,
-                            rowindex % 2 == 1,
-                            rowindex == selected,
+                            rowIndex % 2 == 1,
+                            rowIndex == selected,
                         )
                     }
                 }
@@ -101,9 +111,17 @@ data class FieldInfo(
 @Preview
 fun TablePreview() {
     val fields = FieldSet(FieldInfo("test", 100.dp))
-    val data = arrayOf(mapOf("test" to "aaa"), mapOf("test" to "bbb"), mapOf("test" to "ccc"))
+
+    val data =
+        buildList {
+            repeat(100) {
+                add(mapOf("test" to "aaa"))
+            }
+        }
+
+    var selected by remember { mutableStateOf<Int?>(null) }
 
     Box(modifier = Modifier.size(200.dp, 200.dp)) {
-        Table(data, fields, null, {})
+        Table(data, fields, selected, { selected = it })
     }
 }

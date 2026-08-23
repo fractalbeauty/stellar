@@ -88,7 +88,7 @@ fun InspectPane(
                         }
                     name to value
                 }
-            }.toTypedArray()
+            }
 
     var selected by remember { mutableStateOf<Int?>(null) }
 
