@@ -20,7 +20,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun TableStripes(
     listState: LazyListState,
-    selectedItemIndex: Int? = null,
+    selectedItemListIndex: Int? = null,
 ) {
     val rowHeightPx = with(LocalDensity.current) { tableRowHeight.toPx() }
 
@@ -33,7 +33,7 @@ fun TableStripes(
                 while (offsetY < size.height) {
                     val color =
                         when {
-                            itemIndex == selectedItemIndex -> tableRowColorSelected
+                            itemIndex == selectedItemListIndex -> tableRowColorSelected
                             itemIndex % 2 == 1 -> tableRowColorSecondary
                             else -> tableRowColorPrimary
                         }
