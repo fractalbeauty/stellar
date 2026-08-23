@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -16,10 +17,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.trillia.stellar.Button
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
+import uniffi.stellar.CoreImportTask
 import uniffi.stellar.logError
 import uniffi.stellar.pickFolders
 import uniffi.stellar_import.ImportEventHandler
@@ -29,8 +33,58 @@ import uniffi.stellar_import.ImportEventScannedFile
 fun Importer(core: Core) {
     val coroutineScope = rememberCoroutineScope()
 
+    var import by remember { mutableStateOf<CoreImportTask?>(null) }
+
     val files = remember { mutableStateMapOf<String, Map<String, String>?>() }
     var finished by remember { mutableStateOf(false) }
+
+    val startImport = {
+        coroutineScope.launch {
+            try {
+                val roots = pickFolders()
+
+                finished = false
+                import =
+                    core.startImport(
+                        roots,
+                        object : ImportEventHandler {
+                            override fun onPendingFile(path: String) {
+                                if (!files.containsKey(path)) {
+                                    files[path] = null
+                                }
+                            }
+
+                            override fun onScannedFile(file: ImportEventScannedFile) {
+                                files[file.path] = file.tags
+                            }
+
+                            override fun onScanFinished() {
+                                finished = true
+                            }
+                        },
+                    )
+            } catch (e: CoreException) {
+                logError("$e")
+            }
+        }
+    }
+
+    val finishImport = {
+        coroutineScope.launch {
+            try {
+                import?.import()
+            } catch (e: CoreException) {
+                logError("$e")
+            }
+        }
+    }
+
+    // Cancel import task when this composable unmounts
+    DisposableEffect(true) {
+        onDispose {
+            import?.cancel()
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -38,38 +92,10 @@ fun Importer(core: Core) {
     ) {
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button("start import", onClick = {
-                    coroutineScope.launch {
-                        try {
-                            val roots = pickFolders()
+                Button("scan folder", onClick = { startImport() })
 
-                            finished = false
-                            core.startImport(
-                                roots,
-                                object : ImportEventHandler {
-                                    override fun onPendingFile(path: String) {
-                                        if (!files.containsKey(path)) {
-                                            files[path] = null
-                                        }
-                                    }
-
-                                    override fun onScannedFile(file: ImportEventScannedFile) {
-                                        files[file.path] = file.tags
-                                    }
-
-                                    override fun onScanFinished() {
-                                        finished = true
-                                    }
-                                },
-                            )
-                        } catch (e: CoreException) {
-                            logError("$e")
-                        }
-                    }
-                })
-
-                if (files.isNotEmpty()) {
-                    Text(if (finished) "done" else "scanning")
+                if (finished) {
+                    Button("import", onClick = { finishImport() })
                 }
             }
         }

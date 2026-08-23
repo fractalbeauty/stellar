@@ -284,6 +284,8 @@ impl Import {
     }
 
     fn handle_import(&mut self) -> Result<(), anyhow::Error> {
+        tracing::debug!("Importing scanned files");
+
         let Some((graph, rules)) = self.schema.watch_schema().borrow().clone() else {
             anyhow::bail!("Schema watcher is not initialized");
         };
@@ -307,6 +309,8 @@ impl Import {
             &self.files,
         )?;
         self.database.apply_changes(changes, self.author)?;
+
+        tracing::debug!("Finished importing scanned files");
 
         Ok(())
     }
