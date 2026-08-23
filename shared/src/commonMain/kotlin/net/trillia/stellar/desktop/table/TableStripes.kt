@@ -14,8 +14,14 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
+/**
+ * Draws the table's background stripes.
+ */
 @Composable
-fun TableStripes(listState: LazyListState) {
+fun TableStripes(
+    listState: LazyListState,
+    selectedItemIndex: Int? = null,
+) {
     val rowHeightPx = with(LocalDensity.current) { tableRowHeight.toPx() }
 
     Box(
@@ -25,8 +31,14 @@ fun TableStripes(listState: LazyListState) {
                 var itemIndex = listState.firstVisibleItemIndex
                 var offsetY = -listState.firstVisibleItemScrollOffset.toFloat()
                 while (offsetY < size.height) {
+                    val color =
+                        when {
+                            itemIndex == selectedItemIndex -> tableRowColorSelected
+                            itemIndex % 2 == 1 -> tableRowColorSecondary
+                            else -> tableRowColorPrimary
+                        }
                     drawRect(
-                        color = if (itemIndex % 2 == 1) tableRowColorSecondary else tableRowColorPrimary,
+                        color = color,
                         topLeft = Offset(0f, offsetY.coerceAtLeast(0f)),
                         size = Size(size.width, rowHeightPx + 1),
                     )
