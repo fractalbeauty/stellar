@@ -43,7 +43,7 @@ impl ImportTask {
         schema: Schema,
         song_entity: EntityKind,
         song_audio_resource: RelationKind,
-        device: AuthorId,
+        author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
 
@@ -56,7 +56,7 @@ impl ImportTask {
                     schema,
                     song_entity,
                     song_audio_resource,
-                    device,
+                    author,
                 ) {
                     Ok(import) => import,
                     Err(e) => {
@@ -110,7 +110,7 @@ struct Import {
     schema: Schema,
     song_entity: EntityKind,
     song_audio_resource: RelationKind,
-    device: AuthorId,
+    author: AuthorId,
 
     files: Vec<EvaluatorFile>,
 }
@@ -121,7 +121,7 @@ impl Import {
         schema: Schema,
         song_entity: EntityKind,
         song_audio_resource: RelationKind,
-        device: AuthorId,
+        author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             database,
@@ -129,7 +129,7 @@ impl Import {
             schema,
             song_entity,
             song_audio_resource,
-            device,
+            author,
 
             files: Vec::new(),
         })
@@ -308,11 +308,10 @@ impl Import {
             &self.database,
             self.song_entity,
             self.song_audio_resource,
-            self.device,
+            self.author,
             &self.files,
-        );
-        dbg!(changes);
-
+        )?;
+        self.database.apply_changes(changes, self.author)?;
         Ok(())
     }
 }

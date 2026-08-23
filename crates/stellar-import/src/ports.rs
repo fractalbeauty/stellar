@@ -1,8 +1,12 @@
+use crate::evaluator::Changes;
 use std::{collections::HashMap, sync::Arc};
 use stellar_graph::{
     database::Database,
-    entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value},
-    store::EntityData,
+    entity::{AuthorId, EntityId, EntityKind, Timestamp, Version},
+    store::{
+        EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
+        RelationData, RelationMetadataValue,
+    },
 };
 
 pub trait ImportDatabasePort: Send + Sync {
@@ -10,6 +14,8 @@ pub trait ImportDatabasePort: Send + Sync {
         &self,
         kind: EntityKind,
     ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
+
+    fn apply_changes(&self, changes: Changes, author: AuthorId) -> Result<(), anyhow::Error>;
 }
 
 pub struct ImportDatabaseAdapter {
@@ -33,5 +39,55 @@ impl ImportDatabasePort for ImportDatabaseAdapter {
             .into_iter()
             .filter(|(id, _)| id.kind() == kind)
             .collect())
+    }
+
+    fn apply_changes(&self, changes: Changes, author: AuthorId) -> Result<(), anyhow::Error> {
+        let version = Version::new(Timestamp::now(), author);
+
+        for (_, created_entities) in changes.create_entities {
+            for change in created_entities {
+                self.database.upsert_entity(
+                    change.id,
+                    EntityData {
+                        metadata: EntityMetadataValue {
+                            deleted: false,
+                            deleted_version: version,
+                        },
+                        attributes: change
+                            .attributes
+                            .into_iter()
+                            .map(|(attribute, value)| {
+                                (attribute, EntityAttributeValue { value, version })
+                            })
+                            .collect(),
+                    },
+                )?; // TODO 
+            }
+        }
+
+        for (_, created_relations) in changes.create_relations {
+            for change in created_relations {
+                self.database.upsert_relation(
+                    change.id,
+                    RelationData {
+                        metadata: RelationMetadataValue {
+                            source: change.source,
+                            target: change.target,
+                            deleted: false,
+                            deleted_version: version,
+                        },
+                        attributes: change
+                            .attributes
+                            .into_iter()
+                            .map(|(attribute, value)| {
+                                (attribute, RelationAttributeValue { value, version })
+                            })
+                            .collect(),
+                    },
+                )?; // TODO 
+            }
+        }
+
+        Ok(())
     }
 }

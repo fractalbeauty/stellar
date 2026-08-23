@@ -237,4 +237,12 @@ impl ImportDatabasePort for ExampleImportDatabaseAdapter {
     > {
         Ok(HashMap::new())
     }
+
+    fn apply_changes(
+        &self,
+        _changes: stellar_import::evaluator::Changes,
+        _author: AuthorId,
+    ) -> Result<(), anyhow::Error> {
+        todo!()
+    }
 }

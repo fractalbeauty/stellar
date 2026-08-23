@@ -399,7 +399,7 @@ impl EvaluatorFile {
 #[cfg(test)]
 mod test {
     use crate::{
-        evaluator::{Evaluator, EvaluatorFile},
+        evaluator::{Changes, Evaluator, EvaluatorFile},
         ports::ImportDatabasePort,
         rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
     };
@@ -420,7 +420,7 @@ mod test {
     impl ImportDatabasePort for TestImportDatabaseAdapter {
         fn get_entities_by_kind(
             &self,
-            kind: stellar_graph::entity::EntityKind,
+            kind: EntityKind,
         ) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
             Ok(self
                 .entities
@@ -428,6 +428,11 @@ mod test {
                 .into_iter()
                 .filter(|(id, _)| id.kind() == kind)
                 .collect())
+        }
+
+        fn apply_changes(&self, _changes: Changes, _author: AuthorId) -> Result<(), anyhow::Error> {
+            // TODO
+            Ok(())
         }
     }
 
