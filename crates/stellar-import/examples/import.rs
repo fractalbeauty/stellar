@@ -246,6 +246,7 @@ impl ExampleImportSchemaAdapter {
                 (artist, vec![artist_name]),
             ]),
             relation_key_attributes: HashMap::new(),
+            song_entity: song,
         };
 
         dbg!(&graph);

@@ -52,7 +52,7 @@ impl SchemaStoreTask {
         data_dir: impl AsRef<Path>,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
-        let store_path = data_dir.as_ref().join("schema_v2");
+        let store_path = data_dir.as_ref().join("schema_v3");
 
         let (schema_tx, schema_rx) = watch::channel(None);
         let (message_tx, message_rx) = mpsc::unbounded_channel();
@@ -761,6 +761,7 @@ pub fn default_schema() -> Schema {
             (artist, vec![artist_name]),
         ]),
         relation_key_attributes: HashMap::new(),
+        song_entity: song,
     };
 
     Schema {

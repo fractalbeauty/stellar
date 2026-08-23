@@ -7,6 +7,7 @@ pub struct Rules {
     pub rule: Rule,
     pub entity_key_attributes: HashMap<EntityKind, Vec<AttributeKind>>,
     pub relation_key_attributes: HashMap<RelationKind, Vec<AttributeKind>>,
+    pub song_entity: EntityKind,
 }
 
 #[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]

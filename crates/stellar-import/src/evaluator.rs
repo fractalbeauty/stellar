@@ -20,7 +20,6 @@ pub struct Evaluator<'a> {
     changes: Changes,
     rules: &'a Rules,
     database: &'a Arc<dyn ImportDatabasePort>,
-    song_entity: EntityKind,
     song_audio_resource: RelationKind,
     device: AuthorId,
 }
@@ -29,7 +28,6 @@ impl<'a> Evaluator<'a> {
     pub fn run(
         rules: &'a Rules,
         database: &'a Arc<dyn ImportDatabasePort>,
-        song_entity: EntityKind,
         song_audio_resource: RelationKind,
         device: AuthorId,
         files: &[EvaluatorFile],
@@ -38,7 +36,6 @@ impl<'a> Evaluator<'a> {
             changes: Changes::default(),
             rules,
             database,
-            song_entity,
             song_audio_resource,
             device,
         };
@@ -55,7 +52,7 @@ impl<'a> Evaluator<'a> {
 
             let entity = self
                 .changes
-                .create_entity(self.song_entity, song_attributes);
+                .create_entity(self.rules.song_entity, song_attributes);
 
             for relation_rule in &rule.relations {
                 self.handle_relation_rule(file, entity, relation_rule);
@@ -470,6 +467,7 @@ mod test {
             },
             entity_key_attributes: HashMap::from([(album, vec![album_title])]),
             relation_key_attributes: HashMap::new(),
+            song_entity: song,
         };
 
         let existing_album = EntityId::random(album);
@@ -508,7 +506,6 @@ mod test {
         let changes = Evaluator::run(
             &rules,
             &database,
-            song,
             song_audio_resource,
             AuthorId::from_bytes([0u8; 32]),
             &files,

@@ -6,6 +6,7 @@ use lofty::file::TaggedFileExt;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use stellar_graph::entity::AuthorId;
+use stellar_resources::audio::AUDIO_RESOURCE_ENTITY;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -287,11 +288,21 @@ impl Import {
             anyhow::bail!("Schema watcher is not initialized");
         };
 
+        // Find song to audio resource relation
+        let Some(song_audio_resource) = graph.relations.iter().find_map(|(relation, schema)| {
+            if schema.source == rules.song_entity && schema.target == AUDIO_RESOURCE_ENTITY {
+                Some(*relation)
+            } else {
+                None
+            }
+        }) else {
+            anyhow::bail!("Song entity has no relation to AudioResource");
+        };
+
         let changes = Evaluator::run(
             &rules,
             &self.database,
-            todo!(),
-            todo!(),
+            song_audio_resource,
             self.author,
             &self.files,
         )?;
