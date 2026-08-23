@@ -5,11 +5,15 @@ use crate::{
 use lofty::tag::{ItemKey, Tag};
 use std::{
     collections::{HashMap, hash_map::Entry},
+    iter,
     path::PathBuf,
     sync::Arc,
 };
 use stellar_graph::entity::{
-    AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, ValueKind,
+    AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Value, ValueKind,
+};
+use stellar_resources::audio::{
+    AUDIO_RESOURCE_ENTITY, AUDIO_RESOURCE_LOCATION, AudioResourceLocation,
 };
 
 pub struct Evaluator<'a> {
@@ -17,6 +21,8 @@ pub struct Evaluator<'a> {
     rules: &'a Rules,
     database: &'a Arc<dyn ImportDatabasePort>,
     song_entity: EntityKind,
+    song_audio_resource: RelationKind,
+    device: AuthorId,
 }
 
 impl<'a> Evaluator<'a> {
@@ -24,6 +30,8 @@ impl<'a> Evaluator<'a> {
         rules: &'a Rules,
         database: &'a Arc<dyn ImportDatabasePort>,
         song_entity: EntityKind,
+        song_audio_resource: RelationKind,
+        device: AuthorId,
         files: &[EvaluatorFile],
     ) -> Result<Changes, anyhow::Error> {
         let mut evaluator = Self {
@@ -31,6 +39,8 @@ impl<'a> Evaluator<'a> {
             rules,
             database,
             song_entity,
+            song_audio_resource,
+            device,
         };
         evaluator.evaluate(files)?;
         Ok(evaluator.changes)
@@ -50,6 +60,24 @@ impl<'a> Evaluator<'a> {
             for relation_rule in &rule.relations {
                 self.handle_relation_rule(file, entity, relation_rule);
             }
+
+            let audio_resource_attributes = HashMap::from([(
+                AUDIO_RESOURCE_LOCATION,
+                Value::Bytes(AudioResourceLocation::encode(&AudioResourceLocation {
+                    device: self.device,
+                    path: file.path.clone(),
+                })),
+            )]);
+            let audio_resource = self
+                .changes
+                .create_entity(AUDIO_RESOURCE_ENTITY, audio_resource_attributes);
+            self.changes.find_or_create_relation(
+                self.song_audio_resource,
+                entity,
+                audio_resource,
+                HashMap::new(),
+                iter::empty(),
+            );
         }
 
         for (kind, created_entities) in &self.changes.create_entities {
@@ -90,11 +118,15 @@ impl<'a> Evaluator<'a> {
                 let existing = index.get(&values).copied();
                 if let Some(existing) = existing {
                     println!(
-                        "detected {:?} is a duplictae of {:?}, not implemented",
+                        "detected {:?} is a duplicate of {:?}, not implemented",
                         created_entity, existing
                     );
+
+                    // TODO: merge duplicates and update relations
                 }
             }
+
+            // TODO: detect duplicate relations and merge
         }
 
         Ok(())
@@ -409,6 +441,8 @@ mod test {
 
         let album_song = RelationKind::random();
 
+        let song_audio_resource = RelationKind::random();
+
         let rules = Rules {
             rule: Rule {
                 attributes: vec![AttributeRule {
@@ -466,7 +500,15 @@ mod test {
             }),
         }];
 
-        let changes = Evaluator::run(&rules, &database, song, &files).expect("should run");
+        let changes = Evaluator::run(
+            &rules,
+            &database,
+            song,
+            song_audio_resource,
+            AuthorId::from_bytes([0u8; 32]),
+            &files,
+        )
+        .expect("should run");
 
         // TODO
         assert_eq!(changes.create_entities, HashMap::new());

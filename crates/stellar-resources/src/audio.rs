@@ -16,23 +16,23 @@ pub const AUDIO_RESOURCE_DURATION: AttributeKind = AttributeKind::from_bytes([6u
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioResource {
-    location: AudioResourceLocation,
-    hash: [u8; 32],
-    size: u64,
-    quality: AudioResourceQuality,
-    duration: f64,
+    pub location: AudioResourceLocation,
+    pub hash: [u8; 32],
+    pub size: u64,
+    pub quality: AudioResourceQuality,
+    pub duration: f64,
 
-    location_version: Version,
-    hash_version: Version,
-    size_version: Version,
-    quality_version: Version,
-    duration_version: Version,
+    pub location_version: Version,
+    pub hash_version: Version,
+    pub size_version: Version,
+    pub quality_version: Version,
+    pub duration_version: Version,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AudioResourceLocation {
-    device: AuthorId,
-    path: PathBuf,
+    pub device: AuthorId,
+    pub path: PathBuf,
 }
 
 impl AudioResourceLocation {

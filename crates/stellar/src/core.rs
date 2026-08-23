@@ -582,6 +582,8 @@ impl Core {
             roots.into_iter().map(Into::into).collect(),
             todo!(),
             todo!(),
+            todo!(),
+            self.author,
         )?;
         Ok(())
     }

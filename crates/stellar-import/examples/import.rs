@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use stellar_graph::{
-    entity::{AttributeKind, EntityKind, RelationKind, ValueKind},
+    entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
 };
 use stellar_import::{
@@ -187,6 +187,8 @@ async fn main() -> Result<(), anyhow::Error> {
         vec![dir.into()],
         schema,
         song,
+        song_audio_resource,
+        AuthorId::from_bytes([0u8; 32]),
     )?;
 
     event_handler.scan_finished.notified().await;
@@ -228,7 +230,7 @@ struct ExampleImportDatabaseAdapter;
 impl ImportDatabasePort for ExampleImportDatabaseAdapter {
     fn get_entities_by_kind(
         &self,
-        kind: EntityKind,
+        _kind: EntityKind,
     ) -> Result<
         HashMap<stellar_graph::entity::EntityId, stellar_graph::store::EntityData>,
         anyhow::Error,

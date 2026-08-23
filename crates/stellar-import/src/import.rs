@@ -6,7 +6,10 @@ use crate::{
 use lofty::file::TaggedFileExt;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use stellar_graph::{entity::EntityKind, schema::Schema};
+use stellar_graph::{
+    entity::{AuthorId, EntityKind, RelationKind},
+    schema::Schema,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -39,6 +42,8 @@ impl ImportTask {
         roots: Vec<PathBuf>,
         schema: Schema,
         song_entity: EntityKind,
+        song_audio_resource: RelationKind,
+        device: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
 
@@ -46,7 +51,13 @@ impl ImportTask {
             let cancellation_token = cancellation_token.clone();
             let message_tx = message_tx.clone();
             async move {
-                let mut import = match Import::init(database, schema, song_entity) {
+                let mut import = match Import::init(
+                    database,
+                    schema,
+                    song_entity,
+                    song_audio_resource,
+                    device,
+                ) {
                     Ok(import) => import,
                     Err(e) => {
                         tracing::error!("Import task failed to init: {e:?}");
@@ -98,6 +109,8 @@ struct Import {
 
     schema: Schema,
     song_entity: EntityKind,
+    song_audio_resource: RelationKind,
+    device: AuthorId,
 
     files: Vec<EvaluatorFile>,
 }
@@ -107,12 +120,16 @@ impl Import {
         database: Arc<dyn ImportDatabasePort>,
         schema: Schema,
         song_entity: EntityKind,
+        song_audio_resource: RelationKind,
+        device: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             database,
 
             schema,
             song_entity,
+            song_audio_resource,
+            device,
 
             files: Vec::new(),
         })
@@ -286,7 +303,14 @@ impl Import {
     }
 
     fn handle_import(&mut self, rules: &Rules) -> Result<(), anyhow::Error> {
-        let changes = Evaluator::run(rules, &self.database, self.song_entity, &self.files);
+        let changes = Evaluator::run(
+            rules,
+            &self.database,
+            self.song_entity,
+            self.song_audio_resource,
+            self.device,
+            &self.files,
+        );
         dbg!(changes);
 
         Ok(())
