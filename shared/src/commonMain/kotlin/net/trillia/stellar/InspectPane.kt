@@ -42,6 +42,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import net.trillia.stellar.desktop.table.FieldInfo
+import net.trillia.stellar.desktop.table.FieldSet
+import net.trillia.stellar.desktop.table.Table
 import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
@@ -101,7 +104,7 @@ fun InspectPane(
         }
 
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxSize()) {
-            DataTable(selectedEntityData, selectedEntityFields, selected, { selected = it })
+            Table(selectedEntityData, selectedEntityFields, selected, { selected = it })
 
             selected?.let { Inspector(selectedEntityData[it], selectedEntityFields) }
         }
@@ -145,83 +148,6 @@ fun Button(
             modifier = Modifier.padding(vertical = 3.dp, horizontal = 7.dp),
             color = if (isPressed) cFgPressed else Color.Unspecified,
         )
-    }
-}
-
-data class FieldSet(
-    val fields: List<FieldInfo>,
-) {
-    constructor(vararg fieldInfo: FieldInfo) : this(listOf(*fieldInfo))
-}
-
-data class FieldInfo(
-    val label: String,
-    val width: Dp,
-)
-
-@Composable
-private fun DataTable(
-    myData: Array<Map<String, String>>,
-    fields: FieldSet,
-    selected: Int?,
-    onSelected: (newValue: Int?) -> Unit,
-) {
-    val bgInteractionSource = remember { MutableInteractionSource() }
-
-    Box(
-        modifier =
-            Modifier.combinedClickable(
-                onClick = {
-                    onSelected(null)
-                },
-                interactionSource = bgInteractionSource,
-            ),
-    ) {
-        Column {
-            // draw headers
-            Row {
-                fields.fields.forEach {
-                    DataTableHeader(it)
-                }
-            }
-
-            // draw rows
-            myData.forEachIndexed { rowindex, row ->
-                val rowInteractionSource = remember { MutableInteractionSource() }
-                Row(
-                    modifier =
-                        Modifier.combinedClickable(onClick = {
-                            onSelected(rowindex)
-                        }, interactionSource = rowInteractionSource),
-                ) {
-                    val rowVals = fields.fields.map { row.get(it.label) }
-                    rowVals.forEachIndexed { colindex, label ->
-                        DataTableCell(
-                            fields.fields[colindex],
-                            label,
-                            rowindex % 2 == 1,
-                            rowindex == selected,
-                        )
-                    }
-                }
-            }
-        }
-
-        // draw first border
-        VerticalDivider(thickness = 1.dp)
-
-        // draw ending dividers
-        var widthSoFar = 0.dp
-        fields.fields.forEach {
-            VerticalDivider(
-                thickness = 1.dp,
-                modifier =
-                    Modifier
-                        .offset(x = widthSoFar + it.width)
-                        .alpha(0.5F),
-            )
-            widthSoFar += it.width
-        }
     }
 }
 
@@ -275,65 +201,6 @@ private fun InspectorField(
 }
 
 val fieldPadStart = 3.dp
-
-@Composable
-private fun DataTableCell(
-    fieldInfo: FieldInfo,
-    label: String?,
-    secondary: Boolean,
-    selected: Boolean,
-) {
-    val tahoma = FontFamily(Font(Res.font.tahoma))
-    Text(
-        label.orEmpty(),
-        fontFamily = tahoma,
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Medium,
-        lineHeight = 1.em,
-        maxLines = 1,
-        overflow = TextOverflow.MiddleEllipsis,
-        modifier =
-            Modifier
-                .width(fieldInfo.width)
-                .run(
-                    {
-                        if (selected) {
-                            background(Color(0xFFB0D3FF))
-                        } else if (secondary) {
-                            background(
-                                Color(
-                                    0xFFEEEEEE,
-                                ),
-                            )
-                        } else {
-                            background(Color(0xFFFAFAFA))
-                        }
-                    },
-                ).padding(vertical = 2.dp)
-                .padding(start = fieldPadStart),
-    )
-}
-
-@Composable
-private fun DataTableHeader(fieldInfo: FieldInfo) {
-    val tahoma = FontFamily(Font(Res.font.tahoma))
-    Box(Modifier.background(Color(0xFFDADADA))) {
-        Text(
-            fieldInfo.label,
-            fontFamily = tahoma,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            lineHeight = 1.em,
-            maxLines = 1,
-            overflow = TextOverflow.MiddleEllipsis,
-            modifier =
-                Modifier
-                    .width(fieldInfo.width)
-                    .padding(vertical = 2.dp)
-                    .padding(start = fieldPadStart),
-        )
-    }
-}
 
 // @Composable
 // @Preview
