@@ -13,13 +13,14 @@ use stellar_graph::entity::{
 };
 use stellar_graph::schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
-use stellar_import::ports::ImportDatabaseAdapter;
+use stellar_import::ports::{ImportDatabaseAdapter, ImportSchemaPort};
+use stellar_import::rules::Rules;
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
 use stellar_sync::schema::{Schema, SchemaStoreTask, default_schema};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
@@ -575,14 +576,49 @@ impl Core {
         event_handler: Arc<dyn ImportEventHandler>,
     ) -> Result<(), CoreError> {
         let _guard = self.runtime_handle.enter();
+
+        let mut full_schema_rx = self.schema.watch_schema();
+        let (schema_tx, schema_rx) = watch::channel(None);
+
+        let cancellation_token = self.cancellation_token.child_token();
+
+        tokio::spawn({
+            let cancellation_token = cancellation_token.clone();
+            async move {
+                loop {
+                    tokio::select! {
+                        Ok(_) = full_schema_rx.changed() => {
+                            let Some(ref full_schema) = *full_schema_rx.borrow() else {
+                                continue;
+                            };
+                            let graph = full_schema.graph.clone();
+                            let import_rules = full_schema.import_rules.clone();
+                            if let Err(_) = schema_tx.send(Some((graph, import_rules))) {
+                                tracing::debug!("Import schema forwarder receivers dropped");
+                                break;
+                            }
+                            tracing::debug!("Import schema forwarder sent");
+                        }
+
+                        _ = cancellation_token.cancelled() => {
+                            tracing::debug!("Import schema forwarder cancelled");
+                            break;
+                        }
+                    }
+                }
+
+                tracing::debug!("Import schema forwarder finished");
+            }
+        });
+
         ImportTask::spawn(
             self.cancellation_token.child_token(),
             ImportDatabaseAdapter::new(self.database.clone()),
+            Arc::new(CoreImportSchemaAdapter {
+                watch_rx: schema_rx,
+            }),
             event_handler,
             roots.into_iter().map(Into::into).collect(),
-            todo!(),
-            todo!(),
-            todo!(),
             self.author,
         )?;
         Ok(())
@@ -777,4 +813,14 @@ fn run_core_thread(
 
         Ok::<(), anyhow::Error>(())
     })
+}
+
+struct CoreImportSchemaAdapter {
+    watch_rx: watch::Receiver<Option<(GraphSchema, Rules)>>,
+}
+
+impl ImportSchemaPort for CoreImportSchemaAdapter {
+    fn watch_schema(&self) -> watch::Receiver<Option<(GraphSchema, Rules)>> {
+        self.watch_rx.clone()
+    }
 }

@@ -1,15 +1,11 @@
 use crate::{
     evaluator::{Evaluator, EvaluatorFile},
-    ports::ImportDatabasePort,
-    rules::Rules,
+    ports::{ImportDatabasePort, ImportSchemaPort},
 };
 use lofty::file::TaggedFileExt;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use stellar_graph::{
-    entity::{AuthorId, EntityKind, RelationKind},
-    schema::GraphSchema,
-};
+use stellar_graph::entity::AuthorId;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -38,11 +34,9 @@ impl ImportTask {
     pub fn spawn(
         cancellation_token: CancellationToken,
         database: Arc<dyn ImportDatabasePort>,
+        schema: Arc<dyn ImportSchemaPort>,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
-        schema: GraphSchema,
-        song_entity: EntityKind,
-        song_audio_resource: RelationKind,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         let (message_tx, message_rx) = mpsc::unbounded_channel();
@@ -51,13 +45,7 @@ impl ImportTask {
             let cancellation_token = cancellation_token.clone();
             let message_tx = message_tx.clone();
             async move {
-                let mut import = match Import::init(
-                    database,
-                    schema,
-                    song_entity,
-                    song_audio_resource,
-                    author,
-                ) {
+                let mut import = match Import::init(database, schema, author) {
                     Ok(import) => import,
                     Err(e) => {
                         tracing::error!("Import task failed to init: {e:?}");
@@ -98,18 +86,15 @@ impl ImportTask {
         self.cancellation_token.cancel();
     }
 
-    /// Import with the configured settings.
-    pub fn import(&self, rules: Rules) {
-        let _ = self.message_tx.send(ImportMessage::Import(rules));
+    /// Import.
+    pub fn import(&self) {
+        let _ = self.message_tx.send(ImportMessage::Import);
     }
 }
 
 struct Import {
     database: Arc<dyn ImportDatabasePort>,
-
-    schema: GraphSchema,
-    song_entity: EntityKind,
-    song_audio_resource: RelationKind,
+    schema: Arc<dyn ImportSchemaPort>,
     author: AuthorId,
 
     files: Vec<EvaluatorFile>,
@@ -118,17 +103,12 @@ struct Import {
 impl Import {
     fn init(
         database: Arc<dyn ImportDatabasePort>,
-        schema: GraphSchema,
-        song_entity: EntityKind,
-        song_audio_resource: RelationKind,
+        schema: Arc<dyn ImportSchemaPort>,
         author: AuthorId,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             database,
-
             schema,
-            song_entity,
-            song_audio_resource,
             author,
 
             files: Vec::new(),
@@ -294,7 +274,7 @@ impl Import {
 
     async fn handle_message(&mut self, message: ImportMessage) -> Result<(), anyhow::Error> {
         match message {
-            ImportMessage::Import(rules) => self.handle_import(&rules),
+            ImportMessage::Import => self.handle_import(),
             ImportMessage::ScannedFile(file) => {
                 self.files.push(file);
                 Ok(())
@@ -302,22 +282,27 @@ impl Import {
         }
     }
 
-    fn handle_import(&mut self, rules: &Rules) -> Result<(), anyhow::Error> {
+    fn handle_import(&mut self) -> Result<(), anyhow::Error> {
+        let Some((graph, rules)) = self.schema.watch_schema().borrow().clone() else {
+            anyhow::bail!("Schema watcher is not initialized");
+        };
+
         let changes = Evaluator::run(
-            rules,
+            &rules,
             &self.database,
-            self.song_entity,
-            self.song_audio_resource,
+            todo!(),
+            todo!(),
             self.author,
             &self.files,
         )?;
         self.database.apply_changes(changes, self.author)?;
+
         Ok(())
     }
 }
 
 enum ImportMessage {
-    Import(Rules),
+    Import,
 
     ScannedFile(EvaluatorFile),
 }

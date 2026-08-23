@@ -1,13 +1,15 @@
-use crate::evaluator::Changes;
+use crate::{evaluator::Changes, rules::Rules};
 use std::{collections::HashMap, sync::Arc};
 use stellar_graph::{
     database::Database,
     entity::{AuthorId, EntityId, EntityKind, Timestamp, Version},
+    schema::GraphSchema,
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
         RelationData, RelationMetadataValue,
     },
 };
+use tokio::sync::watch;
 
 pub trait ImportDatabasePort: Send + Sync {
     fn get_entities_by_kind(
@@ -90,4 +92,8 @@ impl ImportDatabasePort for ImportDatabaseAdapter {
 
         Ok(())
     }
+}
+
+pub trait ImportSchemaPort: Send + Sync {
+    fn watch_schema(&self) -> watch::Receiver<Option<(GraphSchema, Rules)>>;
 }
