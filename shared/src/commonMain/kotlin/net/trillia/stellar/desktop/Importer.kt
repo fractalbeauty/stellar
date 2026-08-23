@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
@@ -27,6 +30,7 @@ fun Importer(core: Core) {
     val coroutineScope = rememberCoroutineScope()
 
     val files = remember { mutableStateMapOf<String, Map<String, String>?>() }
+    var finished by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -39,6 +43,7 @@ fun Importer(core: Core) {
                         try {
                             val roots = pickFolders()
 
+                            finished = false
                             core.startImport(
                                 roots,
                                 object : ImportEventHandler {
@@ -53,6 +58,7 @@ fun Importer(core: Core) {
                                     }
 
                                     override fun onScanFinished() {
+                                        finished = true
                                     }
                                 },
                             )
@@ -61,6 +67,10 @@ fun Importer(core: Core) {
                         }
                     }
                 })
+
+                if (files.isNotEmpty()) {
+                    Text(if (finished) "done" else "scanning")
+                }
             }
         }
 
@@ -70,7 +80,7 @@ fun Importer(core: Core) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(file)
 
-                        if (tags == null) {
+                        if (tags == null && !finished) {
                             Text("[...]")
                         }
                     }
