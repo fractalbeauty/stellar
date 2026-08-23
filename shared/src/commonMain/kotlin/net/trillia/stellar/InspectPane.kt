@@ -93,11 +93,7 @@ fun InspectPane(
     var selected by remember { mutableStateOf<Int?>(null) }
 
     Column {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button("OK") {}
-            Button("Cancel long action") {}
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row {
             schema.graph.entities.forEach {
                 Button(it.value.name, onClick = { selectedEntity = it.key })
             }
