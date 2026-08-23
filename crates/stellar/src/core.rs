@@ -574,7 +574,7 @@ impl Core {
         &self,
         roots: Vec<String>,
         event_handler: Arc<dyn ImportEventHandler>,
-    ) -> Result<(), CoreError> {
+    ) -> Result<CoreImportTask, CoreError> {
         let _guard = self.runtime_handle.enter();
 
         let mut full_schema_rx = self.schema.watch_schema();
@@ -611,7 +611,7 @@ impl Core {
             }
         });
 
-        ImportTask::spawn(
+        let import_task = ImportTask::spawn(
             self.cancellation_token.child_token(),
             ImportDatabaseAdapter::new(self.database.clone()),
             Arc::new(CoreImportSchemaAdapter {
@@ -621,7 +621,8 @@ impl Core {
             roots.into_iter().map(Into::into).collect(),
             self.author,
         )?;
-        Ok(())
+
+        Ok(CoreImportTask { inner: import_task })
     }
 }
 
@@ -822,5 +823,23 @@ struct CoreImportSchemaAdapter {
 impl ImportSchemaPort for CoreImportSchemaAdapter {
     fn watch_schema(&self) -> watch::Receiver<Option<(GraphSchema, Rules)>> {
         self.watch_rx.clone()
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct CoreImportTask {
+    pub inner: ImportTask,
+}
+
+#[uniffi::export]
+impl CoreImportTask {
+    pub fn cancel(&self) -> Result<(), CoreError> {
+        self.inner.cancel();
+        Ok(())
+    }
+
+    pub fn import(&self) -> Result<(), CoreError> {
+        self.inner.import();
+        Ok(())
     }
 }
