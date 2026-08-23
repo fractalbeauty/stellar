@@ -8,7 +8,7 @@ use rayon::iter::{ParallelBridge, ParallelIterator};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use stellar_graph::{
     entity::{AuthorId, EntityKind, RelationKind},
-    schema::Schema,
+    schema::GraphSchema,
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -40,7 +40,7 @@ impl ImportTask {
         database: Arc<dyn ImportDatabasePort>,
         event_handler: Arc<dyn ImportEventHandler>,
         roots: Vec<PathBuf>,
-        schema: Schema,
+        schema: GraphSchema,
         song_entity: EntityKind,
         song_audio_resource: RelationKind,
         author: AuthorId,
@@ -107,7 +107,7 @@ impl ImportTask {
 struct Import {
     database: Arc<dyn ImportDatabasePort>,
 
-    schema: Schema,
+    schema: GraphSchema,
     song_entity: EntityKind,
     song_audio_resource: RelationKind,
     author: AuthorId,
@@ -118,7 +118,7 @@ struct Import {
 impl Import {
     fn init(
         database: Arc<dyn ImportDatabasePort>,
-        schema: Schema,
+        schema: GraphSchema,
         song_entity: EntityKind,
         song_audio_resource: RelationKind,
         author: AuthorId,

@@ -15,7 +15,7 @@ use std::{
 };
 use stellar_graph::{
     entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
-    schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
+    schema::{AttributeSchema, EntitySchema, RelationSchema, GraphSchema},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::{
@@ -33,7 +33,7 @@ use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
 /// Handle to the schema store task.
 #[derive(Debug, Clone)]
 pub struct SchemaStoreTask {
-    schema_rx: watch::Receiver<Option<Schema>>,
+    schema_rx: watch::Receiver<Option<GraphSchema>>,
     message_tx: mpsc::UnboundedSender<SchemaStoreMessage>,
 }
 
@@ -73,7 +73,7 @@ impl SchemaStoreTask {
 
     pub async fn modify<F, R>(&self, operation: F) -> Result<R, anyhow::Error>
     where
-        F: FnOnce(&mut Schema) -> R + Send + 'static,
+        F: FnOnce(&mut GraphSchema) -> R + Send + 'static,
         R: Send + 'static,
     {
         let operation = wrap_modify_closure(operation);
@@ -98,7 +98,7 @@ impl SchemaStoreTask {
         Ok(*result)
     }
 
-    pub fn watch_schema(&self) -> watch::Receiver<Option<Schema>> {
+    pub fn watch_schema(&self) -> watch::Receiver<Option<GraphSchema>> {
         self.schema_rx.clone()
     }
 
@@ -138,9 +138,9 @@ impl SchemaStoreTask {
 
 fn wrap_modify_closure<F, R>(
     operation: F,
-) -> Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>
+) -> Box<dyn FnOnce(&mut GraphSchema) -> Box<dyn Any + Send> + Send>
 where
-    F: FnOnce(&mut Schema) -> R + Send + 'static,
+    F: FnOnce(&mut GraphSchema) -> R + Send + 'static,
     R: Send + 'static,
 {
     Box::new(move |schema| -> Box<dyn Any + Send> {
@@ -158,7 +158,7 @@ impl SchemaStore {
     async fn run(
         &mut self,
         author: AuthorId,
-        schema_tx: watch::Sender<Option<Schema>>,
+        schema_tx: watch::Sender<Option<GraphSchema>>,
         mut message_rx: mpsc::UnboundedReceiver<SchemaStoreMessage>,
         cancellation_token: CancellationToken,
     ) -> Result<(), anyhow::Error> {
@@ -195,7 +195,7 @@ impl SchemaStore {
 
         {
             let schema =
-                Schema::load(&doc, &ROOT, "schema").context("Failed to load schema from doc")?;
+                GraphSchema::load(&doc, &ROOT, "schema").context("Failed to load schema from doc")?;
 
             schema_tx.send_replace(Some(schema));
         }
@@ -237,7 +237,7 @@ impl SchemaStore {
 
     async fn handle_message(
         &mut self,
-        schema_tx: &watch::Sender<Option<Schema>>,
+        schema_tx: &watch::Sender<Option<GraphSchema>>,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
         message: SchemaStoreMessage,
@@ -257,7 +257,7 @@ impl SchemaStore {
                         tracing::debug!("SchemaStore applied SchemaStoreMessage::Modify")
                     }
                     None => {
-                        let mut schema = match Schema::load(doc, &ROOT, "schema")
+                        let mut schema = match GraphSchema::load(doc, &ROOT, "schema")
                             .context("Failed to load schema from doc")
                         {
                             Ok(schema) => schema,
@@ -299,7 +299,7 @@ impl SchemaStore {
                     }
                 }
 
-                let schema = match Schema::load(doc, &ROOT, "schema")
+                let schema = match GraphSchema::load(doc, &ROOT, "schema")
                     .context("Failed to load schema from doc")
                 {
                     Ok(schema) => schema,
@@ -327,7 +327,7 @@ impl SchemaStore {
         &mut self,
         doc: &mut AutoCommit,
         batch: &mut Pin<&mut Option<SchemaEditBatch>>,
-        schema_tx: &watch::Sender<Option<Schema>>,
+        schema_tx: &watch::Sender<Option<GraphSchema>>,
     ) -> Result<(), anyhow::Error> {
         match batch.as_mut().as_pin_mut() {
             Some(batch) => {
@@ -366,7 +366,7 @@ impl SchemaStore {
 
 enum SchemaStoreMessage {
     Modify {
-        operation: Box<dyn FnOnce(&mut Schema) -> Box<dyn Any + Send> + Send>,
+        operation: Box<dyn FnOnce(&mut GraphSchema) -> Box<dyn Any + Send> + Send>,
         result_tx: oneshot::Sender<Option<Box<dyn Any + Send>>>,
     },
     ForkDocForSync {
@@ -380,7 +380,7 @@ enum SchemaStoreMessage {
 
 pin_project! {
     struct SchemaEditBatch {
-        schema: Schema,
+        schema: GraphSchema,
         #[pin]
         save_timeout: Sleep,
     }
@@ -605,7 +605,7 @@ impl SchemaSyncServerMessage {
 }
 
 /// Creates a new schema with the default configuration.
-pub fn default_schema() -> Schema {
+pub fn default_schema() -> GraphSchema {
     let song = EntityKind::random();
     let song_schema = EntitySchema {
         name: "Song".to_string(),
@@ -680,7 +680,7 @@ pub fn default_schema() -> Schema {
         attributes: HashMap::new(),
     };
 
-    Schema {
+    GraphSchema {
         entities: HashMap::from([
             (song, song_schema),
             (album, album_schema),

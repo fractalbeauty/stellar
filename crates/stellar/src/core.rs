@@ -11,7 +11,7 @@ use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
     ValueKind, Version,
 };
-use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, Schema};
+use stellar_graph::schema::{AttributeSchema, EntitySchema, RelationSchema, GraphSchema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_import::ports::ImportDatabaseAdapter;
 use stellar_log::LogGuard;
@@ -591,7 +591,7 @@ impl Core {
 
 #[derive(uniffi::Record)]
 pub struct CreateSchemaEntityResult {
-    schema: Schema,
+    schema: GraphSchema,
     entity_kind: EntityKind,
 }
 
@@ -637,7 +637,7 @@ pub trait DevicesChangeHandler: Send + Sync {
 /// Foreign trait for receiving schema change events.
 #[uniffi::export(with_foreign)]
 pub trait SchemaChangeHandler: Send + Sync {
-    fn on_change(&self, schema: Schema);
+    fn on_change(&self, schema: GraphSchema);
 }
 
 fn run_core_thread(

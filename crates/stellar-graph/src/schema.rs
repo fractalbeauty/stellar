@@ -2,7 +2,7 @@ use crate::entity::{AttributeKind, EntityKind, RelationKind, ValueKind};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default, automorph::Automorph, uniffi::Record)]
-pub struct Schema {
+pub struct GraphSchema {
     pub entities: HashMap<EntityKind, EntitySchema>,
     pub relations: HashMap<RelationKind, RelationSchema>,
 }

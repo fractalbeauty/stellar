@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use stellar_graph::{
     entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
-    schema::{AttributeSchema, EntitySchema, RelationSchema, Schema},
+    schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema},
 };
 use stellar_import::{
     import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
@@ -103,7 +103,7 @@ async fn main() -> Result<(), anyhow::Error> {
         attributes: HashMap::new(),
     };
 
-    let schema = Schema {
+    let schema = GraphSchema {
         entities: HashMap::from([
             (song, song_schema),
             (album, album_schema),

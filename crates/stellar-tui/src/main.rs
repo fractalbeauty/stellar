@@ -2,7 +2,7 @@ use clap::{Args, Parser};
 use std::{sync::Arc, time::Duration};
 use stellar::{
     core::{Core, DevicesChangeHandler, SchemaChangeHandler},
-    graph::schema::Schema,
+    graph::schema::GraphSchema,
     sync::devices::DevicesState,
 };
 
@@ -87,7 +87,7 @@ impl DevicesChangeHandler for TuiDevicesChangeHandler {
 
 struct TuiSchemaChangeHandler;
 impl SchemaChangeHandler for TuiSchemaChangeHandler {
-    fn on_change(&self, schema: Schema) {
+    fn on_change(&self, schema: GraphSchema) {
         tracing::debug!("TuiSchemaChangeHandler on_change, schema: {schema:?}");
     }
 }
