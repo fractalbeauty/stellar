@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 stellar-graph = { path = "../stellar-graph" }
+stellar-import = { path = "../stellar-import" }
 stellar-resources = { path = "../stellar-resources" }
 stellar-riblt = { path = "../stellar-riblt" }
 stellar-uniffi = { path = "../stellar-uniffi" }

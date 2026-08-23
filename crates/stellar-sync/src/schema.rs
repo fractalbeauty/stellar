@@ -1,3 +1,4 @@
+use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
 use anyhow::Context;
 use automerge::{AutoCommit, ROOT, sync::SyncDoc};
 use automorph::Automorph;
@@ -15,8 +16,9 @@ use std::{
 };
 use stellar_graph::{
     entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
-    schema::{AttributeSchema, EntitySchema, RelationSchema, GraphSchema},
+    schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema},
 };
+use stellar_import::rules::Rules;
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -28,7 +30,11 @@ use tokio_util::{
     sync::CancellationToken,
 };
 
-use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
+#[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
+pub struct Schema {
+    graph: GraphSchema,
+    import_rules: Rules,
+}
 
 /// Handle to the schema store task.
 #[derive(Debug, Clone)]
@@ -194,8 +200,8 @@ impl SchemaStore {
         };
 
         {
-            let schema =
-                GraphSchema::load(&doc, &ROOT, "schema").context("Failed to load schema from doc")?;
+            let schema = GraphSchema::load(&doc, &ROOT, "schema")
+                .context("Failed to load schema from doc")?;
 
             schema_tx.send_replace(Some(schema));
         }

@@ -4928,6 +4928,8 @@ name = "stellar-import"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "automerge",
+ "automorph",
  "dua-core",
  "lofty",
  "rayon",
@@ -4994,6 +4996,7 @@ dependencies = [
  "siphasher 1.0.3",
  "sorrel-client",
  "stellar-graph",
+ "stellar-import",
  "stellar-resources",
  "stellar-riblt",
  "stellar-uniffi",

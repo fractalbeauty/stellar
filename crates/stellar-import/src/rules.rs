@@ -2,27 +2,27 @@ use lofty::tag::ItemKey;
 use std::collections::HashMap;
 use stellar_graph::entity::{AttributeKind, EntityKind, RelationKind, ValueKind};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct Rules {
     pub rule: Rule,
     pub entity_key_attributes: HashMap<EntityKind, Vec<AttributeKind>>,
     pub relation_key_attributes: HashMap<RelationKind, Vec<AttributeKind>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct Rule {
     pub attributes: Vec<AttributeRule>,
     pub relations: Vec<RelationRule>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct AttributeRule {
     pub attribute: AttributeKind,
     pub value: ValueKind,
     pub tag: TagKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct RelationRule {
     pub relation: RelationKind,
     pub other: EntityKind,
@@ -32,13 +32,13 @@ pub struct RelationRule {
     pub nested_relations: Vec<RelationRule>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, automorph::Automorph, uniffi::Enum)]
 pub enum RelationRuleDirection {
     Incoming,
     Outgoing,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, automorph::Automorph, uniffi::Enum)]
 pub enum TagKind {
     AlbumTitle,
     AlbumArtist,
