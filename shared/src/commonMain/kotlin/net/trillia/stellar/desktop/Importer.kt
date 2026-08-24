@@ -17,9 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import net.trillia.stellar.Button
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
