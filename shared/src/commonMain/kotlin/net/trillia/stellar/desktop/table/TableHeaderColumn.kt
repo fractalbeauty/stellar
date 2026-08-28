@@ -11,8 +11,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -21,8 +21,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import net.trillia.stellar.mapIf
 import net.trillia.stellar.pointerInputHorizontalDrag
+import net.trillia.stellar.runIf
 import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
@@ -43,6 +43,8 @@ fun TableHeaderColumn(
     val widthPx = columnState.columnWidths[id] ?: minWidthPx
     val widthDp = with(density) { widthPx.toDp() }
 
+    val isDragging = columnState.draggedColumnId == id
+
     Box(modifier = Modifier.layoutId(id).width(widthDp).height(tableRowHeight)) {
         Box(
             contentAlignment = Alignment.CenterStart,
@@ -58,7 +60,10 @@ fun TableHeaderColumn(
                 modifier =
                     Modifier
                         .width(widthDp)
-                        .padding(start = tableCellPaddingStart),
+                        .padding(start = tableCellPaddingStart)
+                        .runIf(isDragging) {
+                            graphicsLayer(alpha = TABLE_DRAG_ALPHA)
+                        },
             )
         }
 
@@ -71,8 +76,9 @@ fun TableHeaderColumn(
                     .offset(x = resizeHandleWidth / 2)
                     .width(widthDp - resizeHandleWidth)
                     .height(tableRowHeight)
-                    .mapIf(DEBUG_REORDER_DRAG) { it.background(Color.Blue.copy(alpha = 0.5f)) }
-                    .pointerInputHorizontalDrag(
+                    .runIf(DEBUG_REORDER_DRAG) {
+                        background(Color.Blue.copy(alpha = 0.5f))
+                    }.pointerInputHorizontalDrag(
                         key = id,
                         onDragStart = { columnState.handleReorderDragStart(id) },
                         onDragEnd = { columnState.handleReorderDragEnd(id, scope) },
@@ -88,8 +94,9 @@ fun TableHeaderColumn(
                     .offset(x = resizeHandleWidth / 2)
                     .width(resizeHandleWidth)
                     .height(tableRowHeight)
-                    .mapIf(DEBUG_RESIZE_DRAG) { it.background(Color.Red) }
-                    .pointerInputHorizontalDrag(
+                    .runIf(DEBUG_RESIZE_DRAG) {
+                        background(Color.Red.copy(alpha = 0.5f))
+                    }.pointerInputHorizontalDrag(
                         key = id,
                         onDragStart = {},
                         onDragEnd = {},
@@ -102,4 +109,4 @@ fun TableHeaderColumn(
 private const val DEBUG_REORDER_DRAG = false
 private const val DEBUG_RESIZE_DRAG = false
 
-private val resizeHandleWidth = 24.dp
+private val resizeHandleWidth = 20.dp

@@ -11,8 +11,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.dp
+import net.trillia.stellar.runIf
 
 @Composable
 fun <Row> TableRow(
@@ -35,8 +37,15 @@ fun <Row> TableRow(
             columnState.columnOrder.forEach { id ->
                 key(id) {
                     val columnDefinition = columnState.columns.getValue(id)
+                    val isDragging = columnState.draggedColumnId == id
                     Box(
-                        modifier = Modifier.layoutId(id).height(tableRowHeight),
+                        modifier =
+                            Modifier
+                                .layoutId(id)
+                                .height(tableRowHeight)
+                                .runIf(isDragging) {
+                                    graphicsLayer(alpha = TABLE_DRAG_ALPHA)
+                                },
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         TableCell(columnDefinition, row)

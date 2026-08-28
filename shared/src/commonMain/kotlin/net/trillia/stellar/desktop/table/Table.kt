@@ -127,6 +127,8 @@ internal fun TableRowLayout(
     }
 }
 
+const val TABLE_DRAG_ALPHA = 0.3f
+
 @Composable
 @Preview
 fun TablePreview() {

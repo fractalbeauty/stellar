@@ -5,9 +5,9 @@ import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
 
 @OptIn(ExperimentalContracts::class)
-inline fun <T> T.mapIf(
+inline fun <T> T.runIf(
     condition: Boolean,
-    block: (T) -> T,
+    block: T.() -> T,
 ): T {
     contract {
         callsInPlace(block, InvocationKind.AT_MOST_ONCE)
