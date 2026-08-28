@@ -1,4 +1,4 @@
-use crate::entity::{AttributeKind, EntityId, RelationId, Value, Version};
+use crate::entity::{AttributeKind, EntityId, EntityKind, RelationId, Value, Version};
 use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
@@ -388,6 +388,66 @@ impl Store {
 
         Ok(relations)
     }
+
+    pub fn scan_entity_metadata_by_kind(
+        &self,
+        entity: EntityKind,
+    ) -> impl Iterator<Item = (EntityId, Slice)> + use<> {
+        self.keyspace
+            .prefix(make_entity_metadata_prefix_by_kind(entity))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading metadata");
+                        return None;
+                    }
+                };
+
+                let entity = match parse_entity_metadata_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse metadata key");
+                        return None;
+                    }
+                };
+
+                // let value = postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
+                //     .context("Failed to parse metadata value")?;
+
+                Some((entity, value))
+            })
+    }
+
+    pub fn scan_entity_attribute_by_kind(
+        &self,
+        entity: EntityKind,
+    ) -> impl Iterator<Item = (EntityId, AttributeKind, Slice)> + use<> {
+        self.keyspace
+            .prefix(make_entity_attribute_prefix_by_kind(entity))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading attribute");
+                        return None;
+                    }
+                };
+
+                let (entity, attribute) = match parse_entity_attribute_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse attribute key");
+                        return None;
+                    }
+                };
+
+                // let value = postcard::from_bytes::<EntityAttributeValue>(value.as_ref())
+                //     .context("Failed to parse metadata value")?;
+
+                Some((entity, attribute, value))
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -451,6 +511,13 @@ fn make_entity_metadata_key(entity: EntityId) -> [u8; 17] {
     key
 }
 
+fn make_entity_metadata_prefix_by_kind(kind: EntityKind) -> [u8; 6] {
+    let mut key = [0u8; 6];
+    key[0] = ENTITY_METADATA_PREFIX;
+    key[1..6].copy_from_slice(kind.as_slice());
+    key
+}
+
 fn parse_entity_metadata_key(key: Slice) -> Result<EntityId, anyhow::Error> {
     if key.len() != 17 {
         anyhow::bail!("wrong key len");
@@ -465,6 +532,13 @@ fn make_entity_attribute_key(entity: EntityId, attribute: AttributeKind) -> [u8;
     key[0] = ENTITY_ATTRIBUTE_PREFIX;
     key[1..17].copy_from_slice(entity.as_slice());
     key[17..22].copy_from_slice(attribute.as_slice());
+    key
+}
+
+fn make_entity_attribute_prefix_by_kind(kind: EntityKind) -> [u8; 6] {
+    let mut key = [0u8; 6];
+    key[0] = ENTITY_ATTRIBUTE_PREFIX;
+    key[1..6].copy_from_slice(kind.as_slice());
     key
 }
 
