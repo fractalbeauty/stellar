@@ -64,9 +64,7 @@ fun <Row> Table(
             Box(Modifier.width(contentWidthDp).fillMaxHeight()) {
                 LazyColumn(state = listState) {
                     stickyHeader {
-                        Box(Modifier.fillMaxWidth().height(tableRowHeight).background(tableHeaderBackgroundColor)) {
-                            TableHeader(columnState)
-                        }
+                        TableHeader(columnState)
                     }
 
                     itemsIndexed(data) { rowIndex, row ->
