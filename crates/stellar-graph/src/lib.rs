@@ -1,5 +1,6 @@
 pub mod database;
 pub mod entity;
+pub mod query;
 pub mod schema;
 pub mod store;
 
