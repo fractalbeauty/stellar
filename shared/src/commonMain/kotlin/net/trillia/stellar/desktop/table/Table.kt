@@ -60,13 +60,13 @@ fun <Row> Table(
         // Add one to the selected index for the sticky header
         TableStripes(listState, selectedItemListIndex = selected?.plus(1))
 
-        Box(Modifier.fillMaxWidth().height(tableRowHeight).background(tableHeaderBackgroundColor))
-
         Box(Modifier.fillMaxSize().horizontalScroll(columnState.horizontalScrollState)) {
             Box(Modifier.width(contentWidthDp).fillMaxHeight()) {
                 LazyColumn(state = listState) {
                     stickyHeader {
-                        TableHeader(columnState)
+                        Box(Modifier.fillMaxWidth().height(tableRowHeight).background(tableHeaderBackgroundColor)) {
+                            TableHeader(columnState)
+                        }
                     }
 
                     itemsIndexed(data) { rowIndex, row ->
