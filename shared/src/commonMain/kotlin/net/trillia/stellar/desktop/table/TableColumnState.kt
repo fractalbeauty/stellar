@@ -29,9 +29,6 @@ class TableColumnState<Row>(
     var columnOrder by mutableStateOf(initialColumns.map { it.id })
     val columnWidths = mutableStateMapOf<String, Float>().apply { putAll(initialWidths) }
 
-    /** X-offset in pixels for columns when they're being dragged or animated. */
-    val columnOffsets = mutableStateMapOf<String, Float>()
-
     val horizontalScrollState = ScrollState(0)
 
     val totalWidthPx: Float
@@ -39,6 +36,9 @@ class TableColumnState<Row>(
 
     var draggedColumnId by mutableStateOf<String?>(null)
         private set
+
+    /** X-offset in pixels for columns when they're being dragged or animated. */
+    private val columnOffsets = mutableStateMapOf<String, Float>()
 
     /** Active animations for columns when they're being animated. */
     private val columnOffsetAnimations = mutableMapOf<String, Job>()
@@ -208,6 +208,9 @@ class TableColumnState<Row>(
 
         return leftEdge to rightEdge
     }
+
+    /** Returns the offset of a column by [id]. */
+    fun columnOffset(id: String): Float = columnOffsets[id] ?: 0f
 }
 
 @Composable

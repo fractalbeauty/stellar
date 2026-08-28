@@ -118,8 +118,9 @@ internal fun TableRowLayout(
         layout(totalWidth, height) {
             var x = 0
             for (columnIndex in order.indices) {
-                val columnOffset = columnState.columnOffsets[order[columnIndex]] ?: 0f
-                placed[columnIndex].placeRelative(x + columnOffset.roundToInt(), 0)
+                val columnOffset = columnState.columnOffset(order[columnIndex])
+                val columnX = (x + columnOffset).coerceAtLeast(0f)
+                placed[columnIndex].placeRelative(columnX.roundToInt(), 0)
                 x += widthsPx[columnIndex]
             }
         }

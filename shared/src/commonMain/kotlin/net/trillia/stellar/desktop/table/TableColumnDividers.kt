@@ -21,19 +21,23 @@ fun TableColumnDividers(
         modifier.fillMaxSize().drawBehind {
             if (draggedColumnId == null) return@drawBehind
 
-            val (leftEdge, rightEdge) = columnState.columnEdges(draggedColumnId)
-            val offset = columnState.columnOffsets[draggedColumnId] ?: 0f
+            val (originalLeftEdge, originalRightEdge) = columnState.columnEdges(draggedColumnId)
+            val offset = columnState.columnOffset(draggedColumnId)
+            val width = columnState.columnWidths[draggedColumnId] ?: 0f
+
+            val leftEdge = (originalLeftEdge + offset).coerceAtLeast(0f)
+            val rightEdge = (originalRightEdge + offset).coerceAtLeast(width)
 
             drawLine(
                 columnDividerColor,
-                Offset(leftEdge + offset, 0f),
-                Offset(leftEdge + offset, size.height),
+                Offset(leftEdge, 0f),
+                Offset(leftEdge, size.height),
                 strokeWidth = 1f,
             )
             drawLine(
                 columnDividerColor,
-                Offset(rightEdge + offset, 0f),
-                Offset(rightEdge + offset, size.height),
+                Offset(rightEdge, 0f),
+                Offset(rightEdge, size.height),
                 strokeWidth = 1f,
             )
         },
