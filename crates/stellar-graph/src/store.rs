@@ -522,6 +522,7 @@ pub struct RelationAttributeValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationIndexValue {
     pub other: EntityId,
+    /// Whether the relation is deleted.
     pub deleted: bool,
 }
 

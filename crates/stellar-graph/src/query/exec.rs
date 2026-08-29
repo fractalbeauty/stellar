@@ -1,6 +1,6 @@
 use crate::{
     entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value},
-    store::{EntityAttributeValue, EntityMetadataValue, RawValue, Store},
+    store::{EntityAttributeValue, EntityMetadataValue, RawValue, RelationIndexValue, Store},
 };
 use fjall::Slice;
 use std::{collections::HashMap, iter::Peekable};
@@ -47,6 +47,7 @@ struct SlotIndex(u16);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum SlotValue {
     EntityId(EntityId),
+    RelationId(RelationId),
     Value(Value),
 }
 
@@ -182,12 +183,128 @@ impl Op for FilterEqOp {
     }
 }
 
+/// - There is a relation R from entity A (source) to entity B (target)
+/// - `outer` produces A IDs in `source_slot`.
+/// - The join loops using `inner` to scan the source->target index for A ID + R kind
+/// - `inner` produces R IDs in `relation_slot`, R deleteds in `deleted_slot`, and B IDs in `target_slot`
+struct RelationSourceJoinOp {
+    store: Store,
+    outer: Box<dyn Op>,
+    inner: Option<Box<dyn Iterator<Item = (RelationId, RawValue<RelationIndexValue>)>>>,
+
+    relation: RelationKind,
+
+    source_slot: SlotIndex,
+    relation_slot: SlotIndex,
+    target_slot: SlotIndex,
+    deleted_slot: SlotIndex,
+}
+
+impl RelationSourceJoinOp {
+    fn new(
+        store: Store,
+        outer: Box<dyn Op>,
+
+        relation: RelationKind,
+
+        source_slot: SlotIndex,
+        relation_slot: SlotIndex,
+        target_slot: SlotIndex,
+        deleted_slot: SlotIndex,
+    ) -> Self {
+        Self {
+            store,
+            outer,
+            inner: None,
+
+            relation,
+
+            source_slot,
+            relation_slot,
+            target_slot,
+            deleted_slot,
+        }
+    }
+}
+
+impl Op for RelationSourceJoinOp {
+    fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
+        loop {
+            // If not finished, resume inner scan
+            if let Some(iter) = &mut self.inner {
+                'inner: loop {
+                    // Advance inner scan
+                    match iter.next() {
+                        Some((relation_id, relation)) => {
+                            let relation = match relation.decode() {
+                                Ok(relation) => relation,
+                                Err(e) => {
+                                    tracing::error!(?e, "error parsing relation index");
+                                    continue 'inner;
+                                }
+                            };
+
+                            ctx.set_slot(self.relation_slot, SlotValue::RelationId(relation_id));
+                            ctx.set_slot(self.target_slot, SlotValue::EntityId(relation.other));
+                            ctx.set_slot(
+                                self.deleted_slot,
+                                SlotValue::Value(Value::Boolean(relation.deleted)),
+                            );
+
+                            // Emit tuple
+                            return Some(());
+                        }
+                        None => {
+                            // Inner finished, continue outer op
+                            self.inner = None;
+                            break 'inner;
+                        }
+                    }
+                }
+            }
+
+            'outer: loop {
+                // Advance outer op
+                self.outer.next(ctx)?;
+
+                // Get source for inner scan
+                let Some(source) = ctx.get_slot(self.source_slot) else {
+                    // Source slot is None, continue outer op
+                    tracing::warn!("RelationSourceJoin source slot is None");
+                    continue 'outer;
+                };
+                let SlotValue::EntityId(source) = source else {
+                    // Source slot is not EntityId, continue outer op
+                    tracing::warn!("RelationSourceJoin source slot is not EntityId");
+                    continue 'outer;
+                };
+
+                // Start inner scan
+                self.inner = Some(Box::new(
+                    self.store
+                        .scan_relation_index_by_source_and_kind(*source, self.relation),
+                ));
+
+                break 'outer;
+            }
+
+            // Loop and resume inner scan
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
-        entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version},
-        query::exec::{ExecutionContext, FilterEqOp, Op, ScanEntityKindOp, SlotIndex, SlotValue},
-        store::{EntityAttributeValue, EntityMetadataValue, Store},
+        entity::{
+            AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp,
+            Value, Version,
+        },
+        query::exec::{
+            ExecutionContext, FilterEqOp, Op, RelationSourceJoinOp, ScanEntityKindOp, SlotIndex,
+            SlotValue,
+        },
+        store::{EntityAttributeValue, EntityMetadataValue, RelationMetadataValue, Store},
     };
     use std::collections::{HashMap, HashSet};
     use uuid::Uuid;
@@ -329,5 +446,128 @@ mod test {
         }
 
         assert_eq!(result, HashSet::from([entity1, entity3]));
+    }
+
+    #[test]
+    fn relation_source_join() {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entity = EntityKind::random();
+        let entity1 = EntityId::random(entity);
+        let entity2 = EntityId::random(entity);
+        let entity3 = EntityId::random(entity);
+        let entity4 = EntityId::random(entity);
+
+        let relation = RelationKind::random();
+        let relation1 = RelationId::random(relation);
+        let relation2 = RelationId::random(relation);
+
+        let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
+
+        store
+            .merge_entity_metadata(
+                entity1,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_entity_metadata(
+                entity2,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_entity_metadata(
+                entity3,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_entity_metadata(
+                entity4,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+
+        store
+            .merge_relation_metadata(
+                relation1,
+                RelationMetadataValue {
+                    source: entity1,
+                    target: entity2,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_relation_metadata(
+                relation2,
+                RelationMetadataValue {
+                    source: entity3,
+                    target: entity4,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+
+        let mut ctx = ExecutionContext::new(store, 5);
+
+        let scan_op = ScanEntityKindOp::new(
+            &ctx.store,
+            entity,
+            SlotIndex(0),
+            SlotIndex(1),
+            HashMap::new(),
+        );
+        let mut join_op = RelationSourceJoinOp::new(
+            ctx.store.clone(),
+            Box::new(scan_op),
+            relation,
+            SlotIndex(0),
+            SlotIndex(2),
+            SlotIndex(3),
+            SlotIndex(4),
+        );
+
+        let mut result = HashSet::new();
+        while let Some(()) = join_op.next(&mut ctx) {
+            let source = match ctx.get_slot(SlotIndex(0)) {
+                Some(SlotValue::EntityId(entity)) => *entity,
+                _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
+            };
+            let relation = match ctx.get_slot(SlotIndex(2)) {
+                Some(SlotValue::RelationId(relation)) => *relation,
+                _ => panic!("expected SlotValue::RelationId in SlotIndex(2)"),
+            };
+            let target = match ctx.get_slot(SlotIndex(3)) {
+                Some(SlotValue::EntityId(entity)) => *entity,
+                _ => panic!("expected SlotValue::EntityId in SlotIndex(3)"),
+            };
+            result.insert((source, relation, target));
+        }
+
+        assert_eq!(
+            result,
+            HashSet::from([(entity1, relation1, entity2), (entity3, relation2, entity4),])
+        );
     }
 }
