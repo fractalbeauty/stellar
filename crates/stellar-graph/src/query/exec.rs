@@ -56,12 +56,12 @@ trait Op {
 
 /// Scans entities by kind, returning (id, deleted, ...attrs).
 struct ScanEntityKindOp {
+    metadata: Box<dyn Iterator<Item = (EntityId, Slice)>>,
+    attribute: Peekable<Box<dyn Iterator<Item = (EntityId, AttributeKind, Slice)>>>,
+
     id_slot: SlotIndex,
     deleted_slot: SlotIndex,
     attribute_slots: HashMap<AttributeKind, SlotIndex>,
-
-    metadata: Box<dyn Iterator<Item = (EntityId, Slice)>>,
-    attribute: Peekable<Box<dyn Iterator<Item = (EntityId, AttributeKind, Slice)>>>,
 }
 
 impl ScanEntityKindOp {
@@ -73,14 +73,14 @@ impl ScanEntityKindOp {
         attribute_slots: HashMap<AttributeKind, SlotIndex>,
     ) -> Self {
         Self {
-            id_slot,
-            deleted_slot,
-            attribute_slots,
-
             metadata: Box::new(store.scan_entity_metadata_by_kind(entity)),
             attribute: (Box::new(store.scan_entity_attribute_by_kind(entity))
                 as Box<dyn Iterator<Item = (EntityId, AttributeKind, Slice)>>)
                 .peekable(),
+
+            id_slot,
+            deleted_slot,
+            attribute_slots,
         }
     }
 }
@@ -138,14 +138,51 @@ impl Op for ScanEntityKindOp {
     }
 }
 
+/// Filters tuples where a slot has a given value.
+///
+/// TODO: remove this for a more general Filter op
+struct FilterEqOp {
+    inner: Box<dyn Op>,
+    slot: SlotIndex,
+    eq: SlotValue,
+}
+
+impl FilterEqOp {
+    fn new(inner: Box<dyn Op>, slot: SlotIndex, eq: SlotValue) -> Self {
+        Self { inner, slot, eq }
+    }
+}
+
+impl Op for FilterEqOp {
+    fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
+        let Some(_) = self.inner.next(ctx) else {
+            return None;
+        };
+
+        dbg!(&ctx.get_slot(self.slot));
+
+        let Some(value) = ctx.get_slot(self.slot) else {
+            // slot is None, filter doesn't match
+            return self.next(ctx);
+        };
+
+        if *value == self.eq {
+            Some(())
+        } else {
+            // TODO!!: replace recursion with inner loop/continue
+            self.next(ctx)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::{
         entity::{AttributeKind, AuthorId, EntityId, EntityKind, Timestamp, Value, Version},
-        query::exec::{ExecutionContext, Op, ScanEntityKindOp, SlotIndex, SlotValue},
+        query::exec::{ExecutionContext, FilterEqOp, Op, ScanEntityKindOp, SlotIndex, SlotValue},
         store::{EntityAttributeValue, EntityMetadataValue, Store},
     };
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use uuid::Uuid;
 
     #[test]
@@ -204,15 +241,86 @@ mod test {
             *ctx.get_slot(SlotIndex(0)),
             Some(SlotValue::EntityId(entity_id))
         );
-        // assert_eq!(
-        //     *ctx.get_slot(SlotIndex(0)),
-        //     Some(SlotValue::Value(x))
-        // );
+        assert_eq!(
+            *ctx.get_slot(SlotIndex(1)),
+            Some(SlotValue::Value(Value::Boolean(false)))
+        );
         assert_eq!(
             *ctx.get_slot(SlotIndex(2)),
             Some(SlotValue::Value(attribute_value))
         );
 
         assert_eq!(op.next(&mut ctx), None);
+    }
+
+    #[test]
+    fn filter_eq() {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entity = EntityKind::random();
+        let entity1 = EntityId::random(entity);
+        let entity2 = EntityId::random(entity);
+        let entity3 = EntityId::random(entity);
+
+        let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
+
+        // 1 and 3 not deleted, 2 deleted
+        store
+            .merge_entity_metadata(
+                entity1,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_entity_metadata(
+                entity2,
+                EntityMetadataValue {
+                    deleted: true,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_entity_metadata(
+                entity3,
+                EntityMetadataValue {
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+
+        let mut ctx = ExecutionContext::new(store, 3);
+
+        let scan_op = ScanEntityKindOp::new(
+            &ctx.store,
+            entity,
+            SlotIndex(0),
+            SlotIndex(1),
+            HashMap::new(),
+        );
+        let mut filter_op = FilterEqOp::new(
+            Box::new(scan_op),
+            SlotIndex(1),
+            SlotValue::Value(Value::Boolean(false)),
+        );
+
+        let mut result = HashSet::new();
+        while let Some(()) = filter_op.next(&mut ctx) {
+            match ctx.get_slot(SlotIndex(0)) {
+                Some(SlotValue::EntityId(entity)) => result.insert(*entity),
+                _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
+            };
+        }
+
+        assert_eq!(result, HashSet::from([entity1, entity3]));
     }
 }
