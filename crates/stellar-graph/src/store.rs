@@ -450,6 +450,35 @@ impl Store {
             })
     }
 
+    pub fn scan_entity_attribute_by_id(
+        &self,
+        entity: EntityId,
+    ) -> impl Iterator<Item = (AttributeKind, RawValue<EntityAttributeValue>)> + use<> {
+        self.keyspace
+            .prefix(make_entity_attribute_prefix_by_id(entity))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading attribute");
+                        return None;
+                    }
+                };
+
+                let (_entity, attribute) = match parse_entity_attribute_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse attribute key");
+                        return None;
+                    }
+                };
+
+                let value = RawValue::from_slice(value);
+
+                Some((attribute, value))
+            })
+    }
+
     pub fn scan_relation_index_by_source_and_kind(
         &self,
         source: EntityId,
@@ -571,6 +600,13 @@ fn make_entity_attribute_prefix_by_kind(kind: EntityKind) -> [u8; 6] {
     let mut key = [0u8; 6];
     key[0] = ENTITY_ATTRIBUTE_PREFIX;
     key[1..6].copy_from_slice(kind.as_slice());
+    key
+}
+
+fn make_entity_attribute_prefix_by_id(id: EntityId) -> [u8; 17] {
+    let mut key = [0u8; 17];
+    key[0] = ENTITY_ATTRIBUTE_PREFIX;
+    key[1..17].copy_from_slice(id.as_slice());
     key
 }
 
@@ -699,9 +735,10 @@ mod test {
         store::{
             EntityAttributeValue, EntityMetadataValue, Store,
             hegel::{gen_entity_data, gen_relation_data},
-            make_entity_attribute_key, make_entity_attribute_prefix_by_kind,
-            make_entity_metadata_key, make_entity_metadata_prefix_by_kind,
-            make_relation_attribute_key, make_relation_metadata_key, make_relation_source_key,
+            make_entity_attribute_key, make_entity_attribute_prefix_by_id,
+            make_entity_attribute_prefix_by_kind, make_entity_metadata_key,
+            make_entity_metadata_prefix_by_kind, make_relation_attribute_key,
+            make_relation_metadata_key, make_relation_source_key,
             make_relation_source_prefix_by_source_and_kind, make_relation_target_key,
             parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
             parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
@@ -866,8 +903,11 @@ mod test {
 
         assert_eq!(parsed, (entity, attribute));
 
-        let prefix = make_entity_attribute_prefix_by_kind(entity.kind());
-        assert!(key.starts_with(&prefix));
+        let kind_prefix = make_entity_attribute_prefix_by_kind(entity.kind());
+        assert!(key.starts_with(&kind_prefix));
+
+        let id_prefix = make_entity_attribute_prefix_by_id(entity);
+        assert!(key.starts_with(&id_prefix));
     }
 
     #[hegel::test]
