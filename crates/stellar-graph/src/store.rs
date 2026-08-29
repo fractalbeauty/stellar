@@ -401,7 +401,7 @@ impl Store {
                 let (key, value) = match guard.into_inner() {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Fjall error reading metadata");
+                        tracing::error!(?e, "Fjall error reading entity metadata");
                         return None;
                     }
                 };
@@ -409,7 +409,7 @@ impl Store {
                 let entity = match parse_entity_metadata_key(key) {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Failed to parse metadata key");
+                        tracing::error!(?e, "Failed to parse entity metadata key");
                         return None;
                     }
                 };
@@ -431,7 +431,7 @@ impl Store {
                 let (key, value) = match guard.into_inner() {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Fjall error reading attribute");
+                        tracing::error!(?e, "Fjall error reading entity attribute");
                         return None;
                     }
                 };
@@ -439,7 +439,7 @@ impl Store {
                 let (entity, attribute) = match parse_entity_attribute_key(key) {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Failed to parse attribute key");
+                        tracing::error!(?e, "Failed to parse entity attribute key");
                         return None;
                     }
                 };
@@ -460,7 +460,7 @@ impl Store {
                 let (key, value) = match guard.into_inner() {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Fjall error reading attribute");
+                        tracing::error!(?e, "Fjall error reading entity attribute");
                         return None;
                     }
                 };
@@ -468,7 +468,36 @@ impl Store {
                 let (_entity, attribute) = match parse_entity_attribute_key(key) {
                     Ok(x) => x,
                     Err(e) => {
-                        tracing::error!(?e, "Failed to parse attribute key");
+                        tracing::error!(?e, "Failed to parse entity attribute key");
+                        return None;
+                    }
+                };
+
+                let value = RawValue::from_slice(value);
+
+                Some((attribute, value))
+            })
+    }
+
+    pub fn scan_relation_attribute_by_id(
+        &self,
+        relation: RelationId,
+    ) -> impl Iterator<Item = (AttributeKind, RawValue<RelationAttributeValue>)> + use<> {
+        self.keyspace
+            .prefix(make_relation_attribute_prefix_by_id(relation))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading relation attribute");
+                        return None;
+                    }
+                };
+
+                let (_relation, attribute) = match parse_relation_attribute_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse relation attribute key");
                         return None;
                     }
                 };
@@ -646,6 +675,13 @@ fn make_relation_attribute_key(relation: RelationId, attribute: AttributeKind) -
     key
 }
 
+fn make_relation_attribute_prefix_by_id(id: RelationId) -> [u8; 17] {
+    let mut key = [0u8; 17];
+    key[0] = RELATION_ATTRIBUTE_PREFIX;
+    key[1..17].copy_from_slice(id.as_slice());
+    key
+}
+
 fn parse_relation_attribute_key(key: Slice) -> Result<(RelationId, AttributeKind), anyhow::Error> {
     if key.len() != 22 {
         anyhow::bail!("wrong key len");
@@ -738,10 +774,11 @@ mod test {
             make_entity_attribute_key, make_entity_attribute_prefix_by_id,
             make_entity_attribute_prefix_by_kind, make_entity_metadata_key,
             make_entity_metadata_prefix_by_kind, make_relation_attribute_key,
-            make_relation_metadata_key, make_relation_source_key,
-            make_relation_source_prefix_by_source_and_kind, make_relation_target_key,
-            parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
-            parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
+            make_relation_attribute_prefix_by_id, make_relation_metadata_key,
+            make_relation_source_key, make_relation_source_prefix_by_source_and_kind,
+            make_relation_target_key, parse_entity_attribute_key, parse_entity_metadata_key,
+            parse_relation_attribute_key, parse_relation_metadata_key, parse_relation_source_key,
+            parse_relation_target_key,
         },
     };
     use hegel::{Generator, TestCase, generators as gs};
@@ -929,6 +966,9 @@ mod test {
         let parsed = parse_relation_attribute_key(key.into()).expect("should parse");
 
         assert_eq!(parsed, (relation, attribute));
+
+        let id_prefix = make_relation_attribute_prefix_by_id(relation);
+        assert!(key.starts_with(&id_prefix));
     }
 
     #[hegel::test]
