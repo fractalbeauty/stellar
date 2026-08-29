@@ -1,4 +1,6 @@
-use crate::entity::{AttributeKind, EntityId, EntityKind, RelationId, Value, Version};
+use crate::entity::{
+    AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, Version,
+};
 use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize};
@@ -448,6 +450,34 @@ impl Store {
                 Some((entity, attribute, value))
             })
     }
+
+    pub fn scan_relation_index_by_source_and_kind(
+        &self,
+        source: EntityId,
+        kind: RelationKind,
+    ) -> impl Iterator<Item = (RelationId, Slice)> + use<> {
+        self.keyspace
+            .prefix(make_relation_source_prefix_by_source_and_kind(source, kind))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading relation index");
+                        return None;
+                    }
+                };
+
+                let (_entity, relation) = match parse_relation_source_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse relation index key");
+                        return None;
+                    }
+                };
+
+                Some((relation, value))
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -598,6 +628,17 @@ fn make_relation_source_key(source: EntityId, relation: RelationId) -> [u8; 33] 
     key
 }
 
+fn make_relation_source_prefix_by_source_and_kind(
+    source: EntityId,
+    kind: RelationKind,
+) -> [u8; 22] {
+    let mut key = [0u8; 22];
+    key[0] = RELATION_SOURCE_PREFIX;
+    key[1..17].copy_from_slice(source.as_slice());
+    key[17..22].copy_from_slice(kind.as_slice());
+    key
+}
+
 fn parse_relation_source_key(key: Slice) -> Result<(EntityId, RelationId), anyhow::Error> {
     if key.len() != 33 {
         anyhow::bail!("wrong key len");
@@ -637,8 +678,10 @@ mod test {
         store::{
             EntityAttributeValue, EntityMetadataValue, Store,
             hegel::{gen_entity_data, gen_relation_data},
-            make_entity_attribute_key, make_entity_metadata_key, make_relation_attribute_key,
-            make_relation_metadata_key, make_relation_source_key, make_relation_target_key,
+            make_entity_attribute_key, make_entity_attribute_prefix_by_kind,
+            make_entity_metadata_key, make_entity_metadata_prefix_by_kind,
+            make_relation_attribute_key, make_relation_metadata_key, make_relation_source_key,
+            make_relation_source_prefix_by_source_and_kind, make_relation_target_key,
             parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
             parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
         },
@@ -787,6 +830,9 @@ mod test {
         let parsed = parse_entity_metadata_key(key.into()).expect("should parse");
 
         assert_eq!(parsed, entity);
+
+        let prefix = make_entity_metadata_prefix_by_kind(entity.kind());
+        assert!(key.starts_with(&prefix));
     }
 
     #[hegel::test]
@@ -798,6 +844,9 @@ mod test {
         let parsed = parse_entity_attribute_key(key.into()).expect("should parse");
 
         assert_eq!(parsed, (entity, attribute));
+
+        let prefix = make_entity_attribute_prefix_by_kind(entity.kind());
+        assert!(key.starts_with(&prefix));
     }
 
     #[hegel::test]
@@ -830,6 +879,9 @@ mod test {
         let parsed = parse_relation_source_key(key.into()).expect("should parse");
 
         assert_eq!(parsed, (source, relation));
+
+        let prefix = make_relation_source_prefix_by_source_and_kind(source, relation.kind());
+        assert!(key.starts_with(&prefix));
     }
 
     #[hegel::test]
