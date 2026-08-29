@@ -87,54 +87,59 @@ impl ScanEntityKindOp {
 
 impl Op for ScanEntityKindOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
-        let Some((entity, metadata_bytes)) = self.metadata.next() else {
-            return None;
-        };
+        loop {
+            let Some((entity, metadata_bytes)) = self.metadata.next() else {
+                return None;
+            };
 
-        // TODO: don't copy
-        let metadata = match postcard::from_bytes::<EntityMetadataValue>(metadata_bytes.as_ref()) {
-            Ok(metadata) => metadata,
-            Err(e) => {
-                tracing::error!(?e, "error parsing entity metadata");
-                return self.next(ctx);
-            }
-        };
-
-        // Advance attribute iterator to be positioned at start of entity attributes
-        while self
-            .attribute
-            .peek()
-            .is_some_and(|(attribute_entity, _, _)| attribute_entity.as_bytes() < entity.as_bytes())
-        {
-            self.attribute.next();
-        }
-
-        ctx.set_slot(self.id_slot, SlotValue::EntityId(entity));
-
-        ctx.set_slot(
-            self.deleted_slot,
-            SlotValue::Value(Value::Boolean(metadata.deleted)),
-        );
-
-        while self
-            .attribute
-            .peek()
-            .is_some_and(|(attribute_entity, _, _)| *attribute_entity == entity)
-        {
-            let (_, attribute_kind, value_bytes) =
-                self.attribute.next().expect("peek returned Some");
-
-            if let Some(slot) = self.attribute_slots.get(&attribute_kind) {
-                match postcard::from_bytes::<EntityAttributeValue>(value_bytes.as_ref()) {
-                    Ok(value) => ctx.set_slot(*slot, SlotValue::Value(value.value)),
+            // TODO: don't copy
+            let metadata =
+                match postcard::from_bytes::<EntityMetadataValue>(metadata_bytes.as_ref()) {
+                    Ok(metadata) => metadata,
                     Err(e) => {
-                        tracing::error!(?e, "error parsing entity attribute")
+                        tracing::error!(?e, "error parsing entity metadata");
+                        continue;
+                    }
+                };
+
+            // Advance attribute iterator to be positioned at start of entity attributes
+            while self
+                .attribute
+                .peek()
+                .is_some_and(|(attribute_entity, _, _)| {
+                    attribute_entity.as_bytes() < entity.as_bytes()
+                })
+            {
+                self.attribute.next();
+            }
+
+            ctx.set_slot(self.id_slot, SlotValue::EntityId(entity));
+
+            ctx.set_slot(
+                self.deleted_slot,
+                SlotValue::Value(Value::Boolean(metadata.deleted)),
+            );
+
+            while self
+                .attribute
+                .peek()
+                .is_some_and(|(attribute_entity, _, _)| *attribute_entity == entity)
+            {
+                let (_, attribute_kind, value_bytes) =
+                    self.attribute.next().expect("peek returned Some");
+
+                if let Some(slot) = self.attribute_slots.get(&attribute_kind) {
+                    match postcard::from_bytes::<EntityAttributeValue>(value_bytes.as_ref()) {
+                        Ok(value) => ctx.set_slot(*slot, SlotValue::Value(value.value)),
+                        Err(e) => {
+                            tracing::error!(?e, "error parsing entity attribute")
+                        }
                     }
                 }
             }
-        }
 
-        return Some(());
+            return Some(());
+        }
     }
 }
 
@@ -155,22 +160,19 @@ impl FilterEqOp {
 
 impl Op for FilterEqOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
-        let Some(_) = self.inner.next(ctx) else {
-            return None;
-        };
+        loop {
+            self.inner.next(ctx)?;
 
-        dbg!(&ctx.get_slot(self.slot));
+            let Some(value) = ctx.get_slot(self.slot) else {
+                // slot is None, filter doesn't match
+                continue;
+            };
 
-        let Some(value) = ctx.get_slot(self.slot) else {
-            // slot is None, filter doesn't match
-            return self.next(ctx);
-        };
+            if *value != self.eq {
+                continue;
+            }
 
-        if *value == self.eq {
-            Some(())
-        } else {
-            // TODO!!: replace recursion with inner loop/continue
-            self.next(ctx)
+            return Some(());
         }
     }
 }
