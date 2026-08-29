@@ -2,7 +2,7 @@ use crate::{
     entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value},
     store::{EntityAttributeValue, EntityMetadataValue, RawValue, RelationIndexValue, Store},
 };
-use std::{collections::HashMap, iter::Peekable};
+use std::{collections::HashMap, fmt::Debug, iter::Peekable};
 
 pub struct ExecutionContext {
     store: Store,
@@ -33,10 +33,24 @@ impl ExecutionContext {
         self.slots[slot.0 as usize] = None;
     }
 
-    fn get_slot(&self, slot: SlotIndex) -> &Option<SlotValue> {
+    pub fn get_slot(&self, slot: SlotIndex) -> &Option<SlotValue> {
         assert!(slot.0 < self.num_slots(), "slot index out of bounds");
 
         &self.slots[slot.0 as usize]
+    }
+
+    /// Snapshots all slots to be restored later by [`Self::restore`].
+    ///
+    /// Used by [`Grouped`] to peek the next row without clobbering the previous row's slots.
+    fn snapshot(&self) -> SlotsSnapshot {
+        SlotsSnapshot(self.slots.clone())
+    }
+
+    /// Restores all slots from a snapshot taken by [`Self::snapshot`].
+    fn restore(&mut self, snapshot: SlotsSnapshot) {
+        assert!(snapshot.0.len() == self.num_slots() as usize);
+
+        self.slots = snapshot.0;
     }
 }
 
@@ -52,7 +66,10 @@ pub enum SlotValue {
     RelationValues(HashMap<RelationId, Value>),
 }
 
-pub trait Op {
+#[derive(Debug, Clone)]
+struct SlotsSnapshot(Vec<Option<SlotValue>>);
+
+pub trait Op: std::fmt::Debug {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()>;
 }
 
@@ -150,6 +167,18 @@ impl Op for ScanEntityKindOp {
     }
 }
 
+impl Debug for ScanEntityKindOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanEntityKindOp")
+            .field("metadata", &"<metadata>")
+            .field("attribute", &"<attribute>")
+            .field("id_slot", &self.id_slot)
+            .field("deleted_slot", &self.deleted_slot)
+            .field("attribute_slots", &self.attribute_slots)
+            .finish()
+    }
+}
+
 /// Filters tuples where a slot has a given value.
 ///
 /// TODO: remove this for a more general Filter op
@@ -181,6 +210,16 @@ impl Op for FilterEqOp {
 
             return Some(());
         }
+    }
+}
+
+impl Debug for FilterEqOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilterEqOp")
+            .field("inner", &self.inner)
+            .field("slot", &self.slot)
+            .field("eq", &self.eq)
+            .finish()
     }
 }
 
@@ -294,12 +333,27 @@ impl Op for RelationSourceJoinOp {
     }
 }
 
+impl Debug for RelationSourceJoinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelationSourceJoinOp")
+            .field("store", &"<store>")
+            .field("outer", &self.outer)
+            .field("inner", &"<inner>")
+            .field("relation", &self.relation)
+            .field("source_slot", &self.source_slot)
+            .field("relation_slot", &self.relation_slot)
+            .field("target_slot", &self.target_slot)
+            .field("deleted_slot", &self.deleted_slot)
+            .finish()
+    }
+}
+
 /// - ScanEntityKind emits (entity ID)
 /// - RelationSourceJoinOp emits (relation ID, other ID)
 /// - CollectRelationAttributesOp collects all (relation ID, other ID)
 /// - CollectRelationAttributesOp gets multiple other entity attributes and relation attributes
 /// - CollectRelationAttributesOp emits EntityValues and RelationValues, both Map<E/R ID, Value>
-struct CollectRelationAttributesOp {
+pub struct CollectRelationAttributesOp {
     store: Store,
 
     grouped: Grouped<EntityId, (RelationId, EntityId)>,
@@ -368,10 +422,7 @@ impl CollectRelationAttributesOp {
 
 impl Op for CollectRelationAttributesOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
-        let (key, rows) = self.grouped.next_group(ctx)?;
-
-        // Restore the key slot for the caller since `next_group` clobbers it by advancing the inner op
-        ctx.set_slot(self.key_slot, SlotValue::EntityId(key));
+        let (_key, rows) = self.grouped.next_group(ctx)?;
 
         let mut relation_attribute_values = self
             .relation_attribute_slots
@@ -439,13 +490,25 @@ impl Op for CollectRelationAttributesOp {
     }
 }
 
+impl Debug for CollectRelationAttributesOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollectRelationAttributesOp")
+            .field("store", &"<store>")
+            .field("grouped", &self.grouped)
+            .field("key_slot", &self.key_slot)
+            .field("relation_attribute_slots", &self.relation_attribute_slots)
+            .field("other_attribute_slots", &self.other_attribute_slots)
+            .finish()
+    }
+}
+
 /// Advances the inner op, using `read(ctx) -> (K, R)` to group rows into `K, Vec<R>`.
 ///
 /// `read` is called after the inner op is advanced, and should read K/R from filled slots.
 struct Grouped<K, R> {
     inner: Box<dyn Op>,
     read: Box<dyn Fn(&ExecutionContext) -> Option<(K, R)>>, // None = skip this row, don't extract, keep going
-    pending: Option<(K, R)>,
+    pending: Option<(K, R, SlotsSnapshot)>,
 }
 
 impl<K: Eq, R> Grouped<K, R> {
@@ -461,26 +524,34 @@ impl<K: Eq, R> Grouped<K, R> {
     }
 
     fn next_group(&mut self, ctx: &mut ExecutionContext) -> Option<(K, Vec<R>)> {
-        // Take pending read row or read next row
-        let (group_key, first_row) = match self.pending.take() {
-            Some(row) => row,
-            None => self.read_next(ctx)?,
+        // Take the pending new group's first row and restore its snapshot
+        let (group_key, first_row, group_snapshot) = match self.pending.take() {
+            Some((key, row, snapshot)) => {
+                ctx.restore(snapshot.clone());
+                (key, row, snapshot)
+            }
+            None => {
+                // First iteration, read and snapshot the first group's first row
+                let (key, row) = self.read_row(ctx)?;
+                (key, row, ctx.snapshot())
+            }
         };
 
         let mut rows = vec![first_row];
 
         loop {
             // Read the next row
-            match self.read_next(ctx) {
+            match self.read_row(ctx) {
                 None => {
-                    // Inner finished
+                    // Inner finished, emit group
                     break;
                 }
                 Some((key, row)) => {
                     // Check if group changed
                     if key != group_key {
                         // Stash row in pending without adding to group
-                        self.pending = Some((key, row));
+                        // Also snapshot the new group's first row
+                        self.pending = Some((key, row, ctx.snapshot()));
 
                         // Emit group
                         break;
@@ -492,24 +563,37 @@ impl<K: Eq, R> Grouped<K, R> {
             }
         }
 
+        // Restore the snapshot from the first row of the group since peeking
+        // the first row of the next group may have clobbered some slots.
+        ctx.restore(group_snapshot);
+
         Some((group_key, rows))
     }
 
     /// Reads the next row, skipping when read() returns None.
     ///
     /// Returns None when the inner op is finished.
-    fn read_next(&mut self, ctx: &mut ExecutionContext) -> Option<(K, R)> {
+    fn read_row(&mut self, ctx: &mut ExecutionContext) -> Option<(K, R)> {
         loop {
             self.inner.next(ctx)?;
             match (self.read)(ctx) {
                 Some(row) => return Some(row),
                 None => {
-                    //
                     tracing::warn!("Grouped read() retuned None, skipping row");
                     continue;
                 }
             }
         }
+    }
+}
+
+impl<K, R> Debug for Grouped<K, R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Grouped")
+            .field("inner", &self.inner)
+            .field("read", &"<read>")
+            .field("pending", &"<pending>")
+            .finish()
     }
 }
 
