@@ -3,8 +3,8 @@ use crate::entity::{
 };
 use anyhow::Context;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::{collections::HashMap, marker::PhantomData, path::Path};
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
@@ -394,7 +394,7 @@ impl Store {
     pub fn scan_entity_metadata_by_kind(
         &self,
         entity: EntityKind,
-    ) -> impl Iterator<Item = (EntityId, Slice)> + use<> {
+    ) -> impl Iterator<Item = (EntityId, RawValue<EntityMetadataValue>)> + use<> {
         self.keyspace
             .prefix(make_entity_metadata_prefix_by_kind(entity))
             .filter_map(|guard| {
@@ -414,8 +414,7 @@ impl Store {
                     }
                 };
 
-                // let value = postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
-                //     .context("Failed to parse metadata value")?;
+                let value = RawValue::from_slice(value);
 
                 Some((entity, value))
             })
@@ -424,7 +423,8 @@ impl Store {
     pub fn scan_entity_attribute_by_kind(
         &self,
         entity: EntityKind,
-    ) -> impl Iterator<Item = (EntityId, AttributeKind, Slice)> + use<> {
+    ) -> impl Iterator<Item = (EntityId, AttributeKind, RawValue<EntityAttributeValue>)> + use<>
+    {
         self.keyspace
             .prefix(make_entity_attribute_prefix_by_kind(entity))
             .filter_map(|guard| {
@@ -444,8 +444,7 @@ impl Store {
                     }
                 };
 
-                // let value = postcard::from_bytes::<EntityAttributeValue>(value.as_ref())
-                //     .context("Failed to parse metadata value")?;
+                let value = RawValue::from_slice(value);
 
                 Some((entity, attribute, value))
             })
@@ -455,7 +454,7 @@ impl Store {
         &self,
         source: EntityId,
         kind: RelationKind,
-    ) -> impl Iterator<Item = (RelationId, Slice)> + use<> {
+    ) -> impl Iterator<Item = (RelationId, RawValue<RelationIndexValue>)> + use<> {
         self.keyspace
             .prefix(make_relation_source_prefix_by_source_and_kind(source, kind))
             .filter_map(|guard| {
@@ -474,6 +473,8 @@ impl Store {
                         return None;
                     }
                 };
+
+                let value = RawValue::from_slice(value);
 
                 Some((relation, value))
             })
@@ -666,6 +667,25 @@ fn parse_relation_target_key(key: Slice) -> Result<(EntityId, RelationId), anyho
     let target = EntityId::from_slice(key[1..17].try_into().unwrap());
     let relation = RelationId::from_bytes(key[17..33].try_into().unwrap());
     Ok((target, relation))
+}
+
+pub struct RawValue<T> {
+    inner: Slice,
+    phantom: PhantomData<T>,
+}
+
+impl<T: DeserializeOwned> RawValue<T> {
+    fn from_slice(slice: Slice) -> Self {
+        Self {
+            inner: slice,
+            phantom: PhantomData,
+        }
+    }
+
+    // TODO: don't copy
+    pub fn decode(&self) -> Result<T, anyhow::Error> {
+        postcard::from_bytes::<T>(self.inner.as_ref()).context("Failed to parse value")
+    }
 }
 
 #[cfg(test)]

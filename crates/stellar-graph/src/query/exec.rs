@@ -1,6 +1,6 @@
 use crate::{
-    entity::{AttributeKind, EntityId, EntityKind, Value},
-    store::{EntityAttributeValue, EntityMetadataValue, Store},
+    entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value},
+    store::{EntityAttributeValue, EntityMetadataValue, RawValue, Store},
 };
 use fjall::Slice;
 use std::{collections::HashMap, iter::Peekable};
@@ -56,8 +56,10 @@ trait Op {
 
 /// Scans entities by kind, returning (id, deleted, ...attrs).
 struct ScanEntityKindOp {
-    metadata: Box<dyn Iterator<Item = (EntityId, Slice)>>,
-    attribute: Peekable<Box<dyn Iterator<Item = (EntityId, AttributeKind, Slice)>>>,
+    metadata: Box<dyn Iterator<Item = (EntityId, RawValue<EntityMetadataValue>)>>,
+    attribute: Peekable<
+        Box<dyn Iterator<Item = (EntityId, AttributeKind, RawValue<EntityAttributeValue>)>>,
+    >,
 
     id_slot: SlotIndex,
     deleted_slot: SlotIndex,
@@ -67,7 +69,9 @@ struct ScanEntityKindOp {
 impl ScanEntityKindOp {
     fn new(
         store: &Store,
+
         entity: EntityKind,
+
         id_slot: SlotIndex,
         deleted_slot: SlotIndex,
         attribute_slots: HashMap<AttributeKind, SlotIndex>,
@@ -75,7 +79,9 @@ impl ScanEntityKindOp {
         Self {
             metadata: Box::new(store.scan_entity_metadata_by_kind(entity)),
             attribute: (Box::new(store.scan_entity_attribute_by_kind(entity))
-                as Box<dyn Iterator<Item = (EntityId, AttributeKind, Slice)>>)
+                as Box<
+                    dyn Iterator<Item = (EntityId, AttributeKind, RawValue<EntityAttributeValue>)>,
+                >)
                 .peekable(),
 
             id_slot,
@@ -88,19 +94,18 @@ impl ScanEntityKindOp {
 impl Op for ScanEntityKindOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
         loop {
-            let Some((entity, metadata_bytes)) = self.metadata.next() else {
+            let Some((entity, metadata)) = self.metadata.next() else {
                 return None;
             };
 
             // TODO: don't copy
-            let metadata =
-                match postcard::from_bytes::<EntityMetadataValue>(metadata_bytes.as_ref()) {
-                    Ok(metadata) => metadata,
-                    Err(e) => {
-                        tracing::error!(?e, "error parsing entity metadata");
-                        continue;
-                    }
-                };
+            let metadata = match metadata.decode() {
+                Ok(metadata) => metadata,
+                Err(e) => {
+                    tracing::error!(?e, "error parsing entity metadata");
+                    continue;
+                }
+            };
 
             // Advance attribute iterator to be positioned at start of entity attributes
             while self
@@ -125,11 +130,11 @@ impl Op for ScanEntityKindOp {
                 .peek()
                 .is_some_and(|(attribute_entity, _, _)| *attribute_entity == entity)
             {
-                let (_, attribute_kind, value_bytes) =
+                let (_, attribute_kind, attribute_value) =
                     self.attribute.next().expect("peek returned Some");
 
                 if let Some(slot) = self.attribute_slots.get(&attribute_kind) {
-                    match postcard::from_bytes::<EntityAttributeValue>(value_bytes.as_ref()) {
+                    match attribute_value.decode() {
                         Ok(value) => ctx.set_slot(*slot, SlotValue::Value(value.value)),
                         Err(e) => {
                             tracing::error!(?e, "error parsing entity attribute")
