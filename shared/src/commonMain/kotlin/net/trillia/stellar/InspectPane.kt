@@ -43,8 +43,11 @@ import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
-import uniffi.stellar_graph.Value
+import uniffi.stellar.logDebug
+import uniffi.stellar_graph.SlotValue
+import uniffi.stellar_graph.TableQuery
 import kotlin.collections.associate
+import kotlin.collections.emptyMap
 
 @Composable
 fun InspectPane(
@@ -68,35 +71,139 @@ fun InspectPane(
 
     val selectedEntitySchema = schema.graph.entities[selectedEntity] ?: return
 
-    val selectedEntityColumns =
+    val (query, columns) =
         remember(selectedEntitySchema) {
-            selectedEntitySchema.attributes.map { it ->
-                TableColumnDefinition<Map<String, String>, String>(
-                    id = it.value.name,
-                    header = it.value.name,
-                    initialWidth = 300.dp,
-                    accessor = { row -> row[it.value.name].orEmpty() },
-                    renderer = { TableCellText(it) },
+            var columns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
+
+            val outgoingRelations = schema.graph.relations.filterValues { schema -> schema.source == selectedEntity }
+            val incomingRelations = schema.graph.relations.filterValues { schema -> schema.target == selectedEntity }
+
+            val query =
+                TableQuery(
+                    entity = selectedEntity,
+                    attributes =
+                        selectedEntitySchema.attributes.entries.associate { (attribute, schema) ->
+                            val outputIndex = columns.size
+                            columns.add(
+                                TableColumnDefinition<List<SlotValue?>, String>(
+                                    id = outputIndex.toString(),
+                                    header = schema.name,
+                                    initialWidth = 200.dp,
+                                    accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                    renderer = { TableCellText(it) },
+                                ),
+                            )
+                            attribute to outputIndex.toUShort()
+                        },
+                    outgoingRelationAttributes =
+                        outgoingRelations.entries.associate { (relation, relationSchema) ->
+                            relation to
+                                relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                                    val outputIndex = columns.size
+                                    columns.add(
+                                        TableColumnDefinition<List<SlotValue?>, String>(
+                                            id = outputIndex.toString(),
+                                            header = "${relationSchema.name}.${attributeSchema.name}",
+                                            initialWidth = 200.dp,
+                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            renderer = { TableCellText(it) },
+                                        ),
+                                    )
+                                    attribute to outputIndex.toUShort()
+                                }
+                        },
+                    outgoingRelationEntityAttributes =
+                        outgoingRelations.entries.associate { (relation, relationSchema) ->
+                            val otherSchema = schema.graph.entities[relationSchema.target] ?: return@associate relation to emptyMap()
+                            relation to
+                                otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                                    val outputIndex = columns.size
+                                    columns.add(
+                                        TableColumnDefinition<List<SlotValue?>, String>(
+                                            id = outputIndex.toString(),
+                                            header = "${otherSchema.name}.${attributeSchema.name}",
+                                            initialWidth = 200.dp,
+                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            renderer = { TableCellText(it) },
+                                        ),
+                                    )
+                                    attribute to outputIndex.toUShort()
+                                }
+                        },
+                    incomingRelationAttributes =
+                        incomingRelations.entries.associate { (relation, relationSchema) ->
+                            relation to
+                                relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                                    val outputIndex = columns.size
+                                    columns.add(
+                                        TableColumnDefinition<List<SlotValue?>, String>(
+                                            id = outputIndex.toString(),
+                                            header = "${relationSchema.name}.${attributeSchema.name}",
+                                            initialWidth = 200.dp,
+                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            renderer = { TableCellText(it) },
+                                        ),
+                                    )
+                                    attribute to outputIndex.toUShort()
+                                }
+                        },
+                    incomingRelationEntityAttributes =
+                        incomingRelations.entries.associate { (relation, relationSchema) ->
+                            val otherSchema = schema.graph.entities[relationSchema.source] ?: return@associate relation to emptyMap()
+                            relation to
+                                otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                                    val outputIndex = columns.size
+                                    columns.add(
+                                        TableColumnDefinition<List<SlotValue?>, String>(
+                                            id = outputIndex.toString(),
+                                            header = "${otherSchema.name}.${attributeSchema.name}",
+                                            initialWidth = 200.dp,
+                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            renderer = { TableCellText(it) },
+                                        ),
+                                    )
+                                    attribute to outputIndex.toUShort()
+                                }
+                        },
                 )
-            }
+
+            query to columns
         }
 
-    val selectedEntityEntities = entities.filterValues { it.kind == selectedEntity }
-    val selectedEntityData =
-        selectedEntityEntities
-            .map {
-                it.value.attributes.entries.associate { attributeEntry ->
-                    val name = selectedEntitySchema.attributes[attributeEntry.key]?.name ?: attributeEntry.key.toString()
-                    val value =
-                        when (val attributeValue = attributeEntry.value.value) {
-                            is Value.Bytes -> "<bytes>"
-                            is Value.Number -> attributeValue.v1.toString()
-                            is Value.Text -> attributeValue.v1
-                            is Value.Bool -> attributeValue.v1.toString()
-                        }
-                    name to value
-                }
-            }
+    val data =
+        remember(query) {
+            core.tableQuery(query)
+        }
+
+//    val selectedEntityColumns =
+//        remember(selectedEntitySchema) {
+//            selectedEntitySchema.attributes.map { it ->
+//                TableColumnDefinition<Map<String, String>, String>(
+//                    id = it.value.name,
+//                    header = it.value.name,
+//                    initialWidth = 300.dp,
+//                    accessor = { row -> row[it.value.name].orEmpty() },
+//                    renderer = { TableCellText(it) },
+//                )
+//            }
+//        }
+//
+//    val selectedEntityEntities = entities.filterValues { it.kind == selectedEntity }
+//    val selectedEntityData =
+//        selectedEntityEntities
+//            .map {
+//                it.value.attributes.entries.associate { attributeEntry ->
+//                    val name = selectedEntitySchema.attributes[attributeEntry.key]?.name ?: attributeEntry.key.toString()
+//                    val value =
+//                        when (val attributeValue = attributeEntry.value.value) {
+//                            is Value.Bytes -> "<bytes>"
+//                            is Value.Number -> attributeValue.v1.toString()
+//                            is Value.Text -> attributeValue.v1
+//                            is Value.Bool -> attributeValue.v1.toString()
+//                        }
+//                    name to value
+//                }
+//            }
 
     var selected by remember(selectedEntity) { mutableStateOf<Int?>(null) }
 
@@ -107,9 +214,9 @@ fun InspectPane(
             }
         }
 
-        Table(selectedEntityData, selectedEntityColumns, selected, { selected = it })
+        Table(data, columns, selected, { selected = it })
 
-        selected?.let { idx -> selectedEntityData.getOrNull(idx)?.let { Inspector(it) } }
+//        selected?.let { idx -> data.getOrNull(idx)?.let { Inspector(it) } }
     }
 }
 
