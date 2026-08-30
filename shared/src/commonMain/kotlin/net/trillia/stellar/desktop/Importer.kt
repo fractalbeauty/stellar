@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.trillia.stellar.Button
 import net.trillia.stellar.logCoreError
@@ -45,19 +46,27 @@ fun Importer(core: Core) {
                 import =
                     core.startImport(
                         roots,
+                        // Callbacks can be called from Rayon worker threads, so the state updates
+                        // need to be launched on the dispatcher for the main thread.
                         object : ImportEventHandler {
                             override fun onPendingFile(path: String) {
-                                if (!files.containsKey(path)) {
-                                    files[path] = null
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    if (!files.containsKey(path)) {
+                                        files[path] = null
+                                    }
                                 }
                             }
 
                             override fun onScannedFile(file: ImportEventScannedFile) {
-                                files[file.path] = file.tags
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    files[file.path] = file.tags
+                                }
                             }
 
                             override fun onScanFinished() {
-                                finished = true
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    finished = true
+                                }
                             }
                         },
                     )
