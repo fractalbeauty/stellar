@@ -146,6 +146,11 @@ impl Op for ScanEntityKindOp {
                 SlotValue::SVValue(Value::Bool(metadata.deleted)),
             );
 
+            // Clear attribute slots so missing attributes don't get the previous entity's values
+            for slot in self.attribute_slots.values() {
+                ctx.clear_slot(*slot);
+            }
+
             while self
                 .attribute
                 .peek()
