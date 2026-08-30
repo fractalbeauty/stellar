@@ -425,7 +425,7 @@ mod test {
 
         let mut outputs = query.execute(store);
         outputs.sort_by_key(|outputs| match &outputs[0] {
-            Some(SlotValue::Value(Value::Text(text))) => text.clone(),
+            Some(SlotValue::SVValue(Value::Text(text))) => text.clone(),
             _ => "".to_string(),
         });
 
@@ -433,7 +433,7 @@ mod test {
             outputs,
             vec![
                 vec![
-                    Some(SlotValue::Value(album1_title)),
+                    Some(SlotValue::SVValue(album1_title)),
                     Some(SlotValue::RelationValues(HashMap::from([
                         (album1track1, album1track1_number),
                         (album1track2, album1track2_number)
@@ -444,7 +444,7 @@ mod test {
                     ])))
                 ],
                 vec![
-                    Some(SlotValue::Value(album2_title)),
+                    Some(SlotValue::SVValue(album2_title)),
                     Some(SlotValue::RelationValues(HashMap::from([
                         (album2track1, album2track1_number),
                         (album2track2, album2track2_number)

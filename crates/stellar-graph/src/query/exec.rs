@@ -57,11 +57,13 @@ impl ExecutionContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotIndex(pub u16);
 
+/// The `SV` prefix for some variants prevents issues with UniFFI codegen when
+/// an enum field type name collides with an enum variant name.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum SlotValue {
-    EntityId(EntityId),
-    RelationId(RelationId),
-    Value(Value),
+    SVEntityId(EntityId),
+    SVRelationId(RelationId),
+    SVValue(Value),
     EntityValues(HashMap<EntityId, Value>),
     RelationValues(HashMap<RelationId, Value>),
 }
@@ -137,11 +139,11 @@ impl Op for ScanEntityKindOp {
                 self.attribute.next();
             }
 
-            ctx.set_slot(self.id_slot, SlotValue::EntityId(entity));
+            ctx.set_slot(self.id_slot, SlotValue::SVEntityId(entity));
 
             ctx.set_slot(
                 self.deleted_slot,
-                SlotValue::Value(Value::Bool(metadata.deleted)),
+                SlotValue::SVValue(Value::Bool(metadata.deleted)),
             );
 
             while self
@@ -154,7 +156,7 @@ impl Op for ScanEntityKindOp {
 
                 if let Some(slot) = self.attribute_slots.get(&attribute_kind) {
                     match attribute_value.decode() {
-                        Ok(value) => ctx.set_slot(*slot, SlotValue::Value(value.value)),
+                        Ok(value) => ctx.set_slot(*slot, SlotValue::SVValue(value.value)),
                         Err(e) => {
                             tracing::error!(?e, "error parsing entity attribute")
                         }
@@ -294,11 +296,11 @@ impl Op for RelationJoinOp {
                                 }
                             };
 
-                            ctx.set_slot(self.relation_slot, SlotValue::RelationId(relation_id));
-                            ctx.set_slot(self.other_slot, SlotValue::EntityId(relation.other));
+                            ctx.set_slot(self.relation_slot, SlotValue::SVRelationId(relation_id));
+                            ctx.set_slot(self.other_slot, SlotValue::SVEntityId(relation.other));
                             ctx.set_slot(
                                 self.deleted_slot,
-                                SlotValue::Value(Value::Bool(relation.deleted)),
+                                SlotValue::SVValue(Value::Bool(relation.deleted)),
                             );
 
                             // Emit tuple
@@ -323,7 +325,7 @@ impl Op for RelationJoinOp {
                     tracing::warn!("RelationJoinOp start slot is None");
                     continue 'outer;
                 };
-                let SlotValue::EntityId(start) = start else {
+                let SlotValue::SVEntityId(start) = start else {
                     // Start slot is not EntityId, continue outer op
                     tracing::warn!("RelationJoinOp start slot is not EntityId");
                     continue 'outer;
@@ -402,7 +404,7 @@ impl CollectRelationAttributesOp {
                 tracing::warn!("CollectRelationAttributesOp read() key slot is None");
                 return None;
             };
-            let SlotValue::EntityId(key) = key else {
+            let SlotValue::SVEntityId(key) = key else {
                 tracing::warn!("CollectRelationAttributesOp read() key slot is not EntityId");
                 return None;
             };
@@ -411,7 +413,7 @@ impl CollectRelationAttributesOp {
                 tracing::warn!("CollectRelationAttributesOp read() relation slot is None");
                 return None;
             };
-            let SlotValue::RelationId(relation) = relation else {
+            let SlotValue::SVRelationId(relation) = relation else {
                 tracing::warn!(
                     "CollectRelationAttributesOp read() relation slot is not RelationId"
                 );
@@ -422,7 +424,7 @@ impl CollectRelationAttributesOp {
                 tracing::warn!("CollectRelationAttributesOp read() other slot is None");
                 return None;
             };
-            let SlotValue::EntityId(other) = other else {
+            let SlotValue::SVEntityId(other) = other else {
                 tracing::warn!("CollectRelationAttributesOp read() other slot is not EntityId");
                 return None;
             };
@@ -692,15 +694,15 @@ mod test {
         assert_eq!(op.next(&mut ctx), Some(()));
         assert_eq!(
             *ctx.get_slot(SlotIndex(0)),
-            Some(SlotValue::EntityId(entity_id))
+            Some(SlotValue::SVEntityId(entity_id))
         );
         assert_eq!(
             *ctx.get_slot(SlotIndex(1)),
-            Some(SlotValue::Value(Value::Bool(false)))
+            Some(SlotValue::SVValue(Value::Bool(false)))
         );
         assert_eq!(
             *ctx.get_slot(SlotIndex(2)),
-            Some(SlotValue::Value(attribute_value))
+            Some(SlotValue::SVValue(attribute_value))
         );
 
         assert_eq!(op.next(&mut ctx), None);
@@ -763,13 +765,13 @@ mod test {
         let mut filter_op = FilterEqOp::new(
             Box::new(scan_op),
             SlotIndex(1),
-            SlotValue::Value(Value::Bool(false)),
+            SlotValue::SVValue(Value::Bool(false)),
         );
 
         let mut result = HashSet::new();
         while let Some(()) = filter_op.next(&mut ctx) {
             match ctx.get_slot(SlotIndex(0)) {
-                Some(SlotValue::EntityId(entity)) => result.insert(*entity),
+                Some(SlotValue::SVEntityId(entity)) => result.insert(*entity),
                 _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
             };
         }
@@ -881,15 +883,15 @@ mod test {
         let mut result = HashSet::new();
         while let Some(()) = join_op.next(&mut ctx) {
             let source = match ctx.get_slot(SlotIndex(0)) {
-                Some(SlotValue::EntityId(entity)) => *entity,
+                Some(SlotValue::SVEntityId(entity)) => *entity,
                 _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
             };
             let relation = match ctx.get_slot(SlotIndex(2)) {
-                Some(SlotValue::RelationId(relation)) => *relation,
+                Some(SlotValue::SVRelationId(relation)) => *relation,
                 _ => panic!("expected SlotValue::RelationId in SlotIndex(2)"),
             };
             let target = match ctx.get_slot(SlotIndex(3)) {
-                Some(SlotValue::EntityId(entity)) => *entity,
+                Some(SlotValue::SVEntityId(entity)) => *entity,
                 _ => panic!("expected SlotValue::EntityId in SlotIndex(3)"),
             };
             result.insert((source, relation, target));
@@ -1052,7 +1054,7 @@ mod test {
         let mut result = Vec::new();
         while let Some(()) = collect_op.next(&mut ctx) {
             let source = match ctx.get_slot(SlotIndex(0)) {
-                Some(SlotValue::EntityId(entity)) => *entity,
+                Some(SlotValue::SVEntityId(entity)) => *entity,
                 _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
             };
             let relation_values = match ctx.get_slot(SlotIndex(5)) {
