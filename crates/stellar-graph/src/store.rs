@@ -508,7 +508,7 @@ impl Store {
             })
     }
 
-    pub fn scan_relation_index_by_source_and_kind(
+    pub fn scan_relation_source_index_by_id_and_relation(
         &self,
         source: EntityId,
         kind: RelationKind,
@@ -538,7 +538,7 @@ impl Store {
             })
     }
 
-    pub fn scan_relation_index_by_target_and_kind(
+    pub fn scan_relation_target_index_by_id_and_relation(
         &self,
         target: EntityId,
         kind: RelationKind,
@@ -565,6 +565,64 @@ impl Store {
                 let value = RawValue::from_slice(value);
 
                 Some((relation, value))
+            })
+    }
+
+    pub fn scan_relation_source_index_by_entity_kind(
+        &self,
+        entity_kind: EntityKind,
+    ) -> impl Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)> + use<> {
+        self.keyspace
+            .prefix(make_relation_source_prefix_by_entity_kind(entity_kind))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading relation index");
+                        return None;
+                    }
+                };
+
+                let (source, relation) = match parse_relation_source_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse relation index key");
+                        return None;
+                    }
+                };
+
+                let value = RawValue::from_slice(value);
+
+                Some((source, relation, value))
+            })
+    }
+
+    pub fn scan_relation_target_index_by_entity_kind(
+        &self,
+        entity_kind: EntityKind,
+    ) -> impl Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)> + use<> {
+        self.keyspace
+            .prefix(make_relation_target_prefix_by_entity_kind(entity_kind))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading relation index");
+                        return None;
+                    }
+                };
+
+                let (target, relation) = match parse_relation_target_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse relation index key");
+                        return None;
+                    }
+                };
+
+                let value = RawValue::from_slice(value);
+
+                Some((target, relation, value))
             })
     }
 }
@@ -743,6 +801,13 @@ fn make_relation_source_prefix_by_source_and_kind(
     key
 }
 
+fn make_relation_source_prefix_by_entity_kind(entity_kind: EntityKind) -> [u8; 6] {
+    let mut key = [0u8; 6];
+    key[0] = RELATION_SOURCE_PREFIX;
+    key[1..6].copy_from_slice(&entity_kind.as_bytes());
+    key
+}
+
 fn parse_relation_source_key(key: Slice) -> Result<(EntityId, RelationId), anyhow::Error> {
     if key.len() != 33 {
         anyhow::bail!("wrong key len");
@@ -771,6 +836,13 @@ fn make_relation_target_prefix_by_target_and_kind(
     key[0] = RELATION_TARGET_PREFIX;
     key[1..17].copy_from_slice(target.as_slice());
     key[17..22].copy_from_slice(kind.as_slice());
+    key
+}
+
+fn make_relation_target_prefix_by_entity_kind(entity_kind: EntityKind) -> [u8; 6] {
+    let mut key = [0u8; 6];
+    key[0] = RELATION_TARGET_PREFIX;
+    key[1..6].copy_from_slice(&entity_kind.as_bytes());
     key
 }
 
@@ -816,10 +888,12 @@ mod test {
             make_entity_attribute_prefix_by_kind, make_entity_metadata_key,
             make_entity_metadata_prefix_by_kind, make_relation_attribute_key,
             make_relation_attribute_prefix_by_id, make_relation_metadata_key,
-            make_relation_source_key, make_relation_source_prefix_by_source_and_kind,
-            make_relation_target_key, make_relation_target_prefix_by_target_and_kind,
-            parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
-            parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
+            make_relation_source_key, make_relation_source_prefix_by_entity_kind,
+            make_relation_source_prefix_by_source_and_kind, make_relation_target_key,
+            make_relation_target_prefix_by_entity_kind,
+            make_relation_target_prefix_by_target_and_kind, parse_entity_attribute_key,
+            parse_entity_metadata_key, parse_relation_attribute_key, parse_relation_metadata_key,
+            parse_relation_source_key, parse_relation_target_key,
         },
     };
     use hegel::{Generator, TestCase, generators as gs};
@@ -1024,6 +1098,9 @@ mod test {
 
         let prefix = make_relation_source_prefix_by_source_and_kind(source, relation.kind());
         assert!(key.starts_with(&prefix));
+
+        let entity_kind_prefix = make_relation_source_prefix_by_entity_kind(source.kind());
+        assert!(key.starts_with(&entity_kind_prefix));
     }
 
     #[hegel::test]
@@ -1038,6 +1115,9 @@ mod test {
 
         let prefix = make_relation_target_prefix_by_target_and_kind(target, relation.kind());
         assert!(key.starts_with(&prefix));
+
+        let entity_kind_prefix = make_relation_target_prefix_by_entity_kind(target.kind());
+        assert!(key.starts_with(&entity_kind_prefix));
     }
 }
 

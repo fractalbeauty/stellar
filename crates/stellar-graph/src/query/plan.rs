@@ -1,12 +1,15 @@
 use crate::{
     entity::{AttributeKind, EntityKind, RelationKind},
     query::exec::{
-        CollectRelationAttributesOp, ExecutionContext, Op, RelationJoinDirection, RelationJoinOp,
-        ScanEntityKindOp, SlotIndex, SlotValue,
+        CollectRelationAttributesOp, ExecutionContext, Op, RelationJoinDirection,
+        RelationMergeJoinOp, RelationNestedLoopJoinOp, ScanEntityKindOp, SlotIndex, SlotValue,
     },
     store::Store,
 };
 use std::collections::{HashMap, HashSet};
+
+// TODO: choose merge join vs nested loop join using selectivity heuristic
+const USE_MERGE_JOIN: bool = true;
 
 #[derive(uniffi::Record)]
 pub struct TableQuery {
@@ -189,9 +192,20 @@ impl TableQuery {
                 slot
             });
 
-            prev_op = Box::new(CollectRelationAttributesOp::new(
-                store.clone(),
-                Box::new(RelationJoinOp::new(
+            let join_op: Box<dyn Op> = if USE_MERGE_JOIN {
+                Box::new(RelationMergeJoinOp::new(
+                    store.clone(),
+                    prev_op,
+                    self.entity,
+                    *relation,
+                    RelationJoinDirection::Outgoing,
+                    entity_id,
+                    relation_slot,
+                    other_slot,
+                    deleted_slot,
+                ))
+            } else {
+                Box::new(RelationNestedLoopJoinOp::new(
                     store.clone(),
                     prev_op,
                     *relation,
@@ -200,7 +214,12 @@ impl TableQuery {
                     relation_slot,
                     other_slot,
                     deleted_slot,
-                )),
+                ))
+            };
+
+            prev_op = Box::new(CollectRelationAttributesOp::new(
+                store.clone(),
+                join_op,
                 entity_id,
                 relation_slot,
                 other_slot,
@@ -230,9 +249,20 @@ impl TableQuery {
                 slot
             });
 
-            prev_op = Box::new(CollectRelationAttributesOp::new(
-                store.clone(),
-                Box::new(RelationJoinOp::new(
+            let join_op: Box<dyn Op> = if USE_MERGE_JOIN {
+                Box::new(RelationMergeJoinOp::new(
+                    store.clone(),
+                    prev_op,
+                    self.entity,
+                    *relation,
+                    RelationJoinDirection::Incoming,
+                    entity_id,
+                    relation_slot,
+                    other_slot,
+                    deleted_slot,
+                ))
+            } else {
+                Box::new(RelationNestedLoopJoinOp::new(
                     store.clone(),
                     prev_op,
                     *relation,
@@ -241,7 +271,12 @@ impl TableQuery {
                     relation_slot,
                     other_slot,
                     deleted_slot,
-                )),
+                ))
+            };
+
+            prev_op = Box::new(CollectRelationAttributesOp::new(
+                store.clone(),
+                join_op,
                 entity_id,
                 relation_slot,
                 other_slot,

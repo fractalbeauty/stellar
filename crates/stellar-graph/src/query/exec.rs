@@ -239,12 +239,18 @@ impl Debug for FilterEqOp {
     }
 }
 
+/// Joins an entity with another entity using a relation.
+///
+/// Starts a new store scan for each entity (nested loop join).
+///
 /// Assuming RelationJoinDirection::Outgoing:
 /// - There is a relation R from entity A (source) to entity B (target)
 /// - `outer` produces A IDs in `start_input` (used as source for outgoing).
 /// - The join loops using `inner` to scan the source->target index for A ID + R kind
 /// - `inner` produces R IDs in `relation_output`, R deleteds in `deleted_output`, and B IDs in `other_output`
-pub struct RelationJoinOp {
+///
+/// This is generally faster when there is low selectivity for the join.
+pub struct RelationNestedLoopJoinOp {
     store: Store,
     outer: Box<dyn Op>,
     inner: Option<Box<dyn Iterator<Item = (RelationId, RawValue<RelationIndexValue>)>>>,
@@ -264,7 +270,7 @@ pub enum RelationJoinDirection {
     Outgoing,
 }
 
-impl RelationJoinOp {
+impl RelationNestedLoopJoinOp {
     pub fn new(
         store: Store,
         outer: Box<dyn Op>,
@@ -293,7 +299,7 @@ impl RelationJoinOp {
     }
 }
 
-impl Op for RelationJoinOp {
+impl Op for RelationNestedLoopJoinOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
         loop {
             // If not finished, resume inner scan
@@ -310,7 +316,10 @@ impl Op for RelationJoinOp {
                                 }
                             };
 
-                            ctx.set_slot(self.relation_output, SlotValue::SVRelationId(relation_id));
+                            ctx.set_slot(
+                                self.relation_output,
+                                SlotValue::SVRelationId(relation_id),
+                            );
                             ctx.set_slot(self.other_output, SlotValue::SVEntityId(relation.other));
                             ctx.set_slot(
                                 self.deleted_output,
@@ -336,32 +345,33 @@ impl Op for RelationJoinOp {
                 // Get start entity for inner scan
                 let Some(start) = ctx.get_slot(self.start_input) else {
                     // Start slot is None, continue outer op
-                    tracing::warn!("RelationJoinOp start slot is None");
+                    tracing::warn!("RelationNestedLoopJoin start slot is None");
                     continue 'outer;
                 };
                 let SlotValue::SVEntityId(start) = start else {
                     // Start slot is not EntityId, continue outer op
-                    tracing::warn!("RelationJoinOp start slot is not EntityId");
+                    tracing::warn!("RelationNestedLoopJoin start slot is not EntityId");
                     continue 'outer;
                 };
 
                 // Start inner scan
-                self.inner = Some(match self.direction {
-                    RelationJoinDirection::Incoming => {
-                        // Incoming: start is target, other is source
-                        Box::new(
-                            self.store
-                                .scan_relation_index_by_target_and_kind(*start, self.relation),
-                        )
-                    }
-                    RelationJoinDirection::Outgoing => {
-                        // Outgoing: start is source, other is target
-                        Box::new(
-                            self.store
-                                .scan_relation_index_by_source_and_kind(*start, self.relation),
-                        )
-                    }
-                });
+                self.inner =
+                    Some(match self.direction {
+                        RelationJoinDirection::Incoming => {
+                            // Incoming: start is target, other is source
+                            Box::new(self.store.scan_relation_target_index_by_id_and_relation(
+                                *start,
+                                self.relation,
+                            ))
+                        }
+                        RelationJoinDirection::Outgoing => {
+                            // Outgoing: start is source, other is target
+                            Box::new(self.store.scan_relation_source_index_by_id_and_relation(
+                                *start,
+                                self.relation,
+                            ))
+                        }
+                    });
 
                 break 'outer;
             }
@@ -371,9 +381,9 @@ impl Op for RelationJoinOp {
     }
 }
 
-impl Debug for RelationJoinOp {
+impl Debug for RelationNestedLoopJoinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RelationJoinOp")
+        f.debug_struct("RelationNestedLoopJoin")
             .field("store", &"<store>")
             .field("outer", &self.outer)
             .field("inner", &"<inner>")
@@ -386,8 +396,151 @@ impl Debug for RelationJoinOp {
     }
 }
 
+/// Joins an entity with another entity using a relation.
+///
+/// Uses a single store scan for all entities (merge join). Requires `outer` to produce entity IDs
+/// in ascending order (e.g. using [`ScanEntityKindOp`]).
+///
+/// This is generally faster when there is high selectivity for the join.
+pub struct RelationMergeJoinOp {
+    inner: Peekable<Box<dyn Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)>>>,
+    outer: Box<dyn Op>,
+
+    relation: RelationKind,
+
+    start_input: SlotIndex,
+    relation_output: SlotIndex,
+    other_output: SlotIndex,
+    deleted_output: SlotIndex,
+
+    current: Option<EntityId>,
+}
+
+impl RelationMergeJoinOp {
+    pub fn new(
+        store: Store,
+        outer: Box<dyn Op>,
+
+        entity_kind: EntityKind,
+        relation: RelationKind,
+        direction: RelationJoinDirection,
+
+        start_input: SlotIndex,
+        relation_output: SlotIndex,
+        other_output: SlotIndex,
+        deleted_output: SlotIndex,
+    ) -> Self {
+        let inner: Box<dyn Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)>> =
+            match direction {
+                RelationJoinDirection::Outgoing => {
+                    Box::new(store.scan_relation_source_index_by_entity_kind(entity_kind))
+                }
+                RelationJoinDirection::Incoming => {
+                    Box::new(store.scan_relation_target_index_by_entity_kind(entity_kind))
+                }
+            };
+
+        Self {
+            inner: inner.peekable(),
+            outer,
+
+            relation,
+
+            start_input,
+            relation_output,
+            other_output,
+            deleted_output,
+
+            current: None,
+        }
+    }
+}
+
+impl Op for RelationMergeJoinOp {
+    fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
+        loop {
+            // If not finished, resume scanning inner for current entity
+            if let Some(start) = self.current {
+                // Advance inner iterator to be positioned at start of current entity
+                while self
+                    .inner
+                    .peek()
+                    .is_some_and(|(source, _, _)| source.as_bytes() < start.as_bytes())
+                {
+                    self.inner.next();
+                }
+
+                // Advance inner until the current entity is finished
+                while self
+                    .inner
+                    .peek()
+                    .is_some_and(|(source, _, _)| *source == start)
+                {
+                    let (_, relation_id, value) = self.inner.next().expect("peek returned Some");
+
+                    // Skip rows for other relations
+                    if relation_id.kind() != self.relation {
+                        continue;
+                    }
+
+                    let relation = match value.decode() {
+                        Ok(relation) => relation,
+                        Err(e) => {
+                            tracing::error!(?e, "error parsing relation index");
+                            continue;
+                        }
+                    };
+
+                    ctx.set_slot(self.relation_output, SlotValue::SVRelationId(relation_id));
+                    ctx.set_slot(self.other_output, SlotValue::SVEntityId(relation.other));
+                    ctx.set_slot(
+                        self.deleted_output,
+                        SlotValue::SVValue(Value::Bool(relation.deleted)),
+                    );
+
+                    // Emit tuple
+                    return Some(());
+                }
+
+                // Current entity finished, continue outer op
+                self.current = None;
+            }
+
+            // Advance outer op
+            self.outer.next(ctx)?;
+
+            // Get start entity for next inner scan
+            let Some(start) = ctx.get_slot(self.start_input) else {
+                tracing::warn!("RelationMergeJoinOp start slot is None");
+                continue;
+            };
+            let SlotValue::SVEntityId(start) = start else {
+                tracing::warn!("RelationMergeJoinOp start slot is not EntityId");
+                continue;
+            };
+
+            self.current = Some(*start);
+        }
+    }
+}
+
+impl Debug for RelationMergeJoinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelationMergeJoinOp")
+            .field("inner", &"<inner>")
+            .field("outer", &self.outer)
+            .field("relation", &self.relation)
+            .field("start_input", &self.start_input)
+            .field("relation_output", &self.relation_output)
+            .field("other_output", &self.other_output)
+            .field("deleted_output", &self.deleted_output)
+            .field("current", &self.current)
+            .finish()
+    }
+}
+
 /// - ScanEntityKind emits (entity ID)
-/// - RelationJoinOp emits (relation ID, other ID)
+/// - RelationNestedLoopJoin emits (relation ID, other ID)
 /// - CollectRelationAttributesOp collects all (relation ID, other ID)
 /// - CollectRelationAttributesOp gets multiple other entity attributes and relation attributes
 /// - CollectRelationAttributesOp emits EntityValues and RelationValues, both Map<E/R ID, Value>
@@ -483,7 +636,8 @@ impl Op for CollectRelationAttributesOp {
             self.store
                 .scan_relation_attribute_by_id(relation)
                 .for_each(|(attribute, value)| {
-                    let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied() else {
+                    let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied()
+                    else {
                         return;
                     };
 
@@ -543,7 +697,10 @@ impl Debug for CollectRelationAttributesOp {
             .field("store", &"<store>")
             .field("grouped", &self.grouped)
             .field("key_input", &self.key_input)
-            .field("relation_attribute_outputs", &self.relation_attribute_outputs)
+            .field(
+                "relation_attribute_outputs",
+                &self.relation_attribute_outputs,
+            )
             .field("other_attribute_outputs", &self.other_attribute_outputs)
             .field("others_output", &self.others_output)
             .finish()
@@ -654,7 +811,7 @@ mod test {
         },
         query::exec::{
             CollectRelationAttributesOp, ExecutionContext, FilterEqOp, Op, RelationJoinDirection,
-            RelationJoinOp, ScanEntityKindOp, SlotIndex, SlotValue,
+            RelationMergeJoinOp, RelationNestedLoopJoinOp, ScanEntityKindOp, SlotIndex, SlotValue,
         },
         store::{
             EntityAttributeValue, EntityMetadataValue, RelationAttributeValue,
@@ -893,7 +1050,7 @@ mod test {
             SlotIndex(1),
             HashMap::new(),
         );
-        let mut join_op = RelationJoinOp::new(
+        let mut join_op = RelationNestedLoopJoinOp::new(
             ctx.store.clone(),
             Box::new(scan_op),
             relation,
@@ -924,6 +1081,145 @@ mod test {
         assert_eq!(
             result,
             HashSet::from([(entity1, relation1, entity2), (entity3, relation2, entity4),])
+        );
+    }
+
+    #[test]
+    fn relation_source_merge_join() {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entity = EntityKind::random();
+        // entity1: two matching-kind relations (fan-out) plus one other-kind relation, to check
+        // both buffering multiple matches per entity and filtering out non-matching kinds.
+        let entity1 = EntityId::random(entity);
+        // entity2: no relations at all, to check advancing past an entity with zero matches.
+        let entity2 = EntityId::random(entity);
+        // entity3: exactly one matching-kind relation.
+        let entity3 = EntityId::random(entity);
+
+        let other = EntityKind::random();
+        let target1 = EntityId::random(other);
+        let target2 = EntityId::random(other);
+        let target3 = EntityId::random(other);
+        let target4 = EntityId::random(other);
+
+        let relation = RelationKind::random();
+        let other_relation = RelationKind::random();
+
+        let relation1 = RelationId::random(relation);
+        let relation2 = RelationId::random(relation);
+        let relation3 = RelationId::random(relation);
+        let other_relation1 = RelationId::random(other_relation);
+
+        let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
+
+        for entity_id in [entity1, entity2, entity3] {
+            store
+                .merge_entity_metadata(
+                    entity_id,
+                    EntityMetadataValue {
+                        deleted: false,
+                        deleted_version: version,
+                    },
+                )
+                .expect("should update");
+        }
+
+        store
+            .merge_relation_metadata(
+                relation1,
+                RelationMetadataValue {
+                    source: entity1,
+                    target: target1,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_relation_metadata(
+                relation2,
+                RelationMetadataValue {
+                    source: entity1,
+                    target: target2,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_relation_metadata(
+                other_relation1,
+                RelationMetadataValue {
+                    source: entity1,
+                    target: target3,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+        store
+            .merge_relation_metadata(
+                relation3,
+                RelationMetadataValue {
+                    source: entity3,
+                    target: target4,
+                    deleted: false,
+                    deleted_version: version,
+                },
+            )
+            .expect("should update");
+
+        let mut ctx = ExecutionContext::new(store, 5);
+
+        let scan_op = ScanEntityKindOp::new(
+            &ctx.store,
+            entity,
+            SlotIndex(0),
+            SlotIndex(1),
+            HashMap::new(),
+        );
+        let mut join_op = RelationMergeJoinOp::new(
+            ctx.store.clone(),
+            Box::new(scan_op),
+            entity,
+            relation,
+            RelationJoinDirection::Outgoing,
+            SlotIndex(0),
+            SlotIndex(2),
+            SlotIndex(3),
+            SlotIndex(4),
+        );
+
+        let mut result = HashSet::new();
+        while let Some(()) = join_op.next(&mut ctx) {
+            let source = match ctx.get_slot(SlotIndex(0)) {
+                Some(SlotValue::SVEntityId(entity)) => *entity,
+                _ => panic!("expected SlotValue::EntityId in SlotIndex(0)"),
+            };
+            let relation = match ctx.get_slot(SlotIndex(2)) {
+                Some(SlotValue::SVRelationId(relation)) => *relation,
+                _ => panic!("expected SlotValue::RelationId in SlotIndex(2)"),
+            };
+            let target = match ctx.get_slot(SlotIndex(3)) {
+                Some(SlotValue::SVEntityId(entity)) => *entity,
+                _ => panic!("expected SlotValue::EntityId in SlotIndex(3)"),
+            };
+            result.insert((source, relation, target));
+        }
+
+        assert_eq!(
+            result,
+            HashSet::from([
+                (entity1, relation1, target1),
+                (entity1, relation2, target2),
+                (entity3, relation3, target4),
+            ])
         );
     }
 
@@ -1055,7 +1351,7 @@ mod test {
             SlotIndex(1),
             HashMap::new(),
         );
-        let join_op = RelationJoinOp::new(
+        let join_op = RelationNestedLoopJoinOp::new(
             ctx.store.clone(),
             Box::new(scan_op),
             relation,
