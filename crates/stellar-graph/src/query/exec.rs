@@ -91,9 +91,9 @@ pub struct ScanEntityKindOp {
         Box<dyn Iterator<Item = (EntityId, AttributeKind, RawValue<EntityAttributeValue>)>>,
     >,
 
-    id_slot: SlotIndex,
-    deleted_slot: SlotIndex,
-    attribute_slots: HashMap<AttributeKind, SlotIndex>,
+    id_output: SlotIndex,
+    deleted_output: SlotIndex,
+    attribute_outputs: HashMap<AttributeKind, SlotIndex>,
 }
 
 impl ScanEntityKindOp {
@@ -102,9 +102,9 @@ impl ScanEntityKindOp {
 
         entity: EntityKind,
 
-        id_slot: SlotIndex,
-        deleted_slot: SlotIndex,
-        attribute_slots: HashMap<AttributeKind, SlotIndex>,
+        id_output: SlotIndex,
+        deleted_output: SlotIndex,
+        attribute_outputs: HashMap<AttributeKind, SlotIndex>,
     ) -> Self {
         Self {
             metadata: Box::new(store.scan_entity_metadata_by_kind(entity)),
@@ -114,9 +114,9 @@ impl ScanEntityKindOp {
                 >)
                 .peekable(),
 
-            id_slot,
-            deleted_slot,
-            attribute_slots,
+            id_output,
+            deleted_output,
+            attribute_outputs,
         }
     }
 }
@@ -148,15 +148,15 @@ impl Op for ScanEntityKindOp {
                 self.attribute.next();
             }
 
-            ctx.set_slot(self.id_slot, SlotValue::SVEntityId(entity));
+            ctx.set_slot(self.id_output, SlotValue::SVEntityId(entity));
 
             ctx.set_slot(
-                self.deleted_slot,
+                self.deleted_output,
                 SlotValue::SVValue(Value::Bool(metadata.deleted)),
             );
 
             // Clear attribute slots so missing attributes don't get the previous entity's values
-            for slot in self.attribute_slots.values() {
+            for slot in self.attribute_outputs.values() {
                 ctx.clear_slot(*slot);
             }
 
@@ -168,7 +168,7 @@ impl Op for ScanEntityKindOp {
                 let (_, attribute_kind, attribute_value) =
                     self.attribute.next().expect("peek returned Some");
 
-                if let Some(slot) = self.attribute_slots.get(&attribute_kind) {
+                if let Some(slot) = self.attribute_outputs.get(&attribute_kind) {
                     match attribute_value.decode() {
                         Ok(value) => ctx.set_slot(*slot, SlotValue::SVValue(value.value)),
                         Err(e) => {
@@ -188,9 +188,9 @@ impl Debug for ScanEntityKindOp {
         f.debug_struct("ScanEntityKindOp")
             .field("metadata", &"<metadata>")
             .field("attribute", &"<attribute>")
-            .field("id_slot", &self.id_slot)
-            .field("deleted_slot", &self.deleted_slot)
-            .field("attribute_slots", &self.attribute_slots)
+            .field("id_output", &self.id_output)
+            .field("deleted_output", &self.deleted_output)
+            .field("attribute_outputs", &self.attribute_outputs)
             .finish()
     }
 }
@@ -241,9 +241,9 @@ impl Debug for FilterEqOp {
 
 /// Assuming RelationJoinDirection::Outgoing:
 /// - There is a relation R from entity A (source) to entity B (target)
-/// - `outer` produces A IDs in `start_slot` (used as source for outgoing).
+/// - `outer` produces A IDs in `start_input` (used as source for outgoing).
 /// - The join loops using `inner` to scan the source->target index for A ID + R kind
-/// - `inner` produces R IDs in `relation_slot`, R deleteds in `deleted_slot`, and B IDs in `other_slot`
+/// - `inner` produces R IDs in `relation_output`, R deleteds in `deleted_output`, and B IDs in `other_output`
 pub struct RelationJoinOp {
     store: Store,
     outer: Box<dyn Op>,
@@ -252,10 +252,10 @@ pub struct RelationJoinOp {
     relation: RelationKind,
     direction: RelationJoinDirection,
 
-    start_slot: SlotIndex,
-    relation_slot: SlotIndex,
-    other_slot: SlotIndex,
-    deleted_slot: SlotIndex,
+    start_input: SlotIndex,
+    relation_output: SlotIndex,
+    other_output: SlotIndex,
+    deleted_output: SlotIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -272,10 +272,10 @@ impl RelationJoinOp {
         relation: RelationKind,
         direction: RelationJoinDirection,
 
-        start_slot: SlotIndex,
-        relation_slot: SlotIndex,
-        other_slot: SlotIndex,
-        deleted_slot: SlotIndex,
+        start_input: SlotIndex,
+        relation_output: SlotIndex,
+        other_output: SlotIndex,
+        deleted_output: SlotIndex,
     ) -> Self {
         Self {
             store,
@@ -285,10 +285,10 @@ impl RelationJoinOp {
             relation,
             direction,
 
-            start_slot,
-            relation_slot,
-            other_slot,
-            deleted_slot,
+            start_input,
+            relation_output,
+            other_output,
+            deleted_output,
         }
     }
 }
@@ -310,10 +310,10 @@ impl Op for RelationJoinOp {
                                 }
                             };
 
-                            ctx.set_slot(self.relation_slot, SlotValue::SVRelationId(relation_id));
-                            ctx.set_slot(self.other_slot, SlotValue::SVEntityId(relation.other));
+                            ctx.set_slot(self.relation_output, SlotValue::SVRelationId(relation_id));
+                            ctx.set_slot(self.other_output, SlotValue::SVEntityId(relation.other));
                             ctx.set_slot(
-                                self.deleted_slot,
+                                self.deleted_output,
                                 SlotValue::SVValue(Value::Bool(relation.deleted)),
                             );
 
@@ -334,7 +334,7 @@ impl Op for RelationJoinOp {
                 self.outer.next(ctx)?;
 
                 // Get start entity for inner scan
-                let Some(start) = ctx.get_slot(self.start_slot) else {
+                let Some(start) = ctx.get_slot(self.start_input) else {
                     // Start slot is None, continue outer op
                     tracing::warn!("RelationJoinOp start slot is None");
                     continue 'outer;
@@ -378,10 +378,10 @@ impl Debug for RelationJoinOp {
             .field("outer", &self.outer)
             .field("inner", &"<inner>")
             .field("relation", &self.relation)
-            .field("start_slot", &self.start_slot)
-            .field("relation_slot", &self.relation_slot)
-            .field("other_slot", &self.other_slot)
-            .field("deleted_slot", &self.deleted_slot)
+            .field("start_input", &self.start_input)
+            .field("relation_output", &self.relation_output)
+            .field("other_output", &self.other_output)
+            .field("deleted_output", &self.deleted_output)
             .finish()
     }
 }
@@ -396,10 +396,10 @@ pub struct CollectRelationAttributesOp {
 
     grouped: Grouped<EntityId, (RelationId, EntityId)>,
 
-    key_slot: SlotIndex,
-    relation_attribute_slots: HashMap<AttributeKind, SlotIndex>,
-    other_attribute_slots: HashMap<AttributeKind, SlotIndex>,
-    others_slot: Option<SlotIndex>,
+    key_input: SlotIndex,
+    relation_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
+    other_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
+    others_output: Option<SlotIndex>,
 }
 
 impl CollectRelationAttributesOp {
@@ -408,15 +408,15 @@ impl CollectRelationAttributesOp {
 
         inner: Box<dyn Op>,
 
-        key_slot: SlotIndex,
-        relation_slot: SlotIndex,
-        other_slot: SlotIndex,
-        relation_attribute_slots: HashMap<AttributeKind, SlotIndex>,
-        other_attribute_slots: HashMap<AttributeKind, SlotIndex>,
-        others_slot: Option<SlotIndex>,
+        key_input: SlotIndex,
+        relation_input: SlotIndex,
+        other_input: SlotIndex,
+        relation_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
+        other_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
+        others_output: Option<SlotIndex>,
     ) -> Self {
         let grouped = Grouped::new(inner, move |ctx| {
-            let Some(key) = ctx.get_slot(key_slot) else {
+            let Some(key) = ctx.get_slot(key_input) else {
                 tracing::warn!("CollectRelationAttributesOp read() key slot is None");
                 return None;
             };
@@ -425,7 +425,7 @@ impl CollectRelationAttributesOp {
                 return None;
             };
 
-            let Some(relation) = ctx.get_slot(relation_slot) else {
+            let Some(relation) = ctx.get_slot(relation_input) else {
                 tracing::warn!("CollectRelationAttributesOp read() relation slot is None");
                 return None;
             };
@@ -436,7 +436,7 @@ impl CollectRelationAttributesOp {
                 return None;
             };
 
-            let Some(other) = ctx.get_slot(other_slot) else {
+            let Some(other) = ctx.get_slot(other_input) else {
                 tracing::warn!("CollectRelationAttributesOp read() other slot is None");
                 return None;
             };
@@ -453,10 +453,10 @@ impl CollectRelationAttributesOp {
 
             grouped,
 
-            key_slot,
-            relation_attribute_slots,
-            other_attribute_slots,
-            others_slot,
+            key_input,
+            relation_attribute_outputs,
+            other_attribute_outputs,
+            others_output,
         }
     }
 }
@@ -466,12 +466,12 @@ impl Op for CollectRelationAttributesOp {
         let (_key, rows) = self.grouped.next_group(ctx)?;
 
         let mut relation_attribute_values = self
-            .relation_attribute_slots
+            .relation_attribute_outputs
             .values()
             .map(|&slot| (slot, HashMap::new()))
             .collect::<HashMap<_, _>>();
         let mut entity_attribute_values = self
-            .other_attribute_slots
+            .other_attribute_outputs
             .values()
             .map(|&slot| (slot, HashMap::new()))
             .collect::<HashMap<_, _>>();
@@ -483,7 +483,7 @@ impl Op for CollectRelationAttributesOp {
             self.store
                 .scan_relation_attribute_by_id(relation)
                 .for_each(|(attribute, value)| {
-                    let Some(slot) = self.relation_attribute_slots.get(&attribute).copied() else {
+                    let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied() else {
                         return;
                     };
 
@@ -504,7 +504,7 @@ impl Op for CollectRelationAttributesOp {
             self.store
                 .scan_entity_attribute_by_id(other)
                 .for_each(|(attribute, value)| {
-                    let Some(slot) = self.other_attribute_slots.get(&attribute).copied() else {
+                    let Some(slot) = self.other_attribute_outputs.get(&attribute).copied() else {
                         return;
                     };
 
@@ -529,7 +529,7 @@ impl Op for CollectRelationAttributesOp {
         for (slot, values) in entity_attribute_values {
             ctx.set_slot(slot, SlotValue::EntityValues(values));
         }
-        if let Some(slot) = self.others_slot {
+        if let Some(slot) = self.others_output {
             ctx.set_slot(slot, SlotValue::RelationOthers(relation_others));
         }
 
@@ -542,10 +542,10 @@ impl Debug for CollectRelationAttributesOp {
         f.debug_struct("CollectRelationAttributesOp")
             .field("store", &"<store>")
             .field("grouped", &self.grouped)
-            .field("key_slot", &self.key_slot)
-            .field("relation_attribute_slots", &self.relation_attribute_slots)
-            .field("other_attribute_slots", &self.other_attribute_slots)
-            .field("others_slot", &self.others_slot)
+            .field("key_input", &self.key_input)
+            .field("relation_attribute_outputs", &self.relation_attribute_outputs)
+            .field("other_attribute_outputs", &self.other_attribute_outputs)
+            .field("others_output", &self.others_output)
             .finish()
     }
 }
