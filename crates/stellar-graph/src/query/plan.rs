@@ -1,8 +1,8 @@
 use crate::{
     entity::{AttributeKind, EntityKind, RelationKind},
     query::exec::{
-        CollectRelationAttributesOp, ExecutionContext, Op, RelationSourceJoinOp, ScanEntityKindOp,
-        SlotIndex,
+        CollectRelationAttributesOp, ExecutionContext, Op, RelationJoinDirection, RelationJoinOp,
+        ScanEntityKindOp, SlotIndex,
     },
 };
 use std::collections::{HashMap, HashSet};
@@ -16,9 +16,10 @@ struct TableQuery {
     outgoing_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Attributes on the targets of outgoing relations (this entity is the source)
     outgoing_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
-    // incoming_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
-    // incoming_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
-
+    /// Attributes on incoming relations (this entity is the target)
+    incoming_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    /// Attributes on incoming relations (this entity is the target)
+    incoming_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     // filter: Option<FilterPredicate>
     // sort: Option<Vec<(SortKey, SortDir)>>
 }
@@ -28,6 +29,7 @@ pub struct OutputIndex(pub u16);
 
 impl TableQuery {
     fn plan(&self, store: crate::store::Store) {
+        // Generate increasing SlotIndexes
         let mut next_slot = 0;
         let mut slot = || {
             let slot = next_slot;
@@ -35,10 +37,14 @@ impl TableQuery {
             SlotIndex(slot)
         };
 
+        // Accumulate map of OutputIndex -> SlotIndex for collecting outputs from slots
         let mut output_slots = HashMap::new();
 
+        // Allocate slots for entity metadata for scanning entities
         let entity_id = slot();
         let entity_deleted = slot();
+
+        // Build map of AttributeKind -> SlotIndex for scanning entity attributes
         let entity_attributes = self
             .attributes
             .iter()
@@ -49,21 +55,19 @@ impl TableQuery {
             })
             .collect::<HashMap<_, _>>();
 
-        let entity_scan = ScanEntityKindOp::new(
-            &store,
-            self.entity,
-            entity_id,
-            entity_deleted,
-            entity_attributes,
-        );
-
-        // Collect all outgoing relations
+        // Collect all relations
         let outgoing_relations = self
             .outgoing_relation_attributes
             .keys()
             .chain(self.outgoing_relation_entity_attributes.keys())
             .collect::<HashSet<_>>();
+        let incoming_relations = self
+            .incoming_relation_attributes
+            .keys()
+            .chain(self.incoming_relation_entity_attributes.keys())
+            .collect::<HashSet<_>>();
 
+        // Build maps of RelationKind -> AttributeKind -> SlotIndex for collecting relation attributes
         let outgoing_relation_attributes = self
             .outgoing_relation_attributes
             .iter()
@@ -98,37 +102,114 @@ impl TableQuery {
                 )
             })
             .collect::<HashMap<_, _>>();
+        let incoming_relation_attributes = self
+            .incoming_relation_attributes
+            .iter()
+            .map(|(relation, attributes)| {
+                (
+                    relation,
+                    attributes
+                        .iter()
+                        .map(|(&attribute, &output)| {
+                            let slot = slot();
+                            output_slots.insert(output, slot);
+                            (attribute, slot)
+                        })
+                        .collect::<HashMap<_, _>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let incoming_relation_entity_attributes = self
+            .incoming_relation_entity_attributes
+            .iter()
+            .map(|(relation, attributes)| {
+                (
+                    relation,
+                    attributes
+                        .iter()
+                        .map(|(&attribute, &output)| {
+                            let slot = slot();
+                            output_slots.insert(output, slot);
+                            (attribute, slot)
+                        })
+                        .collect::<HashMap<_, _>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
 
+        // Accumulate maps of RelationKind -> SlotIndex for storing relation metadata
         let mut relation_ids = HashMap::new();
-        let mut relation_targets = HashMap::new();
+        let mut relation_others = HashMap::new();
         let mut relation_deleteds = HashMap::new();
 
-        let mut prev_op = Box::new(entity_scan) as Box<dyn Op>;
+        // Build base entity scan op
+        let entity_scan = ScanEntityKindOp::new(
+            &store,
+            self.entity,
+            entity_id,
+            entity_deleted,
+            entity_attributes,
+        );
+        let mut prev_op: Box<dyn Op> = Box::new(entity_scan);
+
+        // Chain relation join and collect ops
         for relation in outgoing_relations {
             let relation_slot = slot();
-            let target_slot = slot();
+            let other_slot = slot();
             let deleted_slot = slot();
 
             relation_ids.insert(relation, relation_slot);
-            relation_targets.insert(relation, target_slot);
+            relation_others.insert(relation, other_slot);
             relation_deleteds.insert(relation, deleted_slot);
 
             prev_op = Box::new(CollectRelationAttributesOp::new(
                 store.clone(),
-                Box::new(RelationSourceJoinOp::new(
+                Box::new(RelationJoinOp::new(
                     store.clone(),
                     prev_op,
                     *relation,
+                    RelationJoinDirection::Outgoing,
                     entity_id,
                     relation_slot,
-                    target_slot,
+                    other_slot,
                     deleted_slot,
                 )),
                 entity_id,
                 relation_slot,
-                target_slot,
+                other_slot,
                 outgoing_relation_attributes.get(relation).unwrap().clone(),
                 outgoing_relation_entity_attributes
+                    .get(relation)
+                    .unwrap()
+                    .clone(),
+            ));
+        }
+        for relation in incoming_relations {
+            let relation_slot = slot();
+            let other_slot = slot();
+            let deleted_slot = slot();
+
+            relation_ids.insert(relation, relation_slot);
+            relation_others.insert(relation, other_slot);
+            relation_deleteds.insert(relation, deleted_slot);
+
+            prev_op = Box::new(CollectRelationAttributesOp::new(
+                store.clone(),
+                Box::new(RelationJoinOp::new(
+                    store.clone(),
+                    prev_op,
+                    *relation,
+                    RelationJoinDirection::Incoming,
+                    entity_id,
+                    relation_slot,
+                    other_slot,
+                    deleted_slot,
+                )),
+                entity_id,
+                relation_slot,
+                other_slot,
+                incoming_relation_attributes.get(relation).unwrap().clone(),
+                incoming_relation_entity_attributes
                     .get(relation)
                     .unwrap()
                     .clone(),
@@ -331,6 +412,8 @@ mod test {
                 track,
                 HashMap::from([(song_title, OutputIndex(2))]),
             )]),
+            incoming_relation_attributes: HashMap::new(),
+            incoming_relation_entity_attributes: HashMap::new(),
         };
 
         query.plan(store);
