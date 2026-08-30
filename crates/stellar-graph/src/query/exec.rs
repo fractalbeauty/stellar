@@ -141,7 +141,7 @@ impl Op for ScanEntityKindOp {
 
             ctx.set_slot(
                 self.deleted_slot,
-                SlotValue::Value(Value::Boolean(metadata.deleted)),
+                SlotValue::Value(Value::Bool(metadata.deleted)),
             );
 
             while self
@@ -298,7 +298,7 @@ impl Op for RelationJoinOp {
                             ctx.set_slot(self.other_slot, SlotValue::EntityId(relation.other));
                             ctx.set_slot(
                                 self.deleted_slot,
-                                SlotValue::Value(Value::Boolean(relation.deleted)),
+                                SlotValue::Value(Value::Bool(relation.deleted)),
                             );
 
                             // Emit tuple
@@ -696,7 +696,7 @@ mod test {
         );
         assert_eq!(
             *ctx.get_slot(SlotIndex(1)),
-            Some(SlotValue::Value(Value::Boolean(false)))
+            Some(SlotValue::Value(Value::Bool(false)))
         );
         assert_eq!(
             *ctx.get_slot(SlotIndex(2)),
@@ -763,7 +763,7 @@ mod test {
         let mut filter_op = FilterEqOp::new(
             Box::new(scan_op),
             SlotIndex(1),
-            SlotValue::Value(Value::Boolean(false)),
+            SlotValue::Value(Value::Bool(false)),
         );
 
         let mut result = HashSet::new();

@@ -362,7 +362,7 @@ pub enum Value {
     Text(String),
     /// Cannot be NaN or infinity.
     Number(OrderedFloat<f64>),
-    Boolean(bool),
+    Bool(bool),
     // TODO: maybe Arc<[u8]>
     Bytes(Vec<u8>),
 }
@@ -646,7 +646,7 @@ pub mod hegel {
         tc.draw(one_of!(
             compose!(|tc| { Value::Text(tc.draw(gs::text())) }),
             compose!(|tc| { Value::Number(tc.draw(gen_value_number()).into()) }),
-            compose!(|tc| { Value::Boolean(tc.draw(gs::booleans()).into()) }),
+            compose!(|tc| { Value::Bool(tc.draw(gs::booleans()).into()) }),
         ))
     }
 
