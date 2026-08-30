@@ -537,6 +537,36 @@ impl Store {
                 Some((relation, value))
             })
     }
+
+    pub fn scan_relation_index_by_target_and_kind(
+        &self,
+        target: EntityId,
+        kind: RelationKind,
+    ) -> impl Iterator<Item = (RelationId, RawValue<RelationIndexValue>)> + use<> {
+        self.keyspace
+            .prefix(make_relation_target_prefix_by_target_and_kind(target, kind))
+            .filter_map(|guard| {
+                let (key, value) = match guard.into_inner() {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Fjall error reading relation index");
+                        return None;
+                    }
+                };
+
+                let (_entity, relation) = match parse_relation_target_key(key) {
+                    Ok(x) => x,
+                    Err(e) => {
+                        tracing::error!(?e, "Failed to parse relation index key");
+                        return None;
+                    }
+                };
+
+                let value = RawValue::from_slice(value);
+
+                Some((relation, value))
+            })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -733,6 +763,17 @@ fn make_relation_target_key(target: EntityId, relation: RelationId) -> [u8; 33] 
     key
 }
 
+fn make_relation_target_prefix_by_target_and_kind(
+    target: EntityId,
+    kind: RelationKind,
+) -> [u8; 22] {
+    let mut key = [0u8; 22];
+    key[0] = RELATION_TARGET_PREFIX;
+    key[1..17].copy_from_slice(target.as_slice());
+    key[17..22].copy_from_slice(kind.as_slice());
+    key
+}
+
 fn parse_relation_target_key(key: Slice) -> Result<(EntityId, RelationId), anyhow::Error> {
     if key.len() != 33 {
         anyhow::bail!("wrong key len");
@@ -776,9 +817,9 @@ mod test {
             make_entity_metadata_prefix_by_kind, make_relation_attribute_key,
             make_relation_attribute_prefix_by_id, make_relation_metadata_key,
             make_relation_source_key, make_relation_source_prefix_by_source_and_kind,
-            make_relation_target_key, parse_entity_attribute_key, parse_entity_metadata_key,
-            parse_relation_attribute_key, parse_relation_metadata_key, parse_relation_source_key,
-            parse_relation_target_key,
+            make_relation_target_key, make_relation_target_prefix_by_target_and_kind,
+            parse_entity_attribute_key, parse_entity_metadata_key, parse_relation_attribute_key,
+            parse_relation_metadata_key, parse_relation_source_key, parse_relation_target_key,
         },
     };
     use hegel::{Generator, TestCase, generators as gs};
@@ -994,6 +1035,9 @@ mod test {
         let parsed = parse_relation_target_key(key.into()).expect("should parse");
 
         assert_eq!(parsed, (target, relation));
+
+        let prefix = make_relation_target_prefix_by_target_and_kind(target, relation.kind());
+        assert!(key.starts_with(&prefix));
     }
 }
 

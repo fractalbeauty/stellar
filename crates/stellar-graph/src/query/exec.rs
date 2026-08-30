@@ -223,33 +223,42 @@ impl Debug for FilterEqOp {
     }
 }
 
+/// Assuming RelationJoinDirection::Outgoing:
 /// - There is a relation R from entity A (source) to entity B (target)
-/// - `outer` produces A IDs in `source_slot`.
+/// - `outer` produces A IDs in `start_slot` (used as source for outgoing).
 /// - The join loops using `inner` to scan the source->target index for A ID + R kind
-/// - `inner` produces R IDs in `relation_slot`, R deleteds in `deleted_slot`, and B IDs in `target_slot`
-pub struct RelationSourceJoinOp {
+/// - `inner` produces R IDs in `relation_slot`, R deleteds in `deleted_slot`, and B IDs in `other_slot`
+pub struct RelationJoinOp {
     store: Store,
     outer: Box<dyn Op>,
     inner: Option<Box<dyn Iterator<Item = (RelationId, RawValue<RelationIndexValue>)>>>,
 
     relation: RelationKind,
+    direction: RelationJoinDirection,
 
-    source_slot: SlotIndex,
+    start_slot: SlotIndex,
     relation_slot: SlotIndex,
-    target_slot: SlotIndex,
+    other_slot: SlotIndex,
     deleted_slot: SlotIndex,
 }
 
-impl RelationSourceJoinOp {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RelationJoinDirection {
+    Incoming,
+    Outgoing,
+}
+
+impl RelationJoinOp {
     pub fn new(
         store: Store,
         outer: Box<dyn Op>,
 
         relation: RelationKind,
+        direction: RelationJoinDirection,
 
-        source_slot: SlotIndex,
+        start_slot: SlotIndex,
         relation_slot: SlotIndex,
-        target_slot: SlotIndex,
+        other_slot: SlotIndex,
         deleted_slot: SlotIndex,
     ) -> Self {
         Self {
@@ -258,16 +267,17 @@ impl RelationSourceJoinOp {
             inner: None,
 
             relation,
+            direction,
 
-            source_slot,
+            start_slot,
             relation_slot,
-            target_slot,
+            other_slot,
             deleted_slot,
         }
     }
 }
 
-impl Op for RelationSourceJoinOp {
+impl Op for RelationJoinOp {
     fn next(&mut self, ctx: &mut ExecutionContext) -> Option<()> {
         loop {
             // If not finished, resume inner scan
@@ -285,7 +295,7 @@ impl Op for RelationSourceJoinOp {
                             };
 
                             ctx.set_slot(self.relation_slot, SlotValue::RelationId(relation_id));
-                            ctx.set_slot(self.target_slot, SlotValue::EntityId(relation.other));
+                            ctx.set_slot(self.other_slot, SlotValue::EntityId(relation.other));
                             ctx.set_slot(
                                 self.deleted_slot,
                                 SlotValue::Value(Value::Boolean(relation.deleted)),
@@ -307,23 +317,35 @@ impl Op for RelationSourceJoinOp {
                 // Advance outer op
                 self.outer.next(ctx)?;
 
-                // Get source for inner scan
-                let Some(source) = ctx.get_slot(self.source_slot) else {
-                    // Source slot is None, continue outer op
-                    tracing::warn!("RelationSourceJoin source slot is None");
+                // Get start entity for inner scan
+                let Some(start) = ctx.get_slot(self.start_slot) else {
+                    // Start slot is None, continue outer op
+                    tracing::warn!("RelationJoinOp start slot is None");
                     continue 'outer;
                 };
-                let SlotValue::EntityId(source) = source else {
-                    // Source slot is not EntityId, continue outer op
-                    tracing::warn!("RelationSourceJoin source slot is not EntityId");
+                let SlotValue::EntityId(start) = start else {
+                    // Start slot is not EntityId, continue outer op
+                    tracing::warn!("RelationJoinOp start slot is not EntityId");
                     continue 'outer;
                 };
 
                 // Start inner scan
-                self.inner = Some(Box::new(
-                    self.store
-                        .scan_relation_index_by_source_and_kind(*source, self.relation),
-                ));
+                self.inner = Some(match self.direction {
+                    RelationJoinDirection::Incoming => {
+                        // Incoming: start is target, other is source
+                        Box::new(
+                            self.store
+                                .scan_relation_index_by_target_and_kind(*start, self.relation),
+                        )
+                    }
+                    RelationJoinDirection::Outgoing => {
+                        // Outgoing: start is source, other is target
+                        Box::new(
+                            self.store
+                                .scan_relation_index_by_source_and_kind(*start, self.relation),
+                        )
+                    }
+                });
 
                 break 'outer;
             }
@@ -333,23 +355,23 @@ impl Op for RelationSourceJoinOp {
     }
 }
 
-impl Debug for RelationSourceJoinOp {
+impl Debug for RelationJoinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RelationSourceJoinOp")
+        f.debug_struct("RelationJoinOp")
             .field("store", &"<store>")
             .field("outer", &self.outer)
             .field("inner", &"<inner>")
             .field("relation", &self.relation)
-            .field("source_slot", &self.source_slot)
+            .field("start_slot", &self.start_slot)
             .field("relation_slot", &self.relation_slot)
-            .field("target_slot", &self.target_slot)
+            .field("other_slot", &self.other_slot)
             .field("deleted_slot", &self.deleted_slot)
             .finish()
     }
 }
 
 /// - ScanEntityKind emits (entity ID)
-/// - RelationSourceJoinOp emits (relation ID, other ID)
+/// - RelationJoinOp emits (relation ID, other ID)
 /// - CollectRelationAttributesOp collects all (relation ID, other ID)
 /// - CollectRelationAttributesOp gets multiple other entity attributes and relation attributes
 /// - CollectRelationAttributesOp emits EntityValues and RelationValues, both Map<E/R ID, Value>
@@ -605,8 +627,8 @@ mod test {
             Value, Version,
         },
         query::exec::{
-            CollectRelationAttributesOp, ExecutionContext, FilterEqOp, Op, RelationSourceJoinOp,
-            ScanEntityKindOp, SlotIndex, SlotValue,
+            CollectRelationAttributesOp, ExecutionContext, FilterEqOp, Op, RelationJoinDirection,
+            RelationJoinOp, ScanEntityKindOp, SlotIndex, SlotValue,
         },
         store::{
             EntityAttributeValue, EntityMetadataValue, RelationAttributeValue,
@@ -845,10 +867,11 @@ mod test {
             SlotIndex(1),
             HashMap::new(),
         );
-        let mut join_op = RelationSourceJoinOp::new(
+        let mut join_op = RelationJoinOp::new(
             ctx.store.clone(),
             Box::new(scan_op),
             relation,
+            RelationJoinDirection::Outgoing,
             SlotIndex(0),
             SlotIndex(2),
             SlotIndex(3),
@@ -1006,10 +1029,11 @@ mod test {
             SlotIndex(1),
             HashMap::new(),
         );
-        let join_op = RelationSourceJoinOp::new(
+        let join_op = RelationJoinOp::new(
             ctx.store.clone(),
             Box::new(scan_op),
             relation,
+            RelationJoinDirection::Outgoing,
             SlotIndex(0),
             SlotIndex(2),
             SlotIndex(3),
