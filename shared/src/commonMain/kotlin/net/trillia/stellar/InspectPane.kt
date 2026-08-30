@@ -48,6 +48,7 @@ import uniffi.stellar_graph.SlotValue
 import uniffi.stellar_graph.TableQuery
 import kotlin.collections.associate
 import kotlin.collections.emptyMap
+import kotlin.time.measureTimedValue
 
 @Composable
 fun InspectPane(
@@ -175,7 +176,9 @@ fun InspectPane(
 
     val data =
         remember(query) {
-            core.tableQuery(query)
+            val (data, elapsed) = measureTimedValue { core.tableQuery(query) }
+            logDebug("tableQuery took $elapsed")
+            data
         }
 
 //    val selectedEntityColumns =
