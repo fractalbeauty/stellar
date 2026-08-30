@@ -105,6 +105,9 @@ cargo {
 }
 
 uniffi {
+    // Added in our temporary fork of Gobley, see `settings.gradle.kt`.
+    bindgenFromPath(rootProject.layout.projectDirectory.dir(".gradle/gobley-fork/crates/gobley-uniffi-bindgen"))
+
     generateFromLibrary {
         // Build bindings from the host target since we're mostly running the desktop app for now.
         build = GobleyHost.current.rustTarget
