@@ -10,24 +10,26 @@ use std::collections::{HashMap, HashSet};
 
 #[derive(uniffi::Record)]
 pub struct TableQuery {
-    entity: EntityKind,
+    pub entity: EntityKind,
 
     /// The scanned entity's own id
-    id: Option<OutputIndex>,
-    attributes: HashMap<AttributeKind, OutputIndex>,
+    pub id: Option<OutputIndex>,
+    pub attributes: HashMap<AttributeKind, OutputIndex>,
 
     /// Attributes on outgoing relations (this entity is the source)
-    outgoing_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    pub outgoing_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Attributes on the targets of outgoing relations (this entity is the source)
-    outgoing_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    pub outgoing_relation_entity_attributes:
+        HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Maps each outgoing relation ID to its target entity ID.
-    outgoing_relation_others: HashMap<RelationKind, OutputIndex>,
+    pub outgoing_relation_others: HashMap<RelationKind, OutputIndex>,
     /// Attributes on incoming relations (this entity is the target)
-    incoming_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    pub incoming_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Attributes on incoming relations (this entity is the target)
-    incoming_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    pub incoming_relation_entity_attributes:
+        HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Maps each incoming relation ID to its source entity ID.
-    incoming_relation_others: HashMap<RelationKind, OutputIndex>,
+    pub incoming_relation_others: HashMap<RelationKind, OutputIndex>,
     // filter: Option<FilterPredicate>
     // sort: Option<Vec<(SortKey, SortDir)>>
 }

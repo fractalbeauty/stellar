@@ -21,4 +21,9 @@ rand = "0.10.2"
 ordered-float = { version = "5.5.0", features = ["serde"] }
 
 [dev-dependencies]
+criterion = "0.8.2"
 testdir = "0.10.0"
+
+[[bench]]
+name = "table_query"
+harness = false
