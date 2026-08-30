@@ -5017,6 +5017,8 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "fastrand",
+ "hex",
+ "serde_json",
  "stellar",
  "tokio",
  "tracing",

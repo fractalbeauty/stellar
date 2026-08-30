@@ -653,21 +653,21 @@ impl std::fmt::Debug for Core {
 
 #[derive(uniffi::Record)]
 pub struct CoreEntity {
-    kind: EntityKind,
-    attributes: HashMap<AttributeKind, CoreAttribute>,
+    pub kind: EntityKind,
+    pub attributes: HashMap<AttributeKind, CoreAttribute>,
 }
 
 #[derive(uniffi::Record)]
 pub struct CoreRelation {
-    kind: RelationKind,
-    source: EntityId,
-    target: EntityId,
-    attributes: HashMap<AttributeKind, CoreAttribute>,
+    pub kind: RelationKind,
+    pub source: EntityId,
+    pub target: EntityId,
+    pub attributes: HashMap<AttributeKind, CoreAttribute>,
 }
 
 #[derive(uniffi::Record)]
 pub struct CoreAttribute {
-    value: Value,
+    pub value: Value,
     // version: CoreVersion,
 }
 
