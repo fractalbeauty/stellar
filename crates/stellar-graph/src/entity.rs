@@ -616,9 +616,25 @@ pub mod hegel {
         EntityId::from_bytes(tc.draw(gs::arrays(gs::integers())))
     }
 
+    /// An [`EntityId`] of a specific [`EntityKind`].
+    #[hegel::composite]
+    pub fn gen_entity_id_with_kind(tc: TestCase, kind: EntityKind) -> EntityId {
+        let mut bytes = tc.draw(gs::arrays(gs::integers()));
+        bytes[0..5].copy_from_slice(&kind.as_bytes());
+        EntityId::from_bytes(bytes)
+    }
+
     #[hegel::composite]
     pub fn gen_relation_id(tc: TestCase) -> RelationId {
         RelationId::from_bytes(tc.draw(gs::arrays(gs::integers())))
+    }
+
+    /// A [`RelationId`] of a specific [`RelationKind`].
+    #[hegel::composite]
+    pub fn gen_relation_id_with_kind(tc: TestCase, kind: RelationKind) -> RelationId {
+        let mut bytes = tc.draw(gs::arrays(gs::integers()));
+        bytes[0..5].copy_from_slice(&kind.as_bytes());
+        RelationId::from_bytes(bytes)
     }
 
     #[hegel::composite]

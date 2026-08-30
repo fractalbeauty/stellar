@@ -291,6 +291,10 @@ mod test {
         entity::{
             AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp,
             Value, Version,
+            hegel::{
+                gen_attribute_kind, gen_entity_id_with_kind, gen_entity_kind,
+                gen_relation_id_with_kind, gen_relation_kind, gen_value,
+            },
         },
         query::{
             exec::SlotValue,
@@ -301,7 +305,11 @@ mod test {
             RelationMetadataValue, Store,
         },
     };
-    use std::collections::HashMap;
+    use hegel::{
+        Generator, TestCase,
+        generators::{self as gs},
+    };
+    use std::collections::{HashMap, HashSet};
     use uuid::Uuid;
 
     fn version() -> Version {
@@ -491,5 +499,180 @@ mod test {
                 ]
             ]
         );
+    }
+
+    /// [`TableQuery`] should return the requested attributes from the store
+    #[hegel::test]
+    fn entity_attributes_match_store(tc: TestCase) {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entity_kind = tc.draw(gen_entity_kind());
+        let attribute_kinds = tc
+            .draw(gs::hashsets(gen_attribute_kind()).min_size(1).max_size(3))
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let entities = tc.draw(
+            gs::hashsets(gen_entity_id_with_kind(entity_kind))
+                .min_size(1)
+                .max_size(5),
+        );
+
+        tc.note(&format!(
+            "entities = {entities:?}, attribute_kinds = {attribute_kinds:?}"
+        ));
+
+        // model: entity -> (attribute -> value), only for a random subset of attribute_kinds
+        let mut model = HashMap::new();
+        for &entity in &entities {
+            set_entity(&store, entity);
+
+            let mut attributes = HashMap::new();
+            for &attribute in &attribute_kinds {
+                if tc.draw(gs::booleans()) {
+                    let value = tc.draw(gen_value());
+                    set_entity_attribute(&store, entity, attribute, &value);
+                    attributes.insert(attribute, value);
+                }
+            }
+            model.insert(entity, attributes);
+        }
+
+        // output index 0 is the entity id, used to correlate each row back to the model
+        let query = TableQuery {
+            entity: entity_kind,
+            id: Some(OutputIndex(0)),
+            attributes: attribute_kinds
+                .iter()
+                .enumerate()
+                .map(|(index, &attribute)| (attribute, OutputIndex(index as u16 + 1)))
+                .collect(),
+            outgoing_relation_attributes: HashMap::new(),
+            outgoing_relation_entity_attributes: HashMap::new(),
+            outgoing_relation_others: HashMap::new(),
+            incoming_relation_attributes: HashMap::new(),
+            incoming_relation_entity_attributes: HashMap::new(),
+            incoming_relation_others: HashMap::new(),
+        };
+
+        let mut actual = HashMap::new();
+        for mut row in query.execute(store) {
+            let Some(SlotValue::SVEntityId(entity)) = row.remove(0) else {
+                unreachable!("output index 0 should be the entity id");
+            };
+            let attributes = row
+                .into_iter()
+                .zip(&attribute_kinds)
+                .filter_map(|(slot, &attribute)| match slot {
+                    Some(SlotValue::SVValue(value)) => Some((attribute, value)),
+                    None => None,
+                    other => unreachable!("unexpected slot value: {other:?}"),
+                })
+                .collect::<HashMap<_, _>>();
+            actual.insert(entity, attributes);
+        }
+
+        assert_eq!(actual, model);
+    }
+
+    /// [`TableQuery`] should return requested attributes for outgoing relations and target entities
+    #[hegel::test]
+    fn outgoing_relation_attributes_match_store(tc: TestCase) {
+        let store = Store::open(
+            testdir::testdir!()
+                .join(Uuid::new_v4().to_string())
+                .join("store"),
+        )
+        .expect("should open");
+
+        let entity_kind = tc.draw(gen_entity_kind());
+        let relation_kind = tc.draw(gen_relation_kind());
+        let relation_attribute = tc.draw(gen_attribute_kind());
+        let target_attribute = tc.draw(gen_attribute_kind());
+
+        let source = tc.draw(gen_entity_id_with_kind(entity_kind));
+        set_entity(&store, source);
+
+        let targets = tc.draw(
+            gs::hashsets(gen_entity_id_with_kind(entity_kind).filter(|&id| id != source))
+                .min_size(1)
+                .max_size(4),
+        );
+
+        tc.note(&format!("source = {source:?}, targets = {targets:?}"));
+
+        // model: relation id -> (target id, relation attribute value, target attribute value)
+        let mut used_relation_ids = HashSet::new();
+        let mut model = HashMap::new();
+        for &target in &targets {
+            set_entity(&store, target);
+
+            let relation = tc.draw(
+                gen_relation_id_with_kind(relation_kind)
+                    .filter(|id| !used_relation_ids.contains(id)),
+            );
+            used_relation_ids.insert(relation);
+            set_relation(&store, relation, source, target);
+
+            let relation_value = tc.draw(gs::booleans()).then(|| tc.draw(gen_value()));
+            if let Some(value) = &relation_value {
+                set_relation_attribute(&store, relation, relation_attribute, value);
+            }
+
+            let target_value = tc.draw(gs::booleans()).then(|| tc.draw(gen_value()));
+            if let Some(value) = &target_value {
+                set_entity_attribute(&store, target, target_attribute, value);
+            }
+
+            model.insert(relation, (target, relation_value, target_value));
+        }
+
+        let query = TableQuery {
+            entity: entity_kind,
+            id: None,
+            attributes: HashMap::new(),
+            outgoing_relation_attributes: HashMap::from([(
+                relation_kind,
+                HashMap::from([(relation_attribute, OutputIndex(0))]),
+            )]),
+            outgoing_relation_entity_attributes: HashMap::from([(
+                relation_kind,
+                HashMap::from([(target_attribute, OutputIndex(1))]),
+            )]),
+            outgoing_relation_others: HashMap::from([(relation_kind, OutputIndex(2))]),
+            incoming_relation_attributes: HashMap::new(),
+            incoming_relation_entity_attributes: HashMap::new(),
+            incoming_relation_others: HashMap::new(),
+        };
+
+        let mut rows = query.execute(store);
+        assert_eq!(rows.len(), 1, "source should produce exactly one row");
+        let mut row = rows.remove(0);
+
+        let Some(SlotValue::RelationOthers(relation_targets)) = row.remove(2) else {
+            unreachable!("output index 2 should be relation targets");
+        };
+        let Some(SlotValue::EntityValues(target_values)) = row.remove(1) else {
+            unreachable!("output index 1 should be entity values");
+        };
+        let Some(SlotValue::RelationValues(relation_values)) = row.remove(0) else {
+            unreachable!("output index 0 should be relation values");
+        };
+
+        let actual = relation_targets
+            .into_iter()
+            .map(|(relation, target)| {
+                let relation_value = relation_values.get(&relation).cloned();
+                let target_value = target_values.get(&target).cloned();
+                (relation, (target, relation_value, target_value))
+            })
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(actual, model);
     }
 }
