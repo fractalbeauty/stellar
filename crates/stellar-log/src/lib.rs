@@ -19,7 +19,7 @@ const DEFAULT_ENV_FILTER: &str = "warn,stellar=debug,stellar_graph=debug,stellar
 /// application exits to flush logs on drop.
 ///
 /// On Android and iOS, logs will also be forwarded to the platform logging systems. On other
-/// platforms, logs will also be written to stdout.
+/// platforms, logs will also be written to stderr.
 pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_ENV_FILTER));
@@ -49,7 +49,7 @@ pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
         {
             let subscriber = Registry::default().with(filter).with(roller_layer).with(
                 fmt::Layer::new()
-                    .with_writer(std::io::stdout)
+                    .with_writer(std::io::stderr)
                     .with_span_events(FmtSpan::CLOSE),
             );
             let _ = tracing::subscriber::set_global_default(subscriber);
@@ -77,7 +77,7 @@ pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
         {
             let subscriber = Registry::default().with(filter).with(
                 fmt::Layer::new()
-                    .with_writer(std::io::stdout)
+                    .with_writer(std::io::stderr)
                     .with_span_events(FmtSpan::CLOSE),
             );
             let _ = tracing::subscriber::set_global_default(subscriber);
