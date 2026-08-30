@@ -38,7 +38,10 @@ pub struct OutputIndex(pub u16);
 uniffi::custom_newtype!(OutputIndex, u16);
 
 impl TableQuery {
+    #[tracing::instrument(name = "table_query", skip_all)]
     pub fn execute(&self, store: Store) -> Vec<Vec<Option<SlotValue>>> {
+        let planning_span = tracing::debug_span!("planning").entered();
+
         // Generate increasing SlotIndexes
         let mut next_slot = 0;
         let mut slot = || {
@@ -252,9 +255,6 @@ impl TableQuery {
             ));
         }
 
-        dbg!(&prev_op);
-        dbg!(&output_slots);
-
         let num_outputs = output_slots
             .keys()
             .map(|output| output.0 + 1)
@@ -263,7 +263,10 @@ impl TableQuery {
 
         let num_slots = next_slot;
 
+        drop(planning_span);
+
         // TODO: split plan/execute
+        let executing_span = tracing::debug_span!("executing").entered();
         let mut ctx = ExecutionContext::new(store, num_slots);
         let mut all_outputs = Vec::new();
         loop {
@@ -280,6 +283,7 @@ impl TableQuery {
 
             all_outputs.push(outputs);
         }
+        drop(executing_span);
 
         all_outputs
     }
