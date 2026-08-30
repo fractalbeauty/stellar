@@ -12,16 +12,22 @@ use std::collections::{HashMap, HashSet};
 pub struct TableQuery {
     entity: EntityKind,
 
+    /// The scanned entity's own id
+    id: Option<OutputIndex>,
     attributes: HashMap<AttributeKind, OutputIndex>,
 
     /// Attributes on outgoing relations (this entity is the source)
     outgoing_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Attributes on the targets of outgoing relations (this entity is the source)
     outgoing_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    /// Maps each outgoing relation ID to its target entity ID.
+    outgoing_relation_others: HashMap<RelationKind, OutputIndex>,
     /// Attributes on incoming relations (this entity is the target)
     incoming_relation_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Attributes on incoming relations (this entity is the target)
     incoming_relation_entity_attributes: HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
+    /// Maps each incoming relation ID to its source entity ID.
+    incoming_relation_others: HashMap<RelationKind, OutputIndex>,
     // filter: Option<FilterPredicate>
     // sort: Option<Vec<(SortKey, SortDir)>>
 }
@@ -48,6 +54,10 @@ impl TableQuery {
         let entity_id = slot();
         let entity_deleted = slot();
 
+        if let Some(id_output) = self.id {
+            output_slots.insert(id_output, entity_id);
+        }
+
         // Build map of AttributeKind -> SlotIndex for scanning entity attributes
         let entity_attributes = self
             .attributes
@@ -64,11 +74,13 @@ impl TableQuery {
             .outgoing_relation_attributes
             .keys()
             .chain(self.outgoing_relation_entity_attributes.keys())
+            .chain(self.outgoing_relation_others.keys())
             .collect::<HashSet<_>>();
         let incoming_relations = self
             .incoming_relation_attributes
             .keys()
             .chain(self.incoming_relation_entity_attributes.keys())
+            .chain(self.incoming_relation_others.keys())
             .collect::<HashSet<_>>();
 
         // Build maps of RelationKind -> AttributeKind -> SlotIndex for collecting relation attributes
@@ -166,6 +178,12 @@ impl TableQuery {
             relation_others.insert(relation, other_slot);
             relation_deleteds.insert(relation, deleted_slot);
 
+            let others_slot = self.outgoing_relation_others.get(relation).map(|&output| {
+                let slot = slot();
+                output_slots.insert(output, slot);
+                slot
+            });
+
             prev_op = Box::new(CollectRelationAttributesOp::new(
                 store.clone(),
                 Box::new(RelationJoinOp::new(
@@ -189,6 +207,7 @@ impl TableQuery {
                     .get(relation)
                     .cloned()
                     .unwrap_or_default(),
+                others_slot,
             ));
         }
         for relation in incoming_relations {
@@ -199,6 +218,12 @@ impl TableQuery {
             relation_ids.insert(relation, relation_slot);
             relation_others.insert(relation, other_slot);
             relation_deleteds.insert(relation, deleted_slot);
+
+            let others_slot = self.incoming_relation_others.get(relation).map(|&output| {
+                let slot = slot();
+                output_slots.insert(output, slot);
+                slot
+            });
 
             prev_op = Box::new(CollectRelationAttributesOp::new(
                 store.clone(),
@@ -223,6 +248,7 @@ impl TableQuery {
                     .get(relation)
                     .cloned()
                     .unwrap_or_default(),
+                others_slot,
             ));
         }
 
@@ -416,6 +442,7 @@ mod test {
         // Albums with album title, song title, track number
         let query = TableQuery {
             entity: album,
+            id: None,
             attributes: HashMap::from([(album_title, OutputIndex(0))]),
             outgoing_relation_attributes: HashMap::from([(
                 track,
@@ -425,8 +452,10 @@ mod test {
                 track,
                 HashMap::from([(song_title, OutputIndex(2))]),
             )]),
+            outgoing_relation_others: HashMap::new(),
             incoming_relation_attributes: HashMap::new(),
             incoming_relation_entity_attributes: HashMap::new(),
+            incoming_relation_others: HashMap::new(),
         };
 
         let mut outputs = query.execute(store);

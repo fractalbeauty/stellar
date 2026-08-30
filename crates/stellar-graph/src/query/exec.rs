@@ -64,8 +64,17 @@ pub enum SlotValue {
     SVEntityId(EntityId),
     SVRelationId(RelationId),
     SVValue(Value),
+    /// Values for multiple entities in a single slot/output. Used for attributes on related
+    /// entities: for a single entity, attributes on multiple related entities are returned as a
+    /// single cell in a single row.
     EntityValues(HashMap<EntityId, Value>),
+    /// Values for multiple relations in a single slot/output. Used for attributes on relations:
+    /// for a single entity, attributes on multiple relations are returned as a single cell in a
+    /// single row.
     RelationValues(HashMap<RelationId, Value>),
+    /// Maps relation IDs to the entity ID on other end, used for correlating EntityValues and
+    /// RelationValues from the same relation join.
+    RelationOthers(HashMap<RelationId, EntityId>),
 }
 
 #[derive(Debug, Clone)]
@@ -390,6 +399,7 @@ pub struct CollectRelationAttributesOp {
     key_slot: SlotIndex,
     relation_attribute_slots: HashMap<AttributeKind, SlotIndex>,
     other_attribute_slots: HashMap<AttributeKind, SlotIndex>,
+    others_slot: Option<SlotIndex>,
 }
 
 impl CollectRelationAttributesOp {
@@ -403,6 +413,7 @@ impl CollectRelationAttributesOp {
         other_slot: SlotIndex,
         relation_attribute_slots: HashMap<AttributeKind, SlotIndex>,
         other_attribute_slots: HashMap<AttributeKind, SlotIndex>,
+        others_slot: Option<SlotIndex>,
     ) -> Self {
         let grouped = Grouped::new(inner, move |ctx| {
             let Some(key) = ctx.get_slot(key_slot) else {
@@ -445,6 +456,7 @@ impl CollectRelationAttributesOp {
             key_slot,
             relation_attribute_slots,
             other_attribute_slots,
+            others_slot,
         }
     }
 }
@@ -463,8 +475,11 @@ impl Op for CollectRelationAttributesOp {
             .values()
             .map(|&slot| (slot, HashMap::new()))
             .collect::<HashMap<_, _>>();
+        let mut relation_others = HashMap::new();
 
         for (relation, other) in rows {
+            relation_others.insert(relation, other);
+
             self.store
                 .scan_relation_attribute_by_id(relation)
                 .for_each(|(attribute, value)| {
@@ -514,6 +529,9 @@ impl Op for CollectRelationAttributesOp {
         for (slot, values) in entity_attribute_values {
             ctx.set_slot(slot, SlotValue::EntityValues(values));
         }
+        if let Some(slot) = self.others_slot {
+            ctx.set_slot(slot, SlotValue::RelationOthers(relation_others));
+        }
 
         Some(())
     }
@@ -527,6 +545,7 @@ impl Debug for CollectRelationAttributesOp {
             .field("key_slot", &self.key_slot)
             .field("relation_attribute_slots", &self.relation_attribute_slots)
             .field("other_attribute_slots", &self.other_attribute_slots)
+            .field("others_slot", &self.others_slot)
             .finish()
     }
 }
@@ -1054,6 +1073,7 @@ mod test {
             SlotIndex(3),
             HashMap::from([(attribute, SlotIndex(5))]),
             HashMap::from([(attribute, SlotIndex(6))]),
+            None,
         );
 
         let mut result = Vec::new();

@@ -81,6 +81,7 @@ fun InspectPane(
             val query =
                 TableQuery(
                     entity = selectedEntity,
+                    id = null,
                     attributes =
                         selectedEntitySchema.attributes.entries.associate { (attribute, schema) ->
                             val outputIndex = columns.size
@@ -130,6 +131,7 @@ fun InspectPane(
                                     attribute to outputIndex.toUShort()
                                 }
                         },
+                    outgoingRelationTargets = emptyMap(),
                     incomingRelationAttributes =
                         incomingRelations.entries.associate { (relation, relationSchema) ->
                             relation to
@@ -165,6 +167,7 @@ fun InspectPane(
                                     attribute to outputIndex.toUShort()
                                 }
                         },
+                    incomingRelationTargets = emptyMap(),
                 )
 
             query to columns
