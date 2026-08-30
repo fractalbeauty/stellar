@@ -1,4 +1,5 @@
 import gobley.gradle.GobleyHost
+import gobley.gradle.Variant
 import gobley.gradle.cargo.dsl.appleMobile
 import gobley.gradle.cargo.dsl.jvm
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -79,6 +80,9 @@ kotlin {
 
 cargo {
     packageDirectory = rootProject.layout.projectDirectory.dir("crates/stellar")
+
+    // Allow setting `-Pnet.trillia.stellar.rust.variant=release` to build Rust in release mode
+    jvmVariant = Variant(findProperty("net.trillia.stellar.rust.variant")?.toString() ?: "debug")
 
     builds.jvm {
         // Build desktop for the host target only

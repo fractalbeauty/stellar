@@ -27,7 +27,7 @@ run-desktop-hot:
   ./gradlew :desktopApp:hotRun --auto
 
 run-desktop-release:
-  ./gradlew :desktopApp:runDistributable
+  ./gradlew :desktopApp:runDistributable -Pnet.trillia.stellar.rust.variant=release
 
 run-android:
   ./gradlew :androidApp:installDebug

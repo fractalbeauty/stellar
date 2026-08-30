@@ -690,7 +690,10 @@ fn run_core_thread(
     devices_change_handler: Arc<dyn DevicesChangeHandler>,
     schema_change_handler: Arc<dyn SchemaChangeHandler>,
 ) -> Result<(), anyhow::Error> {
-    debug!("Core thread started");
+    debug!(
+        "Core thread started (debug_assertions={})",
+        cfg!(debug_assertions)
+    );
 
     let builder = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
