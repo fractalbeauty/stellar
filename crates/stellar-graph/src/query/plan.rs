@@ -2,12 +2,13 @@ use crate::{
     entity::{AttributeKind, EntityKind, RelationKind},
     query::exec::{
         CollectRelationAttributesOp, ExecutionContext, Op, RelationJoinDirection, RelationJoinOp,
-        ScanEntityKindOp, SlotIndex,
+        ScanEntityKindOp, SlotIndex, SlotValue,
     },
+    store::Store,
 };
 use std::collections::{HashMap, HashSet};
 
-struct TableQuery {
+pub struct TableQuery {
     entity: EntityKind,
 
     attributes: HashMap<AttributeKind, OutputIndex>,
@@ -28,7 +29,7 @@ struct TableQuery {
 pub struct OutputIndex(pub u16);
 
 impl TableQuery {
-    fn plan(&self, store: crate::store::Store) {
+    pub fn execute(&self, store: Store) -> Vec<Vec<Option<SlotValue>>> {
         // Generate increasing SlotIndexes
         let mut next_slot = 0;
         let mut slot = || {
@@ -227,7 +228,7 @@ impl TableQuery {
 
         let num_slots = next_slot;
 
-        // TODO: move this
+        // TODO: split plan/execute
         let mut ctx = ExecutionContext::new(store, num_slots);
         let mut all_outputs = Vec::new();
         loop {
@@ -245,7 +246,7 @@ impl TableQuery {
             all_outputs.push(outputs);
         }
 
-        dbg!(all_outputs);
+        all_outputs
     }
 }
 
@@ -256,7 +257,10 @@ mod test {
             AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp,
             Value, Version,
         },
-        query::plan::{OutputIndex, TableQuery},
+        query::{
+            exec::SlotValue,
+            plan::{OutputIndex, TableQuery},
+        },
         store::{
             EntityAttributeValue, EntityMetadataValue, RelationAttributeValue,
             RelationMetadataValue, Store,
@@ -416,7 +420,38 @@ mod test {
             incoming_relation_entity_attributes: HashMap::new(),
         };
 
-        query.plan(store);
-        panic!();
+        let mut outputs = query.execute(store);
+        outputs.sort_by_key(|outputs| match &outputs[0] {
+            Some(SlotValue::Value(Value::Text(text))) => text.clone(),
+            _ => "".to_string(),
+        });
+
+        assert_eq!(
+            outputs,
+            vec![
+                vec![
+                    Some(SlotValue::Value(album1_title)),
+                    Some(SlotValue::RelationValues(HashMap::from([
+                        (album1track1, album1track1_number),
+                        (album1track2, album1track2_number)
+                    ]))),
+                    Some(SlotValue::EntityValues(HashMap::from([
+                        (album1song1, album1song1_title),
+                        (album1song2, album1song2_title)
+                    ])))
+                ],
+                vec![
+                    Some(SlotValue::Value(album2_title)),
+                    Some(SlotValue::RelationValues(HashMap::from([
+                        (album2track1, album2track1_number),
+                        (album2track2, album2track2_number)
+                    ]))),
+                    Some(SlotValue::EntityValues(HashMap::from([
+                        (album2song1, album2song1_title),
+                        (album2song2, album2song2_title)
+                    ])))
+                ]
+            ]
+        );
     }
 }
