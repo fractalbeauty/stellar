@@ -86,6 +86,7 @@ fun InspectPane(
                             is Value.Bytes -> "<bytes>"
                             is Value.Number -> attributeValue.v1.toString()
                             is Value.Text -> attributeValue.v1
+                            is Value.Bool -> attributeValue.v1.toString()
                         }
                     name to value
                 }
