@@ -7,7 +7,6 @@ import androidx.compose.ui.window.awaitApplication
 import kotlinx.coroutines.runBlocking
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
-import uniffi.stellar.logError
 
 fun main() =
     runBlocking {
@@ -18,7 +17,7 @@ fun main() =
             try {
                 Core.spawn(profile = "default", devicesChangeHandler = devicesManager, schemaChangeHandler = schemaManager)
             } catch (e: CoreException) {
-                logError("Failed to spawn core: $e")
+                logCoreError(e, "Failed to spawn core")
                 return@runBlocking
             }
 

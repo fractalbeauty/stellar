@@ -17,9 +17,9 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.trillia.stellar.Button
 import net.trillia.stellar.SchemaManager
+import net.trillia.stellar.logCoreError
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
-import uniffi.stellar.logError
 import uniffi.stellar_graph.AttributeKind
 import uniffi.stellar_graph.AttributeSchema
 import uniffi.stellar_graph.RelationKind
@@ -50,7 +50,7 @@ fun SchemaEditor(
                             try {
                                 core.createSchemaEntityAttribute(entityKind, "Attribute", ValueKind.TEXT)
                             } catch (e: CoreException) {
-                                logError("$e")
+                                logCoreError(e)
                             }
                         }
                     })
@@ -60,7 +60,7 @@ fun SchemaEditor(
                             try {
                                 core.deleteSchemaEntity(entityKind)
                             } catch (e: CoreException) {
-                                logError("$e")
+                                logCoreError(e)
                             }
                         }
                     })
@@ -72,7 +72,7 @@ fun SchemaEditor(
                             try {
                                 core.deleteSchemaEntityAttribute(entityKind, attributeKind)
                             } catch (e: CoreException) {
-                                logError("$e")
+                                logCoreError(e)
                             }
                         }
                     })
@@ -115,7 +115,7 @@ fun SchemaEditor(
                 try {
                     core.createSchemaEntity("Entity")
                 } catch (e: CoreException) {
-                    logError("$e")
+                    logCoreError(e)
                 }
             }
         })
@@ -125,7 +125,7 @@ fun SchemaEditor(
                 try {
                     core.dangerouslyResetSchema()
                 } catch (e: CoreException) {
-                    logError("$e")
+                    logCoreError(e)
                 }
             }
         })
@@ -158,7 +158,7 @@ internal fun Relation(
                 try {
                     core.createSchemaRelationAttribute(relationKind, "Attribute", ValueKind.TEXT)
                 } catch (e: CoreException) {
-                    logError("$e")
+                    logCoreError(e)
                 }
             }
         })
@@ -168,7 +168,7 @@ internal fun Relation(
                 try {
                     core.deleteSchemaRelation(relationKind)
                 } catch (e: CoreException) {
-                    logError("$e")
+                    logCoreError(e)
                 }
             }
         })
@@ -180,7 +180,7 @@ internal fun Relation(
                 try {
                     core.deleteSchemaRelationAttribute(relationKind, attributeKind)
                 } catch (e: CoreException) {
-                    logError("$e")
+                    logCoreError(e)
                 }
             }
         })

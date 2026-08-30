@@ -8,9 +8,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import net.trillia.stellar.DevicesManager
+import net.trillia.stellar.logCoreError
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
-import uniffi.stellar.logError
 import uniffi.stellar_sync.DevicesState
 import uniffi.stellar_uniffi.PublicKey
 import kotlin.uuid.Uuid
@@ -47,7 +47,7 @@ class SessionsViewModel(
                     it.copy(verificationUriComplete = verificationUriComplete)
                 }
             } catch (e: CoreException) {
-                logError("Error starting device code flow: $e")
+                logCoreError(e, "Error starting device code flow")
             }
         }
     }
@@ -57,7 +57,7 @@ class SessionsViewModel(
             try {
                 core.revokeAuthSession(session)
             } catch (e: CoreException) {
-                logError("Error revoking session: $e")
+                logCoreError(e, "Error revoking session")
             }
         }
     }

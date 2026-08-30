@@ -42,6 +42,7 @@ import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
 import uniffi.stellar.Core
+import uniffi.stellar.CoreException
 import uniffi.stellar_graph.Value
 import kotlin.collections.associate
 
@@ -52,7 +53,12 @@ fun InspectPane(
 ) {
     val entities =
         remember {
-            core.getEntities()
+            try {
+                core.getEntities()
+            } catch (e: CoreException) {
+                logCoreError(e)
+                throw e
+            }
         }
     val schemaNullable by schemaManager.schemaState.collectAsState()
 

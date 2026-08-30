@@ -19,10 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.trillia.stellar.Button
+import net.trillia.stellar.logCoreError
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
 import uniffi.stellar.CoreImportTask
-import uniffi.stellar.logError
 import uniffi.stellar.pickFolders
 import uniffi.stellar_import.ImportEventHandler
 import uniffi.stellar_import.ImportEventScannedFile
@@ -62,7 +62,7 @@ fun Importer(core: Core) {
                         },
                     )
             } catch (e: CoreException) {
-                logError("$e")
+                logCoreError(e)
             }
         }
     }
@@ -72,7 +72,7 @@ fun Importer(core: Core) {
             try {
                 import?.import()
             } catch (e: CoreException) {
-                logError("$e")
+                logCoreError(e)
             }
         }
     }
