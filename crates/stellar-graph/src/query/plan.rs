@@ -181,11 +181,14 @@ impl TableQuery {
                 entity_id,
                 relation_slot,
                 other_slot,
-                outgoing_relation_attributes.get(relation).unwrap().clone(),
+                outgoing_relation_attributes
+                    .get(relation)
+                    .cloned()
+                    .unwrap_or_default(),
                 outgoing_relation_entity_attributes
                     .get(relation)
-                    .unwrap()
-                    .clone(),
+                    .cloned()
+                    .unwrap_or_default(),
             ));
         }
         for relation in incoming_relations {
@@ -212,11 +215,14 @@ impl TableQuery {
                 entity_id,
                 relation_slot,
                 other_slot,
-                incoming_relation_attributes.get(relation).unwrap().clone(),
+                incoming_relation_attributes
+                    .get(relation)
+                    .cloned()
+                    .unwrap_or_default(),
                 incoming_relation_entity_attributes
                     .get(relation)
-                    .unwrap()
-                    .clone(),
+                    .cloned()
+                    .unwrap_or_default(),
             ));
         }
 
