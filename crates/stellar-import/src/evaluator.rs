@@ -5,7 +5,6 @@ use crate::{
 use lofty::tag::{ItemKey, Tag};
 use std::{
     collections::{HashMap, hash_map::Entry},
-    iter,
     path::PathBuf,
     sync::Arc,
 };
@@ -73,17 +72,17 @@ impl<'a> Evaluator<'a> {
                 entity,
                 audio_resource,
                 HashMap::new(),
-                iter::empty(),
+                &[],
             );
         }
 
         for (kind, created_entities) in &self.changes.create_entities {
             let existing = self.database.get_entities_by_kind(*kind)?;
 
-            let key_attributes = self.rules.iter_entity_key_attributes(*kind);
+            let key_attributes = self.rules.entity_key_attributes(*kind);
 
             // If there are no key attributes, don't merge anything
-            if key_attributes.len() == 0 {
+            if key_attributes.is_empty() {
                 continue;
             }
 
@@ -92,8 +91,8 @@ impl<'a> Evaluator<'a> {
                 .iter()
                 .filter_map(|(id, existing)| {
                     let mut values = Vec::with_capacity(key_attributes.len());
-                    for key_attribute in key_attributes.clone() {
-                        let Some(value) = existing.attributes.get(&key_attribute) else {
+                    for key_attribute in key_attributes {
+                        let Some(value) = existing.attributes.get(key_attribute) else {
                             return None;
                         };
                         values.push(value.value.clone());
@@ -105,8 +104,8 @@ impl<'a> Evaluator<'a> {
 
             'entity: for created_entity in created_entities {
                 let mut values = Vec::with_capacity(key_attributes.len());
-                for key_attribute in key_attributes.clone() {
-                    let Some(value) = created_entity.attributes.get(&key_attribute) else {
+                for key_attribute in key_attributes {
+                    let Some(value) = created_entity.attributes.get(key_attribute) else {
                         continue 'entity;
                     };
                     values.push(value.clone());
@@ -136,7 +135,7 @@ impl<'a> Evaluator<'a> {
         relation_rule: &RelationRule,
     ) {
         let other_attributes = file.attributes(&relation_rule.other_attributes);
-        let other_key_attributes = self.rules.iter_entity_key_attributes(relation_rule.other);
+        let other_key_attributes = self.rules.entity_key_attributes(relation_rule.other);
 
         let other = self.changes.find_or_create_entity(
             relation_rule.other,
@@ -150,9 +149,7 @@ impl<'a> Evaluator<'a> {
         };
 
         let relation_attributes = file.attributes(&relation_rule.relation_attributes);
-        let relation_key_attributes = self
-            .rules
-            .iter_relation_key_attributes(relation_rule.relation);
+        let relation_key_attributes = self.rules.relation_key_attributes(relation_rule.relation);
 
         self.changes.find_or_create_relation(
             relation_rule.relation,
@@ -216,10 +213,10 @@ impl Changes {
         &mut self,
         entity: EntityKind,
         attributes: &HashMap<AttributeKind, Value>,
-        mut key_attributes: impl ExactSizeIterator<Item = AttributeKind>,
+        key_attributes: &[AttributeKind],
     ) -> Option<&mut CreateEntityChange> {
         // If there are no key attributes, always create a new entity
-        if key_attributes.len() == 0 {
+        if key_attributes.is_empty() {
             return None;
         }
 
@@ -230,9 +227,9 @@ impl Changes {
 
         // Match by key attributes
         entities.iter_mut().find(|created_entity| {
-            key_attributes.all(|key_attribute| {
-                let incoming_value = attributes.get(&key_attribute);
-                let created_value = created_entity.attributes.get(&key_attribute);
+            key_attributes.iter().all(|key_attribute| {
+                let incoming_value = attributes.get(key_attribute);
+                let created_value = created_entity.attributes.get(key_attribute);
 
                 match (incoming_value, created_value) {
                     // Match if the value of the key attribute matches
@@ -248,7 +245,7 @@ impl Changes {
         &mut self,
         entity: EntityKind,
         attributes: HashMap<AttributeKind, Value>,
-        key_attributes: impl ExactSizeIterator<Item = AttributeKind>,
+        key_attributes: &[AttributeKind],
     ) -> EntityId {
         let existing = self.find_entity(entity, &attributes, key_attributes);
 
@@ -285,7 +282,7 @@ impl Changes {
         source: EntityId,
         target: EntityId,
         attributes: &HashMap<AttributeKind, Value>,
-        mut key_attributes: impl ExactSizeIterator<Item = AttributeKind>,
+        key_attributes: &[AttributeKind],
     ) -> Option<&mut CreateRelationChange> {
         let Some(relations) = self.create_relations.get_mut(&relation) else {
             // No relations of kind created yet
@@ -298,15 +295,15 @@ impl Changes {
         });
 
         // If there are no key attributes, return the first match
-        if key_attributes.len() == 0 {
+        if key_attributes.is_empty() {
             return entity_matches.next();
         }
 
         // Match by key attributes
         entity_matches.find(|created_relation| {
-            key_attributes.all(|key_attribute| {
-                let incoming_value = attributes.get(&key_attribute);
-                let created_value = created_relation.attributes.get(&key_attribute);
+            key_attributes.iter().all(|key_attribute| {
+                let incoming_value = attributes.get(key_attribute);
+                let created_value = created_relation.attributes.get(key_attribute);
 
                 match (incoming_value, created_value) {
                     // Match if the value of the key attribute matches
@@ -324,7 +321,7 @@ impl Changes {
         source: EntityId,
         target: EntityId,
         attributes: HashMap<AttributeKind, Value>,
-        key_attributes: impl ExactSizeIterator<Item = AttributeKind>,
+        key_attributes: &[AttributeKind],
     ) -> RelationId {
         let existing = self.find_relation(relation, source, target, &attributes, key_attributes);
 

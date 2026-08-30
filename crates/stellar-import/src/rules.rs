@@ -61,23 +61,17 @@ impl TagKind {
 }
 
 impl Rules {
-    pub fn iter_entity_key_attributes(
-        &self,
-        entity: EntityKind,
-    ) -> impl ExactSizeIterator<Item = AttributeKind> + Clone {
+    pub fn entity_key_attributes(&self, entity: EntityKind) -> &[AttributeKind] {
         self.entity_key_attributes
             .get(&entity)
-            .map(|attributes| attributes.into_iter().copied())
+            .map(Vec::as_slice)
             .unwrap_or_default()
     }
 
-    pub fn iter_relation_key_attributes(
-        &self,
-        relation: RelationKind,
-    ) -> impl ExactSizeIterator<Item = AttributeKind> + Clone {
+    pub fn relation_key_attributes(&self, relation: RelationKind) -> &[AttributeKind] {
         self.relation_key_attributes
             .get(&relation)
-            .map(|attributes| attributes.into_iter().copied())
+            .map(Vec::as_slice)
             .unwrap_or_default()
     }
 }
