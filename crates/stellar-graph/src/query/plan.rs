@@ -8,6 +8,7 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
+#[derive(uniffi::Record)]
 pub struct TableQuery {
     entity: EntityKind,
 
@@ -27,6 +28,8 @@ pub struct TableQuery {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutputIndex(pub u16);
+
+uniffi::custom_newtype!(OutputIndex, u16);
 
 impl TableQuery {
     pub fn execute(&self, store: Store) -> Vec<Vec<Option<SlotValue>>> {

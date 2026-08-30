@@ -11,6 +11,8 @@ use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
     ValueKind, Version,
 };
+use stellar_graph::query::exec::SlotValue;
+use stellar_graph::query::plan::TableQuery;
 use stellar_graph::schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_import::ports::{ImportDatabaseAdapter, ImportSchemaPort};
@@ -623,6 +625,10 @@ impl Core {
         )?;
 
         Ok(CoreImportTask { inner: import_task })
+    }
+
+    pub fn table_query(&self, query: TableQuery) -> Result<Vec<Vec<Option<SlotValue>>>, CoreError> {
+        Ok(self.database.table_query(&query)?)
     }
 }
 

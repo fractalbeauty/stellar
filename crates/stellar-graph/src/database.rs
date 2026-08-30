@@ -1,5 +1,6 @@
 use crate::{
     entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, Version},
+    query::{exec::SlotValue, plan::TableQuery},
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
         RelationData, RelationMetadataValue, Store,
@@ -19,6 +20,13 @@ impl Database {
         let store = Store::open(path)?;
 
         Ok(Self { store })
+    }
+
+    pub fn table_query(
+        &self,
+        query: &TableQuery,
+    ) -> Result<Vec<Vec<Option<SlotValue>>>, anyhow::Error> {
+        Ok(query.execute(self.store.clone()))
     }
 
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {

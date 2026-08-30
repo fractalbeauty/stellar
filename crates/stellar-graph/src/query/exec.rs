@@ -57,7 +57,7 @@ impl ExecutionContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotIndex(pub u16);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
 pub enum SlotValue {
     EntityId(EntityId),
     RelationId(RelationId),
