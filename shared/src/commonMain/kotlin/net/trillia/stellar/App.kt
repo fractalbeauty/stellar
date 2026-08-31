@@ -27,7 +27,7 @@ fun App(
         Column(
             modifier =
                 Modifier
-                    .background(Color(0xFFFAFAFA))
+                    .background(AppColors.Background)
                     .safeContentPadding()
                     .fillMaxSize(),
         ) {

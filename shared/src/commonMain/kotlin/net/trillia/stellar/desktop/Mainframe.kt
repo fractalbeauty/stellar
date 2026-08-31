@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import net.trillia.stellar.AppColors
 import net.trillia.stellar.DevicesManager
 import net.trillia.stellar.InspectPane
 import net.trillia.stellar.SchemaManager
@@ -123,7 +124,8 @@ fun SidebarTitle(label: String) {
     Text(
         label,
         fontSize = 15.sp,
-        fontWeight = FontWeight.SemiBold,
+        fontWeight = FontWeight.Bold,
+        color = AppColors.TextSecondary,
         modifier = Modifier.padding(start = 4.dp)
     )
 }
@@ -132,9 +134,7 @@ fun SidebarTitle(label: String) {
 fun SidebarItem(label: String, isSelected: Boolean, onClick: () -> Unit) {
     val tahoma = FontFamily(Font(Res.font.tahoma))
     val cBg = Color.Transparent
-    val cBgSel = Color(0xFFBBDFFF)
-    val cBgHl = Color(0xFFCCE7FF)
-    val bg = Brush.verticalGradient(listOf(cBgHl, cBgSel), 4f, 15f)
+    val bg = Brush.verticalGradient(listOf(AppColors.PrimaryHl, AppColors.Primary), 4f, 15f)
 
     Row(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).run({

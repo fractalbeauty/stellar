@@ -10,7 +10,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.dp
@@ -57,7 +56,3 @@ fun <Row> TableRow(
 }
 
 val tableRowHeight = 20.dp
-
-val tableRowColorPrimary = Color(0xFFFAFAFA)
-val tableRowColorSecondary = Color(0xFFEEEEEE)
-val tableRowColorSelected = Color(0xFFB0D3FF)

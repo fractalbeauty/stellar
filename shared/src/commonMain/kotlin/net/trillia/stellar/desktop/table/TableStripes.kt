@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import net.trillia.stellar.AppColors
 
 /**
  * Draws the table's background stripes.
@@ -33,9 +34,9 @@ fun TableStripes(
                 while (offsetY < size.height) {
                     val color =
                         when {
-                            itemIndex == selectedItemListIndex -> tableRowColorSelected
-                            itemIndex % 2 == 1 -> tableRowColorSecondary
-                            else -> tableRowColorPrimary
+                            itemIndex == selectedItemListIndex -> AppColors.TableRowSelected
+                            itemIndex % 2 == 1 -> AppColors.TableRowSecondary
+                            else -> AppColors.TableRowPrimary
                         }
                     drawRect(
                         color = color,
