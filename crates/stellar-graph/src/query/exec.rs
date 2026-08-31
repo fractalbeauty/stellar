@@ -553,6 +553,10 @@ pub struct CollectRelationAttributesOp {
     relation_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
     other_attribute_outputs: HashMap<AttributeKind, SlotIndex>,
     others_output: Option<SlotIndex>,
+
+    /// Caches resolved attributes for relation entities, since the same entity can be the `other`
+    /// side of multiple relations (e.g. an album with many tracks pointing from it).
+    other_attribute_cache: HashMap<EntityId, Vec<(SlotIndex, Value)>>,
 }
 
 impl CollectRelationAttributesOp {
@@ -610,6 +614,8 @@ impl CollectRelationAttributesOp {
             relation_attribute_outputs,
             other_attribute_outputs,
             others_output,
+
+            other_attribute_cache: HashMap::new(),
         }
     }
 }
@@ -655,26 +661,42 @@ impl Op for CollectRelationAttributesOp {
                         .insert(relation, value.value);
                 });
 
-            self.store
-                .scan_entity_attribute_by_id(other)
-                .for_each(|(attribute, value)| {
-                    let Some(slot) = self.other_attribute_outputs.get(&attribute).copied() else {
-                        return;
-                    };
-
-                    let value = match value.decode() {
-                        Ok(value) => value,
-                        Err(e) => {
-                            tracing::error!(?e, "error parsing entity attribute value");
-                            return;
-                        }
-                    };
-
+            // TODO: maybe heuristically disable building cache when cardinality is low
+            if let Some(cached) = self.other_attribute_cache.get(&other) {
+                for (slot, value) in cached {
                     entity_attribute_values
-                        .entry(slot)
+                        .entry(*slot)
                         .or_default()
-                        .insert(other, value.value);
-                });
+                        .insert(other, value.clone());
+                }
+            } else {
+                let mut resolved = Vec::new();
+
+                self.store
+                    .scan_entity_attribute_by_id(other)
+                    .for_each(|(attribute, value)| {
+                        let Some(slot) = self.other_attribute_outputs.get(&attribute).copied()
+                        else {
+                            return;
+                        };
+
+                        let value = match value.decode() {
+                            Ok(value) => value,
+                            Err(e) => {
+                                tracing::error!(?e, "error parsing entity attribute value");
+                                return;
+                            }
+                        };
+
+                        entity_attribute_values
+                            .entry(slot)
+                            .or_default()
+                            .insert(other, value.value.clone());
+                        resolved.push((slot, value.value));
+                    });
+
+                self.other_attribute_cache.insert(other, resolved);
+            }
         }
 
         for (slot, values) in relation_attribute_values {
@@ -703,6 +725,7 @@ impl Debug for CollectRelationAttributesOp {
             )
             .field("other_attribute_outputs", &self.other_attribute_outputs)
             .field("others_output", &self.others_output)
+            .field("other_attribute_cache", &"<other_attribute_cache>")
             .finish()
     }
 }
