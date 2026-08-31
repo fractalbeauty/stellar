@@ -27,18 +27,18 @@ import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
 import uniffi.stellar.Core
-import uniffi.stellar.CoreException
 import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
 import uniffi.stellar_graph.SlotValue
 import uniffi.stellar_graph.TableQuery
+import uniffi.stellar_graph.Value
 import kotlin.time.measureTimedValue
 
 @Composable
 fun InspectPane(
     core: Core,
     schemaManager: SchemaManager,
-    selectedEntity: EntityKind
+    selectedEntity: EntityKind,
 ) {
 //    val entities =
 //        remember {
@@ -76,7 +76,7 @@ fun InspectPane(
                                     id = outputIndex.toString(),
                                     header = schema.name,
                                     initialWidth = 200.dp,
-                                    accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                    accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
                                     renderer = { TableCellText(it) },
                                 ),
                             )
@@ -92,7 +92,7 @@ fun InspectPane(
                                             id = outputIndex.toString(),
                                             header = "${relationSchema.name}.${attributeSchema.name}",
                                             initialWidth = 200.dp,
-                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
                                             renderer = { TableCellText(it) },
                                         ),
                                     )
@@ -110,7 +110,7 @@ fun InspectPane(
                                             id = outputIndex.toString(),
                                             header = "${otherSchema.name}.${attributeSchema.name}",
                                             initialWidth = 200.dp,
-                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
                                             renderer = { TableCellText(it) },
                                         ),
                                     )
@@ -128,7 +128,7 @@ fun InspectPane(
                                             id = outputIndex.toString(),
                                             header = "${relationSchema.name}.${attributeSchema.name}",
                                             initialWidth = 200.dp,
-                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
                                             renderer = { TableCellText(it) },
                                         ),
                                     )
@@ -146,7 +146,7 @@ fun InspectPane(
                                             id = outputIndex.toString(),
                                             header = "${otherSchema.name}.${attributeSchema.name}",
                                             initialWidth = 200.dp,
-                                            accessor = { row -> row.getOrNull(outputIndex).toString() },
+                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
                                             renderer = { TableCellText(it) },
                                         ),
                                     )
@@ -210,6 +210,46 @@ fun InspectPane(
 //        selected?.let { idx -> data.getOrNull(idx)?.let { Inspector(it) } }
     }
 }
+
+fun formatSlotValue(slot: SlotValue?): String =
+    when (slot) {
+        is SlotValue.SvValue -> {
+            formatValue(slot.v1)
+        }
+
+        is SlotValue.SvEntityId -> {
+            slot.v1.toString()
+        }
+
+        is SlotValue.SvRelationId -> {
+            slot.v1.toString()
+        }
+
+        is SlotValue.EntityValues -> {
+            slot.v1.values.joinToString { formatValue(it) }
+        }
+
+        is SlotValue.RelationOthers -> {
+            slot.v1.toString()
+        }
+
+        is SlotValue.RelationValues -> {
+            slot.v1.values.joinToString { formatValue(it) }
+        }
+
+        null -> {
+            "null"
+        }
+    }
+
+fun formatValue(value: Value?): String =
+    when (value) {
+        is Value.Bool -> value.v1.toString()
+        is Value.Bytes -> "<bytes>"
+        is Value.Number -> value.v1.toString()
+        is Value.Text -> value.v1
+        null -> "null"
+    }
 
 val inspectorFieldLabelHeight = 24.dp
 
