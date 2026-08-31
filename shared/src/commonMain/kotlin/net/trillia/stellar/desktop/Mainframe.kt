@@ -2,6 +2,8 @@ package net.trillia.stellar.desktop
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -37,9 +40,14 @@ import uniffi.stellar.Core
 import uniffi.stellar_graph.EntityKind
 
 sealed class ScreenSelection {
-    data class Entity(val kind: EntityKind) : ScreenSelection()
+    data class Entity(
+        val kind: EntityKind,
+    ) : ScreenSelection()
+
     data object Import : ScreenSelection()
+
     data object Schema : ScreenSelection()
+
     data object Sessions : ScreenSelection()
 }
 
@@ -56,18 +64,28 @@ fun Mainframe(
             Sidebar(schemaManager, sel, setSel = { sel = it })
             // And now the screen
             when (sel) {
-                is ScreenSelection.Entity -> InspectPane(
-                    core = core,
-                    schemaManager = schemaManager,
-                    (sel as ScreenSelection.Entity).kind
-                )
+                is ScreenSelection.Entity -> {
+                    InspectPane(
+                        core = core,
+                        schemaManager = schemaManager,
+                        (sel as ScreenSelection.Entity).kind,
+                    )
+                }
 
-                ScreenSelection.Import -> Importer(core = core)
-                ScreenSelection.Schema -> SchemaEditor(core, schemaManager)
-                ScreenSelection.Sessions -> SessionsScreen(
-                    core = core,
-                    devicesManager = devicesManager
-                )
+                ScreenSelection.Import -> {
+                    Importer(core = core)
+                }
+
+                ScreenSelection.Schema -> {
+                    SchemaEditor(core, schemaManager)
+                }
+
+                ScreenSelection.Sessions -> {
+                    SessionsScreen(
+                        core = core,
+                        devicesManager = devicesManager,
+                    )
+                }
 
                 null -> {}
             }
@@ -76,13 +94,13 @@ fun Mainframe(
 }
 
 @Composable
-fun Topbar() {
-    return Row(Modifier.fillMaxWidth().height(60.dp).background(Color.hsl(0.0F, 0.0F, 0.9F))) { }
-}
+fun Topbar() = Row(Modifier.fillMaxWidth().height(60.dp).background(Color.hsl(0.0F, 0.0F, 0.9F))) { }
 
 @Composable
 fun Sidebar(
-    schemaManager: SchemaManager, sel: ScreenSelection?, setSel: (ScreenSelection) -> Unit
+    schemaManager: SchemaManager,
+    sel: ScreenSelection?,
+    setSel: (ScreenSelection) -> Unit,
 ) {
     val schemaNullable by schemaManager.schemaState.collectAsState()
 
@@ -93,29 +111,39 @@ fun Sidebar(
         schema.graph.entities.forEach {
             SidebarItem(
                 it.value.name,
-                isSelected = when (sel) {
-                    is ScreenSelection.Entity -> sel.kind == it.key
-                    else -> false
-                },
+                isSelected =
+                    when (sel) {
+                        is ScreenSelection.Entity -> sel.kind == it.key
+                        else -> false
+                    },
                 onClick = { setSel(ScreenSelection.Entity(it.key)) },
             )
         }
         SidebarTitle("More items")
         SidebarItem(
-            "Import", when (sel) {
+            "Import",
+            when (sel) {
                 is ScreenSelection.Import -> true
                 else -> false
-            }, onClick = { setSel(ScreenSelection.Import) })
+            },
+            onClick = { setSel(ScreenSelection.Import) },
+        )
         SidebarItem(
-            "Schema", when (sel) {
+            "Schema",
+            when (sel) {
                 is ScreenSelection.Schema -> true
                 else -> false
-            }, onClick = { setSel(ScreenSelection.Schema) })
+            },
+            onClick = { setSel(ScreenSelection.Schema) },
+        )
         SidebarItem(
-            "Sessions", when (sel) {
+            "Sessions",
+            when (sel) {
                 is ScreenSelection.Sessions -> true
                 else -> false
-            }, onClick = { setSel(ScreenSelection.Sessions) })
+            },
+            onClick = { setSel(ScreenSelection.Sessions) },
+        )
     }
 }
 
@@ -126,20 +154,32 @@ fun SidebarTitle(label: String) {
         fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
         color = AppColors.TextSecondary,
-        modifier = Modifier.padding(start = 4.dp)
+        modifier = Modifier.padding(start = 4.dp),
     )
 }
 
 @Composable
-fun SidebarItem(label: String, isSelected: Boolean, onClick: () -> Unit) {
+fun SidebarItem(
+    label: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
     val tahoma = FontFamily(Font(Res.font.tahoma))
     val cBg = Color.Transparent
     val bg = Brush.verticalGradient(listOf(AppColors.PrimaryHl, AppColors.Primary), 4f, 15f)
 
     Row(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).run({
-            if (isSelected) background(bg) else background(cBg)
-        }),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false)
+                        onClick()
+                    }
+                }.run({
+                    if (isSelected) background(bg) else background(cBg)
+                }),
         horizontalArrangement = Arrangement.Start,
     ) {
         Text(
