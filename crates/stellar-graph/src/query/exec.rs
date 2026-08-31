@@ -639,43 +639,11 @@ impl Op for CollectRelationAttributesOp {
         for (relation, other) in rows {
             relation_others.insert(relation, other);
 
-            self.store
-                .scan_relation_attribute_by_id(relation)
-                .for_each(|(attribute, value)| {
-                    let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied()
-                    else {
-                        return;
-                    };
-
-                    let value = match value.decode() {
-                        Ok(value) => value,
-                        Err(e) => {
-                            tracing::error!(?e, "error parsing relation attribute value");
-                            return;
-                        }
-                    };
-
-                    relation_attribute_values
-                        .entry(slot)
-                        .or_default()
-                        .insert(relation, value.value);
-                });
-
-            // TODO: maybe heuristically disable building cache when cardinality is low
-            if let Some(cached) = self.other_attribute_cache.get(&other) {
-                for (slot, value) in cached {
-                    entity_attribute_values
-                        .entry(*slot)
-                        .or_default()
-                        .insert(other, value.clone());
-                }
-            } else {
-                let mut resolved = Vec::new();
-
+            if !self.relation_attribute_outputs.is_empty() {
                 self.store
-                    .scan_entity_attribute_by_id(other)
+                    .scan_relation_attribute_by_id(relation)
                     .for_each(|(attribute, value)| {
-                        let Some(slot) = self.other_attribute_outputs.get(&attribute).copied()
+                        let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied()
                         else {
                             return;
                         };
@@ -683,19 +651,55 @@ impl Op for CollectRelationAttributesOp {
                         let value = match value.decode() {
                             Ok(value) => value,
                             Err(e) => {
-                                tracing::error!(?e, "error parsing entity attribute value");
+                                tracing::error!(?e, "error parsing relation attribute value");
                                 return;
                             }
                         };
 
-                        entity_attribute_values
+                        relation_attribute_values
                             .entry(slot)
                             .or_default()
-                            .insert(other, value.value.clone());
-                        resolved.push((slot, value.value));
+                            .insert(relation, value.value);
                     });
+            }
 
-                self.other_attribute_cache.insert(other, resolved);
+            if !self.other_attribute_outputs.is_empty() {
+                // TODO: maybe heuristically disable building cache when cardinality is low
+                if let Some(cached) = self.other_attribute_cache.get(&other) {
+                    for (slot, value) in cached {
+                        entity_attribute_values
+                            .entry(*slot)
+                            .or_default()
+                            .insert(other, value.clone());
+                    }
+                } else {
+                    let mut resolved = Vec::new();
+
+                    self.store
+                        .scan_entity_attribute_by_id(other)
+                        .for_each(|(attribute, value)| {
+                            let Some(slot) = self.other_attribute_outputs.get(&attribute).copied()
+                            else {
+                                return;
+                            };
+
+                            let value = match value.decode() {
+                                Ok(value) => value,
+                                Err(e) => {
+                                    tracing::error!(?e, "error parsing entity attribute value");
+                                    return;
+                                }
+                            };
+
+                            entity_attribute_values
+                                .entry(slot)
+                                .or_default()
+                                .insert(other, value.value.clone());
+                            resolved.push((slot, value.value));
+                        });
+
+                    self.other_attribute_cache.insert(other, resolved);
+                }
             }
         }
 
