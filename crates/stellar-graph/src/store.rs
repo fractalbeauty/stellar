@@ -15,7 +15,10 @@ pub struct Store {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
-        let database = Database::builder(path).open()?;
+        let database = Database::builder(path)
+            // Increase the max memory cache size to 256MB
+            .cache_size(256 * 1024 * 1024)
+            .open()?;
 
         let keyspace = database.keyspace("graph_v1", KeyspaceCreateOptions::default)?;
 
