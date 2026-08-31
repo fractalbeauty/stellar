@@ -15,7 +15,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import net.trillia.stellar.Button
 import net.trillia.stellar.SchemaManager
 import net.trillia.stellar.logCoreError
 import uniffi.stellar.Core

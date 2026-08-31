@@ -19,7 +19,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import net.trillia.stellar.Button
 import net.trillia.stellar.logCoreError
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException

@@ -13,7 +13,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import net.trillia.stellar.Button
+import net.trillia.stellar.desktop.Button
 import net.trillia.stellar.DevicesManager
 import uniffi.stellar.Core
 import uniffi.stellar_sync.DevicesStateDevice
