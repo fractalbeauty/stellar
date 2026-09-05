@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import net.trillia.stellar.desktop.formatDurationSlot
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
@@ -282,6 +283,19 @@ fun buildEntityTableQuery(
                 AttributeKind.AudioResourceBitDepth to bitDepthOutput.toUShort(),
                 AttributeKind.AudioResourceChannels to channelsOutput.toUShort(),
             )
+
+        columns.add(
+            TableColumnDefinition<List<SlotValue?>, String>(
+                id = nextColumnId(),
+                header = "Duration",
+                initialWidth = 200.dp,
+                accessor = { row ->
+                    val duration = row.getOrNull(durationOutput)
+                    formatDurationSlot(duration)
+                },
+                renderer = { TableCellText(it) },
+            ),
+        )
 
         columns.add(
             TableColumnDefinition<List<SlotValue?>, String>(
