@@ -2,7 +2,11 @@ use crate::{
     ports::ImportDatabasePort,
     rules::{AttributeRule, RelationRule, RelationRuleDirection, Rules},
 };
-use lofty::tag::{ItemKey, Tag};
+use lofty::{
+    file::FileType,
+    properties::FileProperties,
+    tag::{ItemKey, Tag},
+};
 use std::{
     collections::{HashMap, hash_map::Entry},
     path::PathBuf,
@@ -12,7 +16,9 @@ use stellar_graph::entity::{
     AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Value, ValueKind,
 };
 use stellar_resources::audio::{
-    AUDIO_RESOURCE_ENTITY, AUDIO_RESOURCE_LOCATION, AudioResourceLocation,
+    AUDIO_RESOURCE_BIT_DEPTH, AUDIO_RESOURCE_BITRATE, AUDIO_RESOURCE_CHANNELS,
+    AUDIO_RESOURCE_DURATION, AUDIO_RESOURCE_ENTITY, AUDIO_RESOURCE_LOCATION,
+    AUDIO_RESOURCE_SAMPLE_RATE, AUDIO_RESOURCE_SIZE, AudioResourceLocation,
 };
 
 pub struct Evaluator<'a> {
@@ -57,13 +63,48 @@ impl<'a> Evaluator<'a> {
                 self.handle_relation_rule(file, entity, relation_rule);
             }
 
-            let audio_resource_attributes = HashMap::from([(
-                AUDIO_RESOURCE_LOCATION,
-                Value::Bytes(AudioResourceLocation::encode(&AudioResourceLocation {
-                    device: self.device,
-                    path: file.path.clone(),
-                })),
-            )]);
+            // Build audio resource attributes
+            let location = Value::Bytes(AudioResourceLocation::encode(&AudioResourceLocation {
+                device: self.device,
+                path: file.path.clone(),
+            }));
+            let size = Value::number_from_f64(file.size as f64);
+            let duration = Value::number_from_f64(file.properties.duration().as_secs_f64());
+            // let codec =
+            let bitrate = file
+                .properties
+                .audio_bitrate()
+                .map(|bitrate| Value::number_from_f64(bitrate as f64))
+                .unwrap_or(Value::None);
+            let sample_rate = file
+                .properties
+                .sample_rate()
+                .map(|sample_rate| Value::number_from_f64(sample_rate as f64))
+                .unwrap_or(Value::None);
+            let bit_depth = file
+                .properties
+                .bit_depth()
+                .map(|bit_depth| Value::number_from_f64(bit_depth as f64))
+                .unwrap_or(Value::None);
+            let channels = file
+                .properties
+                .channels()
+                .map(|channels| Value::number_from_f64(channels as f64))
+                .unwrap_or(Value::None);
+            let audio_resource_attributes = HashMap::from([
+                // (AUDIO_RESOURCE_PROVIDER, provider),
+                (AUDIO_RESOURCE_LOCATION, location),
+                // (AUDIO_RESOURCE_HASH, Value::None),
+                (AUDIO_RESOURCE_SIZE, size),
+                (AUDIO_RESOURCE_DURATION, duration),
+                // (AUDIO_RESOURCE_CODEC, codec),
+                (AUDIO_RESOURCE_BITRATE, bitrate),
+                (AUDIO_RESOURCE_SAMPLE_RATE, sample_rate),
+                (AUDIO_RESOURCE_BIT_DEPTH, bit_depth),
+                (AUDIO_RESOURCE_CHANNELS, channels),
+            ]);
+
+            // Create audio resource
             let audio_resource = self
                 .changes
                 .create_entity(AUDIO_RESOURCE_ENTITY, audio_resource_attributes);
@@ -355,6 +396,9 @@ impl Changes {
 
 pub struct EvaluatorFile {
     pub path: PathBuf,
+    pub size: u64,
+    pub file_type: FileType,
+    pub properties: FileProperties,
     pub tags: Option<Tag>,
 }
 
@@ -397,8 +441,12 @@ mod test {
         ports::ImportDatabasePort,
         rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
     };
-    use lofty::tag::{Accessor, Tag};
-    use std::{collections::HashMap, path::PathBuf, sync::Arc};
+    use lofty::{
+        file::FileType,
+        properties::FileProperties,
+        tag::{Accessor, Tag},
+    };
+    use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
     use stellar_graph::{
         entity::{
             AttributeKind, AuthorId, EntityId, EntityKind, RelationKind, Timestamp, Value,
@@ -492,6 +540,17 @@ mod test {
 
         let files = [EvaluatorFile {
             path: PathBuf::from("test song.mp3"),
+            size: 4_000_000,
+            file_type: FileType::Mpeg,
+            properties: FileProperties::new(
+                Duration::from_mins(2),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             tags: Some({
                 let mut tag = Tag::new(lofty::tag::TagType::Id3v2);
                 tag.set_title("test song".to_string());

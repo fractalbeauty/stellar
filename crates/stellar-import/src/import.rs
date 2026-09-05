@@ -2,9 +2,20 @@ use crate::{
     evaluator::{Evaluator, EvaluatorFile},
     ports::{ImportDatabasePort, ImportSchemaPort},
 };
-use lofty::file::TaggedFileExt;
+use anyhow::Context;
+use lofty::{
+    file::{AudioFile, FileType, TaggedFile, TaggedFileExt},
+    probe::Probe,
+};
 use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs::{File, Metadata},
+    io::BufReader,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use stellar_graph::entity::AuthorId;
 use stellar_resources::audio::AUDIO_RESOURCE_ENTITY;
 use tokio::sync::mpsc;
@@ -190,7 +201,7 @@ impl Import {
                         return;
                     }
 
-                    let file = match lofty::read_from_path(&path) {
+                    let (file, metadata) = match read_tagged_file(&path) {
                         Ok(file) => file,
                         Err(e) => {
                             // TODO: report error to UI
@@ -198,6 +209,9 @@ impl Import {
                             return;
                         }
                     };
+
+                    let file_type = file.file_type();
+                    let properties = file.properties().clone();
 
                     let tags = file.primary_tag().or_else(|| file.first_tag());
 
@@ -238,6 +252,9 @@ impl Import {
 
                     let _ = message_tx.send(ImportMessage::ScannedFile(EvaluatorFile {
                         path,
+                        size: metadata.size(),
+                        file_type,
+                        properties,
                         tags: tags.cloned(),
                     }));
                 });
@@ -320,4 +337,18 @@ enum ImportMessage {
     Import,
 
     ScannedFile(EvaluatorFile),
+}
+
+// Similar to `lofty::read_from_path`, but calls `metadata()` on the opened file first
+fn read_tagged_file(path: &Path) -> Result<(TaggedFile, Metadata), anyhow::Error> {
+    let file_type = FileType::from_path(path).context("Unknown file type")?;
+
+    let file = File::open(path).context("Failed to open file")?;
+    let metadata = file.metadata().context("Failed to read file metadata")?;
+
+    let reader = BufReader::new(file);
+    let probe = Probe::with_file_type(reader, file_type);
+    let tagged_file = probe.read().context("Failed to read file")?;
+
+    Ok((tagged_file, metadata))
 }
