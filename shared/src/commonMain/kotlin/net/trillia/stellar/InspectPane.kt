@@ -21,9 +21,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import net.trillia.stellar.desktop.formatDurationSlot
+import net.trillia.stellar.desktop.formatSizeSlot
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
@@ -288,12 +290,25 @@ fun buildEntityTableQuery(
             TableColumnDefinition<List<SlotValue?>, String>(
                 id = nextColumnId(),
                 header = "Duration",
-                initialWidth = 200.dp,
+                initialWidth = 80.dp,
                 accessor = { row ->
                     val duration = row.getOrNull(durationOutput)
                     formatDurationSlot(duration)
                 },
-                renderer = { TableCellText(it) },
+                renderer = { TableCellText(it, textAlign = TextAlign.End) },
+            ),
+        )
+
+        columns.add(
+            TableColumnDefinition<List<SlotValue?>, String>(
+                id = nextColumnId(),
+                header = "Size",
+                initialWidth = 80.dp,
+                accessor = { row ->
+                    val size = row.getOrNull(sizeOutput)
+                    formatSizeSlot(size)
+                },
+                renderer = { TableCellText(it, textAlign = TextAlign.End) },
             ),
         )
 
