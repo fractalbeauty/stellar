@@ -52,6 +52,8 @@ class EntityKind(
 ) : BytesValue(bytes) {
     companion object {
         fun fromByteArray(bytes: ByteArray): EntityKind = EntityKind(bytes)
+
+        val AudioResource = fromByteArray(byteArrayOf(1, 0, 0, 0, 0))
     }
 }
 
@@ -68,5 +70,12 @@ class AttributeKind(
 ) : BytesValue(bytes) {
     companion object {
         fun fromByteArray(bytes: ByteArray): AttributeKind = AttributeKind(bytes)
+
+        val AudioResourceProvider = fromByteArray(byteArrayOf(1, 0, 0, 0, 0))
+        val AudioResourceLocation = fromByteArray(byteArrayOf(2, 0, 0, 0, 0))
+        val AudioResourceHash = fromByteArray(byteArrayOf(3, 0, 0, 0, 0))
+        val AudioResourceSize = fromByteArray(byteArrayOf(4, 0, 0, 0, 0))
+        val AudioResourceQuality = fromByteArray(byteArrayOf(5, 0, 0, 0, 0))
+        val AudioResourceDuration = fromByteArray(byteArrayOf(6, 0, 0, 0, 0))
     }
 }
