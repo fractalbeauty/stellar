@@ -29,6 +29,8 @@ open class BytesValue(
     }
 
     override fun hashCode(): Int = this.bytes.contentHashCode()
+
+    override fun toString(): String = this.bytes.toHexString()
 }
 
 class EntityId(

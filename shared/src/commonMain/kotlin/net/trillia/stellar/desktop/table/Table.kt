@@ -26,6 +26,9 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import net.trillia.stellar.FakeHandler
+import uniffi.stellar_graph.Sort
+import uniffi.stellar_graph.SortDirection
 import kotlin.math.roundToInt
 
 @Composable
@@ -34,6 +37,7 @@ fun <Row> Table(
     columns: List<TableColumnDefinition<Row, *>>,
     selected: Int?,
     onSelected: (newValue: Int?) -> Unit,
+    onColumnTap: (String) -> Unit,
 ) {
     val density = LocalDensity.current
 
@@ -64,7 +68,10 @@ fun <Row> Table(
             Box(Modifier.width(contentWidthDp).fillMaxHeight()) {
                 LazyColumn(state = listState) {
                     stickyHeader {
-                        TableHeader(columnState)
+                        TableHeader(
+                            columnState = columnState,
+                            onColumnTap = onColumnTap,
+                        )
                     }
 
                     itemsIndexed(data) { rowIndex, row ->
@@ -136,6 +143,7 @@ fun TablePreview() {
                 id = "a",
                 header = "Column A",
                 initialWidth = 100.dp,
+                sort = null,
                 accessor = {
                     it["a"].orEmpty()
                 },
@@ -145,6 +153,7 @@ fun TablePreview() {
                 id = "b",
                 header = "Column B",
                 initialWidth = 100.dp,
+                sort = null,
                 accessor = { it["b"].orEmpty() },
                 renderer = @Composable { value -> TableCellText(value) },
             ),
@@ -160,6 +169,12 @@ fun TablePreview() {
     var selected by remember { mutableStateOf<Int?>(null) }
 
     Box(modifier = Modifier.size(300.dp, 200.dp)) {
-        Table(data, columns, selected, { selected = it })
+        Table(
+            data,
+            columns,
+            selected,
+            { selected = it },
+            onColumnTap = FakeHandler("onColumnTap"),
+        )
     }
 }

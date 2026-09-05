@@ -13,8 +13,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import net.trillia.stellar.AppColors
+import net.trillia.stellar.FakeHandler
+import uniffi.stellar_graph.SortDirection
+
 @Composable
-fun TableHeader(columnState: TableColumnState<*>) {
+fun TableHeader(
+    columnState: TableColumnState<*>,
+    onColumnTap: (String) -> Unit,
+) {
     Box(
         Modifier
             .fillMaxWidth()
@@ -38,7 +44,13 @@ fun TableHeader(columnState: TableColumnState<*>) {
         ) {
             columnState.columnOrder.forEach { id ->
                 key(id) {
-                    TableHeaderColumn(columnState, id)
+                    val columnDefinition = columnState.columns[id] ?: return@TableRowLayout
+                    TableHeaderColumn(
+                        sort = columnDefinition.sort,
+                        id = id,
+                        columnState = columnState,
+                        onTap = { onColumnTap(id) },
+                    )
                 }
             }
         }
@@ -50,12 +62,29 @@ fun TableHeader(columnState: TableColumnState<*>) {
 fun TableHeaderPreview() {
     val columns =
         listOf(
-            TableColumnDefinition<Unit, String>(id = "a", header = "test", initialWidth = 50.dp, accessor = {
-                ""
-            }, renderer = { TableCellText(it) }),
-            TableColumnDefinition<Unit, String>(id = "b", header = "test", initialWidth = 50.dp, accessor = {
-                ""
-            }, renderer = { TableCellText(it) }),
+            TableColumnDefinition<Unit, String>(
+                id = "a",
+                header = "test",
+                initialWidth = 50.dp,
+                sort = null,
+                accessor = {
+                    ""
+                },
+                renderer = { TableCellText(it) },
+            ),
+            TableColumnDefinition<Unit, String>(
+                id = "b",
+                header = "test",
+                initialWidth = 50.dp,
+                sort = null,
+                accessor = {
+                    ""
+                },
+                renderer = { TableCellText(it) },
+            ),
         )
-    TableHeader(rememberTableColumnState(columns))
+    TableHeader(
+        rememberTableColumnState(columns),
+        FakeHandler("onColumnTap"),
+    )
 }

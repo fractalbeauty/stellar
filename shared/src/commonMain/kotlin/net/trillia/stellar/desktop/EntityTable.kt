@@ -15,6 +15,7 @@ import net.trillia.stellar.formatFloat
 import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
 import uniffi.stellar_graph.EntitySchema
+import uniffi.stellar_graph.RelationKind
 import uniffi.stellar_graph.SlotValue
 import uniffi.stellar_graph.Sort
 import uniffi.stellar_graph.SortDirection
@@ -23,6 +24,7 @@ import uniffi.stellar_graph.Value
 import uniffi.stellar_sync.Schema
 import kotlin.collections.component1
 import kotlin.collections.component2
+import kotlin.collections.forEach
 import kotlin.math.floor
 import kotlin.math.round
 import kotlin.time.measureTimedValue
@@ -35,9 +37,38 @@ fun EntityTable(
 ) {
     val entitySchema = schema.graph.entities[entityKind] ?: return
 
-    val (query, columns) =
-        remember(entitySchema) {
-            buildEntityTableQuery(schema, entityKind, entitySchema)
+    var columns by remember(entitySchema) { mutableStateOf(buildEntityTableColumns(schema, entityKind, entitySchema)) }
+
+    val handleColumnTap = { columnId: String ->
+        logDebug("handleColumnTap $columnId")
+        val existing = columns.find { it.id == columnId } ?: error("Missing columnId")
+        when (existing.sort?.second) {
+            SortDirection.ASCENDING -> {
+                columns =
+                    columns.map {
+                        if (it.id == columnId) it.withSort(0 to SortDirection.DESCENDING) else it.withSort(null)
+                    }
+            }
+
+            SortDirection.DESCENDING -> {
+                columns =
+                    columns.map {
+                        if (it.id == columnId) it.withSort(0 to SortDirection.ASCENDING) else it.withSort(null)
+                    }
+            }
+
+            null -> {
+                columns =
+                    columns.map {
+                        if (it.id == columnId) it.withSort(0 to SortDirection.ASCENDING) else it.withSort(null)
+                    }
+            }
+        }
+    }
+
+    val (query, tableColumns) =
+        remember(columns) {
+            buildEntityTableQuery(schema, entityKind, entitySchema, columns)
         }
 
     val data =
@@ -49,53 +80,33 @@ fun EntityTable(
 
     var selected by remember(entityKind) { mutableStateOf<Int?>(null) }
 
-    Table(data, columns, selected, { selected = it })
+    Table(
+        data,
+        tableColumns,
+        selected,
+        { selected = it },
+        onColumnTap = handleColumnTap,
+    )
 }
 
-fun buildEntityTableQuery(
+fun buildEntityTableColumns(
     schema: Schema,
     entityKind: EntityKind,
     entitySchema: EntitySchema,
-): Pair<TableQuery, List<TableColumnDefinition<List<SlotValue?>, *>>> {
-    var nextOutputIndexInner = 0
-    val nextOutputIndex = {
-        val outputIndex = nextOutputIndexInner
-        nextOutputIndexInner += 1
-        outputIndex
+): List<EntityTableColumn> {
+    val columns = mutableListOf<EntityTableColumn>()
+
+    // Add columns for all attributes
+    entitySchema.attributes.entries.forEach { (attributeKind, attributeSchema) ->
+        columns.add(
+            EntityTableColumn.Attribute(
+                id = "Attribute-$attributeKind",
+                label = attributeSchema.name,
+                sort = null,
+                attributeKind = attributeKind,
+            ),
+        )
     }
-
-    val columns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
-
-    val nextColumnId = {
-        columns.size.toString()
-    }
-
-    // Add queries/columns for all attributes
-    val attributes =
-        entitySchema.attributes.entries.associate { (attribute, schema) ->
-            val outputIndex = nextOutputIndex()
-            columns.add(
-                TableColumnDefinition<List<SlotValue?>, String>(
-                    id = nextColumnId(),
-                    header = schema.name,
-                    initialWidth = 200.dp,
-                    accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                    renderer = { TableCellText(it) },
-                ),
-            )
-            attribute to outputIndex.toUShort()
-        }
-
-    // Sort by first attribute
-    val sort =
-        entitySchema.attributes.keys.firstOrNull()?.let {
-            listOf(
-                Sort(
-                    output = attributes[it] ?: error("unreachable"),
-                    direction = SortDirection.ASCENDING,
-                ),
-            )
-        } ?: emptyList()
 
     // Add queries/columns for all relations except with AudioResource
     val outgoingRelations =
@@ -109,83 +120,269 @@ fun buildEntityTableQuery(
                 schema.source != EntityKind.AudioResource
         }
 
-    val outgoingRelationAttributes =
-        outgoingRelations.entries
-            .associate { (relation, relationSchema) ->
-                relation to
-                    relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                        val outputIndex = nextOutputIndex()
-                        columns.add(
-                            TableColumnDefinition<List<SlotValue?>, String>(
-                                id = nextColumnId(),
-                                header = "${relationSchema.name}.${attributeSchema.name}",
-                                initialWidth = 200.dp,
-                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                renderer = { TableCellText(it) },
-                            ),
-                        )
-                        attribute to outputIndex.toUShort()
-                    }
-            }.toMutableMap()
+    outgoingRelations.forEach { (relationKind, relationSchema) ->
+        relationSchema.attributes.forEach { (attributeKind, attributeSchema) ->
+            columns.add(
+                EntityTableColumn.RelationAttribute(
+                    id = "RelationAttribute-$relationKind-$attributeKind",
+                    label = "${relationSchema.name} ${attributeSchema.name}",
+                    sort = null,
+                    relationKind = relationKind,
+                    attributeKind = attributeKind,
+                    relationDirection = RelationDirection.OUTGOING,
+                ),
+            )
+        }
 
-    val outgoingRelationEntityAttributes =
-        outgoingRelations.entries
-            .associate { (relation, relationSchema) ->
-                val otherSchema = schema.graph.entities[relationSchema.target] ?: return@associate relation to emptyMap()
-                relation to
-                    otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                        val outputIndex = nextOutputIndex()
-                        columns.add(
-                            TableColumnDefinition<List<SlotValue?>, String>(
-                                id = nextColumnId(),
-                                header = "${otherSchema.name}.${attributeSchema.name}",
-                                initialWidth = 200.dp,
-                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                renderer = { TableCellText(it) },
-                            ),
-                        )
-                        attribute to outputIndex.toUShort()
-                    }
-            }.toMutableMap()
+        val otherSchema = schema.graph.entities[relationSchema.target] ?: return@forEach
+        otherSchema.attributes.forEach { (attributeKind, attributeSchema) ->
+            columns.add(
+                EntityTableColumn.RelationEntityAttribute(
+                    id = "RelationEntityAttribute-$relationKind-$attributeKind",
+                    label = "${otherSchema.name} ${attributeSchema.name}",
+                    sort = null,
+                    relationKind = relationKind,
+                    attributeKind = attributeKind,
+                    relationDirection = RelationDirection.OUTGOING,
+                ),
+            )
+        }
+    }
+    incomingRelations.forEach { (relationKind, relationSchema) ->
+        relationSchema.attributes.forEach { (attributeKind, attributeSchema) ->
+            columns.add(
+                EntityTableColumn.RelationAttribute(
+                    id = "RelationAttribute-$relationKind-$attributeKind",
+                    label = "${relationSchema.name} ${attributeSchema.name}",
+                    sort = null,
+                    relationKind = relationKind,
+                    attributeKind = attributeKind,
+                    relationDirection = RelationDirection.INCOMING,
+                ),
+            )
+        }
 
-    val incomingRelationAttributes =
-        incomingRelations.entries
-            .associate { (relation, relationSchema) ->
-                relation to
-                    relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                        val outputIndex = nextOutputIndex()
-                        columns.add(
-                            TableColumnDefinition<List<SlotValue?>, String>(
-                                id = nextColumnId(),
-                                header = "${relationSchema.name}.${attributeSchema.name}",
-                                initialWidth = 200.dp,
-                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                renderer = { TableCellText(it) },
-                            ),
-                        )
-                        attribute to outputIndex.toUShort()
-                    }
-            }.toMutableMap()
+        val otherSchema = schema.graph.entities[relationSchema.source] ?: return@forEach
+        otherSchema.attributes.forEach { (attributeKind, attributeSchema) ->
+            columns.add(
+                EntityTableColumn.RelationEntityAttribute(
+                    id = "RelationEntityAttribute-$relationKind-$attributeKind",
+                    label = "${otherSchema.name} ${attributeSchema.name}",
+                    sort = null,
+                    relationKind = relationKind,
+                    attributeKind = attributeKind,
+                    relationDirection = RelationDirection.INCOMING,
+                ),
+            )
+        }
+    }
 
-    val incomingRelationEntityAttributes =
-        incomingRelations.entries
-            .associate { (relation, relationSchema) ->
-                val otherSchema = schema.graph.entities[relationSchema.source] ?: return@associate relation to emptyMap()
-                relation to
-                    otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                        val outputIndex = nextOutputIndex()
-                        columns.add(
-                            TableColumnDefinition<List<SlotValue?>, String>(
-                                id = nextColumnId(),
-                                header = "${otherSchema.name}.${attributeSchema.name}",
-                                initialWidth = 200.dp,
-                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                renderer = { TableCellText(it) },
-                            ),
+    return columns
+}
+
+sealed class EntityTableColumn(
+    val id: String,
+    val header: String,
+    val sort: Pair<Int, SortDirection>?,
+) {
+    abstract fun withSort(sort: Pair<Int, SortDirection>?): EntityTableColumn
+
+    class Attribute(
+        id: String,
+        label: String,
+        sort: Pair<Int, SortDirection>?,
+        val attributeKind: AttributeKind,
+    ) : EntityTableColumn(id, label, sort) {
+        fun copy(
+            label: String = this.header,
+            sort: Pair<Int, SortDirection>? = this.sort,
+            attributeKind: AttributeKind = this.attributeKind,
+        ) = Attribute(id, label, sort, attributeKind)
+
+        override fun withSort(sort: Pair<Int, SortDirection>?) = copy(sort = sort)
+    }
+
+    class RelationAttribute(
+        id: String,
+        label: String,
+        sort: Pair<Int, SortDirection>?,
+        val relationKind: RelationKind,
+        val attributeKind: AttributeKind,
+        val relationDirection: RelationDirection,
+    ) : EntityTableColumn(id, label, sort) {
+        fun copy(
+            label: String = this.header,
+            sort: Pair<Int, SortDirection>? = this.sort,
+            relationKind: RelationKind = this.relationKind,
+            attributeKind: AttributeKind = this.attributeKind,
+            relationDirection: RelationDirection = this.relationDirection,
+        ) = RelationAttribute(id, label, sort, relationKind, attributeKind, relationDirection)
+
+        override fun withSort(sort: Pair<Int, SortDirection>?) = copy(sort = sort)
+    }
+
+    class RelationEntityAttribute(
+        id: String,
+        label: String,
+        sort: Pair<Int, SortDirection>?,
+        val relationKind: RelationKind,
+        val attributeKind: AttributeKind,
+        val relationDirection: RelationDirection,
+    ) : EntityTableColumn(id, label, sort) {
+        fun copy(
+            label: String = this.header,
+            sort: Pair<Int, SortDirection>? = this.sort,
+            relationKind: RelationKind = this.relationKind,
+            attributeKind: AttributeKind = this.attributeKind,
+            relationDirection: RelationDirection = this.relationDirection,
+        ) = RelationEntityAttribute(id, label, sort, relationKind, attributeKind, relationDirection)
+
+        override fun withSort(sort: Pair<Int, SortDirection>?) = copy(sort = sort)
+    }
+}
+
+enum class RelationDirection {
+    OUTGOING,
+    INCOMING,
+}
+
+fun buildEntityTableQuery(
+    schema: Schema,
+    entityKind: EntityKind,
+    entitySchema: EntitySchema,
+    columns: List<EntityTableColumn>,
+): Pair<TableQuery, List<TableColumnDefinition<List<SlotValue?>, *>>> {
+    var nextOutputIndexInner = 0
+    val nextOutputIndex = {
+        val outputIndex = nextOutputIndexInner
+        nextOutputIndexInner += 1
+        outputIndex
+    }
+
+    val tableColumns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
+
+    val sortedOutputs = mutableMapOf<Int, Sort>()
+
+    val attributes = mutableMapOf<AttributeKind, UShort>()
+    val outgoingRelationAttributes = mutableMapOf<RelationKind, MutableMap<AttributeKind, UShort>>()
+    val outgoingRelationEntityAttributes = mutableMapOf<RelationKind, MutableMap<AttributeKind, UShort>>()
+    val incomingRelationAttributes = mutableMapOf<RelationKind, MutableMap<AttributeKind, UShort>>()
+    val incomingRelationEntityAttributes = mutableMapOf<RelationKind, MutableMap<AttributeKind, UShort>>()
+
+    columns.forEach { column ->
+        when (column) {
+            is EntityTableColumn.Attribute -> {
+                val outputIndex = nextOutputIndex()
+
+                tableColumns.add(
+                    TableColumnDefinition<List<SlotValue?>, String>(
+                        id = column.id,
+                        header = column.header,
+                        initialWidth = 200.dp,
+                        sort = column.sort,
+                        accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                        renderer = { TableCellText(it) },
+                    ),
+                )
+
+                column.sort?.let { (order, direction) ->
+                    sortedOutputs[order] =
+                        Sort(
+                            output = outputIndex.toUShort(),
+                            direction = direction,
                         )
-                        attribute to outputIndex.toUShort()
+                }
+
+                attributes[column.attributeKind] = outputIndex.toUShort()
+            }
+
+            is EntityTableColumn.RelationAttribute -> {
+                val outputIndex = nextOutputIndex()
+
+                tableColumns.add(
+                    TableColumnDefinition<List<SlotValue?>, String>(
+                        id = column.id,
+                        header = column.header,
+                        initialWidth = 200.dp,
+                        sort = column.sort,
+                        accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                        renderer = { TableCellText(it) },
+                    ),
+                )
+
+                column.sort?.let { (order, direction) ->
+                    sortedOutputs[order] =
+                        Sort(
+                            output = outputIndex.toUShort(),
+                            direction = direction,
+                        )
+                }
+
+                when (column.relationDirection) {
+                    RelationDirection.OUTGOING -> {
+                        outgoingRelationAttributes
+                            .getOrPut(
+                                column.relationKind,
+                            ) { mutableMapOf() }
+                            .getOrPut(column.attributeKind) { outputIndex.toUShort() }
                     }
-            }.toMutableMap()
+
+                    RelationDirection.INCOMING -> {
+                        incomingRelationAttributes
+                            .getOrPut(
+                                column.relationKind,
+                            ) { mutableMapOf() }
+                            .getOrPut(column.attributeKind) { outputIndex.toUShort() }
+                    }
+                }
+            }
+
+            is EntityTableColumn.RelationEntityAttribute -> {
+                val outputIndex = nextOutputIndex()
+
+                tableColumns.add(
+                    TableColumnDefinition<List<SlotValue?>, String>(
+                        id = column.id,
+                        header = column.header,
+                        initialWidth = 200.dp,
+                        sort = column.sort,
+                        accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                        renderer = { TableCellText(it) },
+                    ),
+                )
+
+                column.sort?.let { (order, direction) ->
+                    sortedOutputs[order] =
+                        Sort(
+                            output = outputIndex.toUShort(),
+                            direction = direction,
+                        )
+                }
+
+                when (column.relationDirection) {
+                    RelationDirection.OUTGOING -> {
+                        outgoingRelationEntityAttributes
+                            .getOrPut(
+                                column.relationKind,
+                            ) { mutableMapOf() }
+                            .getOrPut(column.attributeKind) { outputIndex.toUShort() }
+                    }
+
+                    RelationDirection.INCOMING -> {
+                        incomingRelationEntityAttributes
+                            .getOrPut(
+                                column.relationKind,
+                            ) { mutableMapOf() }
+                            .getOrPut(column.attributeKind) { outputIndex.toUShort() }
+                    }
+                }
+            }
+        }
+    }
+
+    val nextColumnId = {
+        tableColumns.size.toString()
+    }
 
     // Add queries/column for AudioResource relation
     val audioResourceRelation =
@@ -218,11 +415,12 @@ fun buildEntityTableQuery(
                 AttributeKind.AudioResourceChannels to channelsOutput.toUShort(),
             )
 
-        columns.add(
+        tableColumns.add(
             TableColumnDefinition<List<SlotValue?>, String>(
                 id = nextColumnId(),
                 header = "Duration",
                 initialWidth = 80.dp,
+                sort = null,
                 accessor = { row ->
                     val duration = row.getOrNull(durationOutput)
                     formatDurationSlot(duration)
@@ -231,11 +429,12 @@ fun buildEntityTableQuery(
             ),
         )
 
-        columns.add(
+        tableColumns.add(
             TableColumnDefinition<List<SlotValue?>, String>(
                 id = nextColumnId(),
                 header = "Size",
                 initialWidth = 80.dp,
+                sort = null,
                 accessor = { row ->
                     val size = row.getOrNull(sizeOutput)
                     formatSizeSlot(size)
@@ -244,11 +443,12 @@ fun buildEntityTableQuery(
             ),
         )
 
-        columns.add(
+        tableColumns.add(
             TableColumnDefinition<List<SlotValue?>, String>(
                 id = nextColumnId(),
                 header = "Audio Resource",
                 initialWidth = 200.dp,
+                sort = null,
                 accessor = { row ->
                     val location = row.getOrNull(locationOutput)
                     val hash = row.getOrNull(hashOutput)
@@ -281,11 +481,13 @@ fun buildEntityTableQuery(
         )
 
         if (audioResourceRelation.value.target == EntityKind.AudioResource) {
-            outgoingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes
+            outgoingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes.toMutableMap()
         } else {
-            incomingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes
+            incomingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes.toMutableMap()
         }
     }
+
+    val tableQuerySort = sortedOutputs.entries.sortedBy { it.key }.map { it.value }
 
     val query =
         TableQuery(
@@ -298,10 +500,10 @@ fun buildEntityTableQuery(
             incomingRelationAttributes = incomingRelationAttributes,
             incomingRelationEntityAttributes = incomingRelationEntityAttributes,
             incomingRelationOthers = emptyMap(),
-            sort = sort,
+            sort = tableQuerySort,
         )
 
-    return query to columns
+    return query to tableColumns
 }
 
 fun formatSlotValue(slot: SlotValue?): String =

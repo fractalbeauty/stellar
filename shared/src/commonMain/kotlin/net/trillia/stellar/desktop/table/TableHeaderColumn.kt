@@ -1,6 +1,7 @@
 package net.trillia.stellar.desktop.table
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -13,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -26,11 +28,15 @@ import net.trillia.stellar.runIf
 import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
+import uniffi.stellar.logDebug
+import uniffi.stellar_graph.SortDirection
 
 @Composable
 fun TableHeaderColumn(
-    columnState: TableColumnState<*>,
+    sort: Pair<Int, SortDirection>?,
     id: String,
+    columnState: TableColumnState<*>,
+    onTap: () -> Unit,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -50,7 +56,7 @@ fun TableHeaderColumn(
             contentAlignment = Alignment.CenterStart,
         ) {
             Text(
-                columnDefinition.header,
+                columnDefinition.header + " $sort",
                 fontFamily = tahoma,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
@@ -78,6 +84,8 @@ fun TableHeaderColumn(
                     .height(tableRowHeight)
                     .runIf(DEBUG_REORDER_DRAG) {
                         background(Color.Blue.copy(alpha = 0.5f))
+                    }.pointerInput(id) {
+                        detectTapGestures(onTap = { onTap() })
                     }.pointerInputHorizontalDrag(
                         key = id,
                         onDragStart = { columnState.handleReorderDragStart(id) },
