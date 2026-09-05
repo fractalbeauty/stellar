@@ -29,9 +29,13 @@ import net.trillia.stellar.desktop.table.TableColumnDefinition
 import uniffi.stellar.Core
 import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
+import uniffi.stellar_graph.EntitySchema
 import uniffi.stellar_graph.SlotValue
 import uniffi.stellar_graph.TableQuery
 import uniffi.stellar_graph.Value
+import uniffi.stellar_sync.Schema
+import kotlin.collections.component1
+import kotlin.collections.component2
 import kotlin.time.measureTimedValue
 
 @Composable
@@ -56,115 +60,6 @@ fun InspectPane(
 //    var selectedEntity by remember { mutableStateOf(schema.importRules.songEntity) }
 
     val selectedEntitySchema = schema.graph.entities[selectedEntity] ?: return
-
-    val (query, columns) =
-        remember(selectedEntitySchema) {
-            var columns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
-
-            val outgoingRelations = schema.graph.relations.filterValues { schema -> schema.source == selectedEntity }
-            val incomingRelations = schema.graph.relations.filterValues { schema -> schema.target == selectedEntity }
-
-            val query =
-                TableQuery(
-                    entity = selectedEntity,
-                    id = null,
-                    attributes =
-                        selectedEntitySchema.attributes.entries.associate { (attribute, schema) ->
-                            val outputIndex = columns.size
-                            columns.add(
-                                TableColumnDefinition<List<SlotValue?>, String>(
-                                    id = outputIndex.toString(),
-                                    header = schema.name,
-                                    initialWidth = 200.dp,
-                                    accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                    renderer = { TableCellText(it) },
-                                ),
-                            )
-                            attribute to outputIndex.toUShort()
-                        },
-                    outgoingRelationAttributes =
-                        outgoingRelations.entries.associate { (relation, relationSchema) ->
-                            relation to
-                                relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                                    val outputIndex = columns.size
-                                    columns.add(
-                                        TableColumnDefinition<List<SlotValue?>, String>(
-                                            id = outputIndex.toString(),
-                                            header = "${relationSchema.name}.${attributeSchema.name}",
-                                            initialWidth = 200.dp,
-                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                            renderer = { TableCellText(it) },
-                                        ),
-                                    )
-                                    attribute to outputIndex.toUShort()
-                                }
-                        },
-                    outgoingRelationEntityAttributes =
-                        outgoingRelations.entries.associate { (relation, relationSchema) ->
-                            val otherSchema = schema.graph.entities[relationSchema.target] ?: return@associate relation to emptyMap()
-                            relation to
-                                otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                                    val outputIndex = columns.size
-                                    columns.add(
-                                        TableColumnDefinition<List<SlotValue?>, String>(
-                                            id = outputIndex.toString(),
-                                            header = "${otherSchema.name}.${attributeSchema.name}",
-                                            initialWidth = 200.dp,
-                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                            renderer = { TableCellText(it) },
-                                        ),
-                                    )
-                                    attribute to outputIndex.toUShort()
-                                }
-                        },
-                    outgoingRelationOthers = emptyMap(),
-                    incomingRelationAttributes =
-                        incomingRelations.entries.associate { (relation, relationSchema) ->
-                            relation to
-                                relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                                    val outputIndex = columns.size
-                                    columns.add(
-                                        TableColumnDefinition<List<SlotValue?>, String>(
-                                            id = outputIndex.toString(),
-                                            header = "${relationSchema.name}.${attributeSchema.name}",
-                                            initialWidth = 200.dp,
-                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                            renderer = { TableCellText(it) },
-                                        ),
-                                    )
-                                    attribute to outputIndex.toUShort()
-                                }
-                        },
-                    incomingRelationEntityAttributes =
-                        incomingRelations.entries.associate { (relation, relationSchema) ->
-                            val otherSchema = schema.graph.entities[relationSchema.source] ?: return@associate relation to emptyMap()
-                            relation to
-                                otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
-                                    val outputIndex = columns.size
-                                    columns.add(
-                                        TableColumnDefinition<List<SlotValue?>, String>(
-                                            id = outputIndex.toString(),
-                                            header = "${otherSchema.name}.${attributeSchema.name}",
-                                            initialWidth = 200.dp,
-                                            accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
-                                            renderer = { TableCellText(it) },
-                                        ),
-                                    )
-                                    attribute to outputIndex.toUShort()
-                                }
-                        },
-                    incomingRelationOthers = emptyMap(),
-                )
-
-            query to columns
-        }
-
-    val data =
-        remember(query) {
-            val (data, elapsed) = measureTimedValue { core.tableQuery(query) }
-            logDebug("tableQuery took $elapsed")
-            data
-        }
 
 //    val selectedEntityColumns =
 //        remember(selectedEntitySchema) {
@@ -196,8 +91,6 @@ fun InspectPane(
 //                }
 //            }
 
-    var selected by remember(selectedEntity) { mutableStateOf<Int?>(null) }
-
     Column {
 //        Row {
 //            schema.graph.entities.forEach {
@@ -205,10 +98,226 @@ fun InspectPane(
 //            }
 //        }
 
-        Table(data, columns, selected, { selected = it })
+        EntityTable(schema = schema, entityKind = selectedEntity, runTableQuery = { core.tableQuery(it) })
 
 //        selected?.let { idx -> data.getOrNull(idx)?.let { Inspector(it) } }
     }
+}
+
+@Composable
+fun EntityTable(
+    schema: Schema,
+    entityKind: EntityKind,
+    runTableQuery: (TableQuery) -> List<List<SlotValue?>>,
+) {
+    val entitySchema = schema.graph.entities[entityKind] ?: return
+
+    val (query, columns) =
+        remember(entitySchema) {
+            buildEntityTableQuery(schema, entityKind, entitySchema)
+        }
+
+    val data =
+        remember(query) {
+            val (data, elapsed) = measureTimedValue { runTableQuery(query) }
+            logDebug("TableQuery returned ${data.size} rows in $elapsed (${elapsed / data.size} per row)")
+            data
+        }
+
+    var selected by remember(entityKind) { mutableStateOf<Int?>(null) }
+
+    Table(data, columns, selected, { selected = it })
+}
+
+fun buildEntityTableQuery(
+    schema: Schema,
+    entityKind: EntityKind,
+    entitySchema: EntitySchema,
+): Pair<TableQuery, List<TableColumnDefinition<List<SlotValue?>, *>>> {
+    var nextOutputIndexInner = 0
+    val nextOutputIndex = {
+        val outputIndex = nextOutputIndexInner
+        nextOutputIndexInner += 1
+        outputIndex
+    }
+
+    val columns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
+
+    val nextColumnId = {
+        columns.size.toString()
+    }
+
+    // Add queries/columns for all attributes
+    val attributes =
+        entitySchema.attributes.entries.associate { (attribute, schema) ->
+            val outputIndex = nextOutputIndex()
+            columns.add(
+                TableColumnDefinition<List<SlotValue?>, String>(
+                    id = nextColumnId(),
+                    header = schema.name,
+                    initialWidth = 200.dp,
+                    accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                    renderer = { TableCellText(it) },
+                ),
+            )
+            attribute to outputIndex.toUShort()
+        }
+
+    // Add queries/columns for all relations except with AudioResource
+    val outgoingRelations =
+        schema.graph.relations.filterValues { schema ->
+            schema.source == entityKind &&
+                schema.target != EntityKind.AudioResource
+        }
+    val incomingRelations =
+        schema.graph.relations.filterValues { schema ->
+            schema.target == entityKind &&
+                schema.source != EntityKind.AudioResource
+        }
+
+    val outgoingRelationAttributes =
+        outgoingRelations.entries
+            .associate { (relation, relationSchema) ->
+                relation to
+                    relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                        val outputIndex = nextOutputIndex()
+                        columns.add(
+                            TableColumnDefinition<List<SlotValue?>, String>(
+                                id = nextColumnId(),
+                                header = "${relationSchema.name}.${attributeSchema.name}",
+                                initialWidth = 200.dp,
+                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                                renderer = { TableCellText(it) },
+                            ),
+                        )
+                        attribute to outputIndex.toUShort()
+                    }
+            }.toMutableMap()
+
+    val outgoingRelationEntityAttributes =
+        outgoingRelations.entries
+            .associate { (relation, relationSchema) ->
+                val otherSchema = schema.graph.entities[relationSchema.target] ?: return@associate relation to emptyMap()
+                relation to
+                    otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                        val outputIndex = nextOutputIndex()
+                        columns.add(
+                            TableColumnDefinition<List<SlotValue?>, String>(
+                                id = nextColumnId(),
+                                header = "${otherSchema.name}.${attributeSchema.name}",
+                                initialWidth = 200.dp,
+                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                                renderer = { TableCellText(it) },
+                            ),
+                        )
+                        attribute to outputIndex.toUShort()
+                    }
+            }.toMutableMap()
+
+    val incomingRelationAttributes =
+        incomingRelations.entries
+            .associate { (relation, relationSchema) ->
+                relation to
+                    relationSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                        val outputIndex = nextOutputIndex()
+                        columns.add(
+                            TableColumnDefinition<List<SlotValue?>, String>(
+                                id = nextColumnId(),
+                                header = "${relationSchema.name}.${attributeSchema.name}",
+                                initialWidth = 200.dp,
+                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                                renderer = { TableCellText(it) },
+                            ),
+                        )
+                        attribute to outputIndex.toUShort()
+                    }
+            }.toMutableMap()
+    val incomingRelationEntityAttributes =
+        incomingRelations.entries
+            .associate { (relation, relationSchema) ->
+                val otherSchema = schema.graph.entities[relationSchema.source] ?: return@associate relation to emptyMap()
+                relation to
+                    otherSchema.attributes.entries.associate { (attribute, attributeSchema) ->
+                        val outputIndex = nextOutputIndex()
+                        columns.add(
+                            TableColumnDefinition<List<SlotValue?>, String>(
+                                id = nextColumnId(),
+                                header = "${otherSchema.name}.${attributeSchema.name}",
+                                initialWidth = 200.dp,
+                                accessor = { row -> formatSlotValue(row.getOrNull(outputIndex)) },
+                                renderer = { TableCellText(it) },
+                            ),
+                        )
+                        attribute to outputIndex.toUShort()
+                    }
+            }.toMutableMap()
+
+    // Add queries/column for AudioResource relation
+    val audioResourceRelation =
+        schema.graph.relations.entries
+            .find {
+                (it.value.source == entityKind && it.value.target == EntityKind.AudioResource) ||
+                    (it.value.source == EntityKind.AudioResource && it.value.target == entityKind)
+            }
+    if (audioResourceRelation != null) {
+        val locationOutput = nextOutputIndex()
+        val hashOutput = nextOutputIndex()
+        val sizeOutput = nextOutputIndex()
+        val qualityOutput = nextOutputIndex()
+        val durationOutput = nextOutputIndex()
+
+        val audioResourceAttributes =
+            mapOf(
+                AttributeKind.AudioResourceLocation to locationOutput.toUShort(),
+                AttributeKind.AudioResourceHash to hashOutput.toUShort(),
+                AttributeKind.AudioResourceSize to sizeOutput.toUShort(),
+                AttributeKind.AudioResourceQuality to qualityOutput.toUShort(),
+                AttributeKind.AudioResourceDuration to durationOutput.toUShort(),
+            )
+
+        columns.add(
+            TableColumnDefinition<List<SlotValue?>, String>(
+                id = nextColumnId(),
+                header = "Audio Resource",
+                initialWidth = 200.dp,
+                accessor = { row ->
+                    val location = row.getOrNull(locationOutput)
+                    val hash = row.getOrNull(hashOutput)
+                    val size = row.getOrNull(sizeOutput)
+                    val quality = row.getOrNull(qualityOutput)
+                    val duration = row.getOrNull(durationOutput)
+
+                    "location=${formatSlotValue(
+                        location,
+                    )} hash=${formatSlotValue(
+                        hash,
+                    )} size=${formatSlotValue(size)} quality=${formatSlotValue(quality)} duration=${formatSlotValue(duration)}"
+                },
+                renderer = { TableCellText(it) },
+            ),
+        )
+
+        if (audioResourceRelation.value.target == EntityKind.AudioResource) {
+            outgoingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes
+        } else {
+            incomingRelationEntityAttributes[audioResourceRelation.key] = audioResourceAttributes
+        }
+    }
+
+    val query =
+        TableQuery(
+            entity = entityKind,
+            id = null,
+            attributes = attributes,
+            outgoingRelationAttributes = outgoingRelationAttributes,
+            outgoingRelationEntityAttributes = outgoingRelationEntityAttributes,
+            outgoingRelationOthers = emptyMap(),
+            incomingRelationAttributes = incomingRelationAttributes,
+            incomingRelationEntityAttributes = incomingRelationEntityAttributes,
+            incomingRelationOthers = emptyMap(),
+        )
+
+    return query to columns
 }
 
 fun formatSlotValue(slot: SlotValue?): String =
