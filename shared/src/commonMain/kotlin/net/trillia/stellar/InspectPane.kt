@@ -379,7 +379,8 @@ fun formatValue(value: Value?): String =
         is Value.Bytes -> "<bytes>"
         is Value.Number -> value.v1.toString()
         is Value.Text -> value.v1
-        null -> "null"
+        is Value.None -> ""
+        null -> ""
     }
 
 val inspectorFieldLabelHeight = 24.dp

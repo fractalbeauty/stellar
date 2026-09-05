@@ -640,9 +640,8 @@ impl Op for CollectRelationAttributesOp {
             relation_others.insert(relation, other);
 
             if !self.relation_attribute_outputs.is_empty() {
-                self.store
-                    .scan_relation_attribute_by_id(relation)
-                    .for_each(|(attribute, value)| {
+                self.store.scan_relation_attribute_by_id(relation).for_each(
+                    |(attribute, value)| {
                         let Some(slot) = self.relation_attribute_outputs.get(&attribute).copied()
                         else {
                             return;
@@ -660,7 +659,8 @@ impl Op for CollectRelationAttributesOp {
                             .entry(slot)
                             .or_default()
                             .insert(relation, value.value);
-                    });
+                    },
+                );
             }
 
             if !self.other_attribute_outputs.is_empty() {

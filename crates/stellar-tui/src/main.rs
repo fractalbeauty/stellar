@@ -129,6 +129,7 @@ fn value_to_json(value: &Value) -> serde_json::Value {
         Value::Number(number) => serde_json::json!(number.into_inner()),
         Value::Bool(value) => serde_json::Value::Bool(*value),
         Value::Bytes(bytes) => serde_json::Value::String(hex::encode(bytes)),
+        Value::None => serde_json::Value::Null,
     }
 }
 

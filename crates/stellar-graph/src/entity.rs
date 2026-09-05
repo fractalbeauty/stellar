@@ -365,6 +365,7 @@ pub enum Value {
     Bool(bool),
     // TODO: maybe Arc<[u8]>
     Bytes(Vec<u8>),
+    None,
 }
 
 impl Value {
