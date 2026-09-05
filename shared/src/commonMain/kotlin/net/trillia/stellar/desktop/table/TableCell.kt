@@ -21,7 +21,15 @@ fun <Row, Value> TableCell(
     column: TableColumnDefinition<Row, Value>,
     row: Row,
 ) {
-    column.renderer(column.accessor(row))
+    val value =
+        try {
+            column.accessor(row)
+        } catch (e: Exception) {
+            TableCellText("Error: $e")
+            return
+        }
+
+    column.renderer(value)
 }
 
 @Composable
