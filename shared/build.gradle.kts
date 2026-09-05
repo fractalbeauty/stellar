@@ -124,28 +124,28 @@ uniffi {
             lower = "{}.toByteArray()"
         }
         customType("EntityId") {
-            typeName = "net.trillia.stellar.BytesValue"
-            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            typeName = "net.trillia.stellar.EntityId"
+            lift = "net.trillia.stellar.EntityId.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
         customType("RelationId") {
-            typeName = "net.trillia.stellar.BytesValue"
-            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            typeName = "net.trillia.stellar.RelationId"
+            lift = "net.trillia.stellar.RelationId.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
         customType("EntityKind") {
-            typeName = "net.trillia.stellar.BytesValue"
-            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            typeName = "net.trillia.stellar.EntityKind"
+            lift = "net.trillia.stellar.EntityKind.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
         customType("RelationKind") {
-            typeName = "net.trillia.stellar.BytesValue"
-            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            typeName = "net.trillia.stellar.RelationKind"
+            lift = "net.trillia.stellar.RelationKind.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
         customType("AttributeKind") {
-            typeName = "net.trillia.stellar.BytesValue"
-            lift = "net.trillia.stellar.BytesValue.fromByteArray({})"
+            typeName = "net.trillia.stellar.AttributeKind"
+            lift = "net.trillia.stellar.AttributeKind.fromByteArray({})"
             lower = "{}.toByteArray()"
         }
     }

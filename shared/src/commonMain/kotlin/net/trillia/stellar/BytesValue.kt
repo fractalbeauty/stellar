@@ -1,6 +1,6 @@
 package net.trillia.stellar
 
-data class BytesValue(
+open class BytesValue(
     val bytes: ByteArray,
 ) : Comparable<BytesValue> {
     companion object {
@@ -29,4 +29,44 @@ data class BytesValue(
     }
 
     override fun hashCode(): Int = this.bytes.contentHashCode()
+}
+
+class EntityId(
+    bytes: ByteArray,
+) : BytesValue(bytes) {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): EntityId = EntityId(bytes)
+    }
+}
+
+class RelationId(
+    bytes: ByteArray,
+) : BytesValue(bytes) {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): RelationId = RelationId(bytes)
+    }
+}
+
+class EntityKind(
+    bytes: ByteArray,
+) : BytesValue(bytes) {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): EntityKind = EntityKind(bytes)
+    }
+}
+
+class RelationKind(
+    bytes: ByteArray,
+) : BytesValue(bytes) {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): RelationKind = RelationKind(bytes)
+    }
+}
+
+class AttributeKind(
+    bytes: ByteArray,
+) : BytesValue(bytes) {
+    companion object {
+        fun fromByteArray(bytes: ByteArray): AttributeKind = AttributeKind(bytes)
+    }
 }
