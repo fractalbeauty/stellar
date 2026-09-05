@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr, time::SystemTime};
 
 /// An entity ID, consisting of an [`EntityKind`] and some random bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityId([u8; 16]);
 
 impl EntityId {
@@ -69,7 +69,7 @@ impl FromStr for EntityId {
 }
 
 /// A relation ID, consisting of a [`RelationKind`] and some random bytes.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelationId([u8; 16]);
 
 impl RelationId {
@@ -137,7 +137,9 @@ impl FromStr for RelationId {
 /// A kind of entity in the graph, identified by 5 random bytes.
 ///
 /// The pattern `XX 00 00 00 00` is reserved for application-defined kinds.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, automorph::Automorph,
+)]
 #[automorph(transparent)]
 pub struct EntityKind([u8; 5]);
 
@@ -212,7 +214,9 @@ impl FromStr for EntityKind {
 /// A kind of relation in the graph, identified by 5 random bytes.
 ///
 /// The pattern `XX 00 00 00 00` is reserved for application-defined kinds.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, automorph::Automorph,
+)]
 #[automorph(transparent)]
 pub struct RelationKind([u8; 5]);
 
@@ -284,7 +288,9 @@ impl FromStr for RelationKind {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, automorph::Automorph)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, automorph::Automorph,
+)]
 #[automorph(transparent)]
 pub struct AttributeKind([u8; 5]);
 

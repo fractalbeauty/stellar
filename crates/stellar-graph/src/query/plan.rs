@@ -1,12 +1,15 @@
 use crate::{
-    entity::{AttributeKind, EntityKind, RelationKind},
+    entity::{AttributeKind, EntityKind, RelationKind, Value},
     query::exec::{
         CollectRelationAttributesOp, ExecutionContext, Op, RelationJoinDirection,
         RelationMergeJoinOp, RelationNestedLoopJoinOp, ScanEntityKindOp, SlotIndex, SlotValue,
     },
     store::Store,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 // TODO: choose merge join vs nested loop join using selectivity heuristic
 const USE_MERGE_JOIN: bool = true;
@@ -33,14 +36,27 @@ pub struct TableQuery {
         HashMap<RelationKind, HashMap<AttributeKind, OutputIndex>>,
     /// Maps each incoming relation ID to its source entity ID.
     pub incoming_relation_others: HashMap<RelationKind, OutputIndex>,
+
     // filter: Option<FilterPredicate>
-    // sort: Option<Vec<(SortKey, SortDir)>>
+    pub sort: Option<Vec<Sort>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct OutputIndex(pub u16);
 
 uniffi::custom_newtype!(OutputIndex, u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Record)]
+pub struct Sort {
+    output: OutputIndex,
+    direction: SortDirection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
 
 impl TableQuery {
     #[tracing::instrument(name = "table_query", skip_all)]
@@ -322,7 +338,90 @@ impl TableQuery {
         }
         drop(executing_span);
 
+        if let Some(sorts) = &self.sort
+            && !sorts.is_empty()
+        {
+            let _sorting_span = tracing::debug_span!("sorting").entered();
+
+            all_outputs.sort_by(|a, b| {
+                for sort in sorts {
+                    match compare_slots(sort, a, b) {
+                        Ordering::Greater => return Ordering::Greater,
+                        Ordering::Less => return Ordering::Less,
+                        Ordering::Equal => {
+                            // Try next sort
+                        }
+                    }
+                }
+                return Ordering::Equal;
+            });
+        }
+
         all_outputs
+    }
+}
+
+/// Compares two output rows using a sort, returning an ordering or Ordering::Equal if not comparable.
+fn compare_slots(sort: &Sort, a: &[Option<SlotValue>], b: &[Option<SlotValue>]) -> Ordering {
+    let a_output = &a[sort.output.0 as usize];
+    let b_output = &b[sort.output.0 as usize];
+
+    let ordering = match (a_output, b_output) {
+        (Some(a), Some(b)) => match (a, b) {
+            (SlotValue::SVEntityId(a), SlotValue::SVEntityId(b)) => a.cmp(b),
+            (SlotValue::SVRelationId(a), SlotValue::SVRelationId(b)) => a.cmp(b),
+
+            (SlotValue::SVValue(a), SlotValue::SVValue(b)) => match (a, b) {
+                (Value::Text(a), Value::Text(b)) => a.cmp(b),
+                (Value::Number(a), Value::Number(b)) => a.cmp(b),
+                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+                (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+
+                (Value::None, Value::None) => Ordering::Equal,
+
+                (a, b) => {
+                    // Values are different kinds, sort by kind rank
+                    value_rank(a).cmp(&value_rank(b))
+                }
+            },
+
+            (a, b) => {
+                // Slots are EntityValues/RelationValues/RelationOthers or different kinds, sort by kind rank
+                slot_rank(a).cmp(&slot_rank(b))
+            }
+        },
+
+        // One value is missing
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+
+        (None, None) => Ordering::Equal,
+    };
+
+    match sort.direction {
+        SortDirection::Ascending => ordering,
+        SortDirection::Descending => ordering.reverse(),
+    }
+}
+
+fn slot_rank(slot: &SlotValue) -> usize {
+    match slot {
+        SlotValue::SVEntityId(_) => 0,
+        SlotValue::SVRelationId(_) => 1,
+        SlotValue::SVValue(_) => 2,
+        SlotValue::EntityValues(_) => 3,
+        SlotValue::RelationValues(_) => 4,
+        SlotValue::RelationOthers(_) => 5,
+    }
+}
+
+fn value_rank(value: &Value) -> usize {
+    match value {
+        Value::Text(_) => 0,
+        Value::Number(_) => 1,
+        Value::Bool(_) => 2,
+        Value::Bytes(_) => 3,
+        Value::None => 4,
     }
 }
 
@@ -505,6 +604,7 @@ mod test {
             incoming_relation_attributes: HashMap::new(),
             incoming_relation_entity_attributes: HashMap::new(),
             incoming_relation_others: HashMap::new(),
+            sort: None,
         };
 
         let mut outputs = query.execute(store);
@@ -599,6 +699,7 @@ mod test {
             incoming_relation_attributes: HashMap::new(),
             incoming_relation_entity_attributes: HashMap::new(),
             incoming_relation_others: HashMap::new(),
+            sort: None,
         };
 
         let mut actual = HashMap::new();
@@ -689,6 +790,7 @@ mod test {
             incoming_relation_attributes: HashMap::new(),
             incoming_relation_entity_attributes: HashMap::new(),
             incoming_relation_others: HashMap::new(),
+            sort: None,
         };
 
         let mut rows = query.execute(store);

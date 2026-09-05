@@ -34,6 +34,8 @@ import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
 import uniffi.stellar_graph.EntitySchema
 import uniffi.stellar_graph.SlotValue
+import uniffi.stellar_graph.Sort
+import uniffi.stellar_graph.SortDirection
 import uniffi.stellar_graph.TableQuery
 import uniffi.stellar_graph.Value
 import uniffi.stellar_sync.Schema
@@ -166,6 +168,17 @@ fun buildEntityTableQuery(
             attribute to outputIndex.toUShort()
         }
 
+    // Sort by first attribute
+    val sort =
+        entitySchema.attributes.keys.firstOrNull()?.let {
+            listOf(
+                Sort(
+                    output = attributes[it] ?: error("unreachable"),
+                    direction = SortDirection.ASCENDING,
+                ),
+            )
+        } ?: emptyList()
+
     // Add queries/columns for all relations except with AudioResource
     val outgoingRelations =
         schema.graph.relations.filterValues { schema ->
@@ -235,6 +248,7 @@ fun buildEntityTableQuery(
                         attribute to outputIndex.toUShort()
                     }
             }.toMutableMap()
+
     val incomingRelationEntityAttributes =
         incomingRelations.entries
             .associate { (relation, relationSchema) ->
@@ -366,6 +380,7 @@ fun buildEntityTableQuery(
             incomingRelationAttributes = incomingRelationAttributes,
             incomingRelationEntityAttributes = incomingRelationEntityAttributes,
             incomingRelationOthers = emptyMap(),
+            sort = sort,
         )
 
     return query to columns
