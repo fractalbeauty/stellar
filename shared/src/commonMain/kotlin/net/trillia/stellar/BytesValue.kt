@@ -75,7 +75,11 @@ class AttributeKind(
         val AudioResourceLocation = fromByteArray(byteArrayOf(2, 0, 0, 0, 0))
         val AudioResourceHash = fromByteArray(byteArrayOf(3, 0, 0, 0, 0))
         val AudioResourceSize = fromByteArray(byteArrayOf(4, 0, 0, 0, 0))
-        val AudioResourceQuality = fromByteArray(byteArrayOf(5, 0, 0, 0, 0))
-        val AudioResourceDuration = fromByteArray(byteArrayOf(6, 0, 0, 0, 0))
+        val AudioResourceDuration = fromByteArray(byteArrayOf(5, 0, 0, 0, 0))
+        val AudioResourceCodec = fromByteArray(byteArrayOf(6, 0, 0, 0, 0))
+        val AudioResourceBitrate = fromByteArray(byteArrayOf(7, 0, 0, 0, 0))
+        val AudioResourceSampleRate = fromByteArray(byteArrayOf(8, 0, 0, 0, 0))
+        val AudioResourceBitDepth = fromByteArray(byteArrayOf(9, 0, 0, 0, 0))
+        val AudioResourceChannels = fromByteArray(byteArrayOf(10, 0, 0, 0, 0))
     }
 }

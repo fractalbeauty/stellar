@@ -263,16 +263,24 @@ fun buildEntityTableQuery(
         val locationOutput = nextOutputIndex()
         val hashOutput = nextOutputIndex()
         val sizeOutput = nextOutputIndex()
-        val qualityOutput = nextOutputIndex()
         val durationOutput = nextOutputIndex()
+        val codecOutput = nextOutputIndex()
+        val bitrateOutput = nextOutputIndex()
+        val sampleRateOutput = nextOutputIndex()
+        val bitDepthOutput = nextOutputIndex()
+        val channelsOutput = nextOutputIndex()
 
         val audioResourceAttributes =
             mapOf(
                 AttributeKind.AudioResourceLocation to locationOutput.toUShort(),
                 AttributeKind.AudioResourceHash to hashOutput.toUShort(),
                 AttributeKind.AudioResourceSize to sizeOutput.toUShort(),
-                AttributeKind.AudioResourceQuality to qualityOutput.toUShort(),
                 AttributeKind.AudioResourceDuration to durationOutput.toUShort(),
+                AttributeKind.AudioResourceCodec to codecOutput.toUShort(),
+                AttributeKind.AudioResourceBitrate to bitrateOutput.toUShort(),
+                AttributeKind.AudioResourceSampleRate to sampleRateOutput.toUShort(),
+                AttributeKind.AudioResourceBitDepth to bitDepthOutput.toUShort(),
+                AttributeKind.AudioResourceChannels to channelsOutput.toUShort(),
             )
 
         columns.add(
@@ -284,14 +292,28 @@ fun buildEntityTableQuery(
                     val location = row.getOrNull(locationOutput)
                     val hash = row.getOrNull(hashOutput)
                     val size = row.getOrNull(sizeOutput)
-                    val quality = row.getOrNull(qualityOutput)
                     val duration = row.getOrNull(durationOutput)
+                    val codec = row.getOrNull(codecOutput)
+                    val bitrate = row.getOrNull(bitrateOutput)
+                    val sampleRate = row.getOrNull(sampleRateOutput)
+                    val bitDepth = row.getOrNull(bitDepthOutput)
+                    val channels = row.getOrNull(channelsOutput)
 
                     "location=${formatSlotValue(
                         location,
                     )} hash=${formatSlotValue(
                         hash,
-                    )} size=${formatSlotValue(size)} quality=${formatSlotValue(quality)} duration=${formatSlotValue(duration)}"
+                    )} size=${formatSlotValue(
+                        size,
+                    )} duration=${formatSlotValue(
+                        duration,
+                    )} codec=${formatSlotValue(
+                        codec,
+                    )} bitrate=${formatSlotValue(
+                        bitrate,
+                    )} sampleRate=${formatSlotValue(
+                        sampleRate,
+                    )} bitDepth=${formatSlotValue(bitDepth)} channels=${formatSlotValue(channels)}"
                 },
                 renderer = { TableCellText(it) },
             ),
