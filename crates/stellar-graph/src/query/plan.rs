@@ -371,29 +371,32 @@ fn compare_slots(sort: &Sort, a: &[Option<SlotValue>], b: &[Option<SlotValue>]) 
             (SlotValue::SVEntityId(a), SlotValue::SVEntityId(b)) => a.cmp(b),
             (SlotValue::SVRelationId(a), SlotValue::SVRelationId(b)) => a.cmp(b),
 
-            (SlotValue::SVValue(a), SlotValue::SVValue(b)) => match (a, b) {
-                (Value::Text(a), Value::Text(b)) => a.cmp(b),
-                (Value::Number(a), Value::Number(b)) => a.cmp(b),
-                (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
-                (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+            (SlotValue::SVValue(a), SlotValue::SVValue(b)) => compare_values(a, b),
 
-                (Value::None, Value::None) => Ordering::Equal,
-
-                (a, b) => {
-                    // Values are different kinds, sort by kind rank
-                    value_rank(a).cmp(&value_rank(b))
-                }
-            },
+            // TODO: maybe sort the values first
+            (SlotValue::EntityValues(a), SlotValue::EntityValues(b)) => a
+                .values()
+                .zip(b.values())
+                .map(|(a, b)| compare_values(a, b))
+                .find(|&ordering| ordering != Ordering::Equal)
+                .unwrap_or_else(|| b.len().cmp(&a.len())),
+            // TODO: maybe sort the values first
+            (SlotValue::RelationValues(a), SlotValue::RelationValues(b)) => a
+                .values()
+                .zip(b.values())
+                .map(|(a, b)| compare_values(a, b))
+                .find(|&ordering| ordering != Ordering::Equal)
+                .unwrap_or_else(|| b.len().cmp(&a.len())),
 
             (a, b) => {
-                // Slots are EntityValues/RelationValues/RelationOthers or different kinds, sort by kind rank
+                // Slots are RelationOthers (not sortable) or different kinds, sort by kind rank
                 slot_rank(a).cmp(&slot_rank(b))
             }
         },
 
         // One value is missing
-        (Some(_), None) => Ordering::Greater,
-        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
 
         (None, None) => Ordering::Equal,
     };
@@ -401,6 +404,22 @@ fn compare_slots(sort: &Sort, a: &[Option<SlotValue>], b: &[Option<SlotValue>]) 
     match sort.direction {
         SortDirection::Ascending => ordering,
         SortDirection::Descending => ordering.reverse(),
+    }
+}
+
+fn compare_values(a: &Value, b: &Value) -> Ordering {
+    match (a, b) {
+        (Value::Text(a), Value::Text(b)) => a.cmp(b),
+        (Value::Number(a), Value::Number(b)) => a.cmp(b),
+        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+        (Value::Bytes(a), Value::Bytes(b)) => a.cmp(b),
+
+        (Value::None, Value::None) => Ordering::Equal,
+
+        (a, b) => {
+            // Values are different kinds, sort by kind rank
+            value_rank(a).cmp(&value_rank(b))
+        }
     }
 }
 
