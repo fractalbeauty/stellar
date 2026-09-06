@@ -4,7 +4,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import net.trillia.stellar.AttributeKind
@@ -12,6 +15,8 @@ import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
 import net.trillia.stellar.formatFloat
+import net.trillia.stellar.getPlatform
+import net.trillia.stellar.isCtrlLikePressed
 import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
 import uniffi.stellar_graph.EntitySchema
@@ -39,31 +44,44 @@ fun EntityTable(
 
     var columns by remember(entitySchema) { mutableStateOf(buildEntityTableColumns(schema, entityKind, entitySchema)) }
 
+    val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
+
     val handleColumnTap = { columnId: String ->
-        logDebug("handleColumnTap $columnId")
         val existing = columns.find { it.id == columnId } ?: error("Missing columnId")
-        when (existing.sort?.second) {
-            SortDirection.ASCENDING -> {
-                columns =
-                    columns.map {
-                        if (it.id == columnId) it.withSort(0 to SortDirection.DESCENDING) else it.withSort(null)
-                    }
+
+        // Toggle sort direction if already sorted
+        val newSortDirection =
+            when (existing.sort?.second) {
+                SortDirection.ASCENDING -> SortDirection.DESCENDING
+                SortDirection.DESCENDING -> SortDirection.ASCENDING
+                null -> SortDirection.ASCENDING
             }
 
-            SortDirection.DESCENDING -> {
-                columns =
-                    columns.map {
-                        if (it.id == columnId) it.withSort(0 to SortDirection.ASCENDING) else it.withSort(null)
-                    }
-            }
+        val newSortOrder =
+            // Keep sort order if already sorted
+            existing.sort?.first
+                ?: // Add at end of order if ctrl is pressed
+                if (keyboardModifiers.isCtrlLikePressed) {
+                    val maxOrder = columns.maxOfOrNull { it.sort?.first ?: 0 } ?: 0
+                    maxOrder + 1
+                } else {
+                    0
+                }
 
-            null -> {
-                columns =
-                    columns.map {
-                        if (it.id == columnId) it.withSort(0 to SortDirection.ASCENDING) else it.withSort(null)
+        columns =
+            columns.map {
+                if (it.id == columnId) {
+                    // Replace clicked column sort
+                    it.withSort(newSortOrder to newSortDirection)
+                } else {
+                    // Keep other sorts if ctrl is pressed
+                    if (keyboardModifiers.isCtrlLikePressed) {
+                        it
+                    } else {
+                        it.withSort(null)
                     }
+                }
             }
-        }
     }
 
     val (query, tableColumns) =

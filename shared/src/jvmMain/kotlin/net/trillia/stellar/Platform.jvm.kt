@@ -4,6 +4,12 @@ import java.text.DecimalFormat
 
 class JVMPlatform : Platform {
     override val name: String = "Java ${System.getProperty("java.version")}"
+
+    override val isMac =
+        System
+            .getProperty("os.name")
+            .lowercase()
+            .contains("mac")
 }
 
 actual fun getPlatform(): Platform = JVMPlatform()
