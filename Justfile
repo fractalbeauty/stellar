@@ -4,6 +4,14 @@ opener := if os() == "macos" {
   "xdg-open"
 }
 
+desktop-binary := if os() == "macos" {
+  "desktopApp/build/compose/binaries/main/app/net.trillia.stellar.app/Contents/MacOS/net.trillia.stellar"
+} else if os() == "windows" {
+  "desktopApp/build/compose/binaries/main/app/net.trillia.stellar.exe"
+} else {
+  "desktopApp/build/compose/binaries/main/app/net.trillia.stellar"
+}
+
 default:
   just --list
 
@@ -20,14 +28,15 @@ test-rust *FLAGS:
 run-tui *FLAGS:
   cargo run --package stellar-tui -- {{FLAGS}}
 
-run-desktop:
-  ./gradlew :desktopApp:run
+run-desktop *FLAGS:
+  ./gradlew :desktopApp:run --args="{{FLAGS}}"
 
-run-desktop-hot:
-  ./gradlew :desktopApp:hotRun --auto
+run-desktop-hot *FLAGS:
+  ./gradlew :desktopApp:hotRun --auto --args="{{FLAGS}}"
 
-run-desktop-release:
-  ./gradlew :desktopApp:runDistributable -Pnet.trillia.stellar.rust.variant=release
+run-desktop-release *FLAGS:
+  ./gradlew :desktopApp:createDistributable -Pnet.trillia.stellar.rust.variant=release
+  ./{{desktop-binary}} {{FLAGS}}
 
 run-android:
   ./gradlew :androidApp:installDebug
