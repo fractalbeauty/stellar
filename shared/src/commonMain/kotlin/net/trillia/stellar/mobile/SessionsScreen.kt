@@ -11,6 +11,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import net.trillia.stellar.desktop.Button
@@ -51,7 +57,21 @@ fun SessionsScreen(
 
         Text("authed: ${uiState.devicesState?.authed}")
 
-        Text("verification uri: ${uiState.verificationUriComplete}")
+        uiState.verificationUriComplete?.let { uri ->
+            Text(
+                buildAnnotatedString {
+                    append("verification uri: ")
+                    withLink(
+                        LinkAnnotation.Url(
+                            uri,
+                            TextLinkStyles(style = SpanStyle(textDecoration = TextDecoration.Underline)),
+                        ),
+                    ) {
+                        append(uri)
+                    }
+                },
+            )
+        }
         Button(
             "log in to the main frame!!!",
             onClick = { viewModel.startDeviceCodeFlow() },
