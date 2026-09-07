@@ -48,7 +48,7 @@ impl ImportDatabasePort for ImportDatabaseAdapter {
 
         for (_, created_entities) in changes.create_entities {
             for change in created_entities {
-                self.database.upsert_entity(
+                self.database.apply_local_entity(
                     change.id,
                     EntityData {
                         metadata: EntityMetadataValue {
@@ -69,7 +69,7 @@ impl ImportDatabasePort for ImportDatabaseAdapter {
 
         for (_, created_relations) in changes.create_relations {
             for change in created_relations {
-                self.database.upsert_relation(
+                self.database.apply_local_relation(
                     change.id,
                     RelationData {
                         metadata: RelationMetadataValue {

@@ -3,10 +3,11 @@ use crate::{
     query::{exec::SlotValue, plan::TableQuery},
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
-        RelationData, RelationMetadataValue, Store,
+        RelationData, RelationMetadataValue, Store, StoreChange,
     },
 };
 use std::{collections::HashMap, path::Path};
+use tokio::sync::broadcast;
 
 /// Handle to the database for graph data. Provides higher-level operations than the store.
 #[derive(Clone)]
@@ -35,6 +36,11 @@ impl Database {
         Ok(query.execute(self.store.clone()))
     }
 
+    /// Subscribes to local changes. Remote changes are not re-broadcast.
+    pub fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
+        self.store.subscribe()
+    }
+
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
         self.store.get_entities()
     }
@@ -55,13 +61,54 @@ impl Database {
         Ok(entity)
     }
 
-    pub fn upsert_entity(&self, entity: EntityId, data: EntityData) -> Result<(), anyhow::Error> {
-        self.store.apply_local_entity_metadata(entity, data.metadata)?;
+    /// Applies local entity changes.
+    pub fn apply_local_entity(
+        &self,
+        entity: EntityId,
+        data: EntityData,
+    ) -> Result<(), anyhow::Error> {
+        self.store
+            .apply_local_entity_metadata(entity, data.metadata)?;
         for (attribute, value) in data.attributes {
             self.store
                 .apply_local_entity_attribute(entity, attribute, value)?;
         }
         Ok(())
+    }
+
+    /// Applies remote entity changes.
+    pub fn apply_remote_entity(
+        &self,
+        entity: EntityId,
+        data: EntityData,
+    ) -> Result<(), anyhow::Error> {
+        self.store
+            .apply_remote_entity_metadata(entity, data.metadata)?;
+        for (attribute, value) in data.attributes {
+            self.store
+                .apply_remote_entity_attribute(entity, attribute, value)?;
+        }
+        Ok(())
+    }
+
+    /// Applies remote entity metadata changes.
+    pub fn apply_remote_entity_metadata(
+        &self,
+        entity: EntityId,
+        value: EntityMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.store.apply_remote_entity_metadata(entity, value)
+    }
+
+    /// Applies remote entity metadata changes.
+    pub fn apply_remote_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: EntityAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.store
+            .apply_remote_entity_attribute(entity, attribute, value)
     }
 
     pub fn set_entity_attribute(
@@ -114,7 +161,8 @@ impl Database {
         Ok(relation)
     }
 
-    pub fn upsert_relation(
+    /// Applies local relation changes.
+    pub fn apply_local_relation(
         &self,
         relation: RelationId,
         data: RelationData,
@@ -126,6 +174,41 @@ impl Database {
                 .apply_local_relation_attribute(relation, attribute, value)?;
         }
         Ok(())
+    }
+
+    /// Applies remote relation changes.
+    pub fn apply_remote_relation(
+        &self,
+        relation: RelationId,
+        data: RelationData,
+    ) -> Result<(), anyhow::Error> {
+        self.store
+            .apply_remote_relation_metadata(relation, data.metadata)?;
+        for (attribute, value) in data.attributes {
+            self.store
+                .apply_remote_relation_attribute(relation, attribute, value)?;
+        }
+        Ok(())
+    }
+
+    /// Applies remote relation metadata changes.
+    pub fn apply_remote_relation_metadata(
+        &self,
+        relation: RelationId,
+        value: RelationMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.store.apply_remote_relation_metadata(relation, value)
+    }
+
+    /// Applies remote relation attribute changes.
+    pub fn apply_remote_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        value: RelationAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.store
+            .apply_remote_relation_attribute(relation, attribute, value)
     }
 
     pub fn set_relation_attribute(
