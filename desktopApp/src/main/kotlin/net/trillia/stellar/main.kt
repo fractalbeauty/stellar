@@ -23,10 +23,12 @@ fun main(args: Array<String>) =
                 return@runBlocking
             }
 
+        val title = if (profile == "default") "Stellar" else "Stellar (profile: $profile)"
+
         awaitApplication {
             Window(
                 onCloseRequest = ::exitApplication,
-                title = "Stellar",
+                title = title,
             ) {
                 App(
                     core = core,
