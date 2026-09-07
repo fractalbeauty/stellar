@@ -6,11 +6,13 @@ use anyhow::Context;
 use fjall::{Database, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, marker::PhantomData, path::Path};
+use tokio::sync::broadcast;
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
 pub struct Store {
     backend: Backend,
+    changes: broadcast::Sender<StoreChange>,
 }
 
 impl Store {
@@ -27,13 +29,24 @@ impl Store {
                 _database: database,
                 keyspace,
             },
+            changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
         })
     }
 
     pub fn in_memory() -> Self {
         Self {
             backend: Backend::Memory(MemoryBackend::default()),
+            changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
         }
+    }
+
+    /// Subscribes to local changes. Remote changes are not re-broadcast.
+    pub fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
+        self.changes.subscribe()
+    }
+
+    fn notify(&self, change: StoreChange) {
+        let _ = self.changes.send(change);
     }
 
     pub fn get_entity_metadata(
@@ -68,11 +81,37 @@ impl Store {
         Ok(metadata)
     }
 
-    pub fn merge_entity_metadata(
+    /// Applies local entity metadata changes and notifies subscribers.
+    pub fn apply_local_entity_metadata(
         &self,
         entity: EntityId,
         incoming: EntityMetadataValue,
     ) -> Result<(), anyhow::Error> {
+        if self.merge_entity_metadata(entity, incoming.clone())? {
+            self.notify(StoreChange::EntityMetadata {
+                entity,
+                value: incoming,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies remote entity metadata changes.
+    pub fn apply_remote_entity_metadata(
+        &self,
+        entity: EntityId,
+        incoming: EntityMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.merge_entity_metadata(entity, incoming)?;
+        Ok(())
+    }
+
+    /// Merges entity metadata changes (updating if newer), returning whether something changed.
+    fn merge_entity_metadata(
+        &self,
+        entity: EntityId,
+        incoming: EntityMetadataValue,
+    ) -> Result<bool, anyhow::Error> {
         let key = make_entity_metadata_key(entity);
 
         let existing = self
@@ -95,10 +134,10 @@ impl Store {
                     deleted_version: incoming.deleted_version,
                 })?;
                 self.backend.insert(key, metadata)?;
-                Ok(())
+                Ok(true)
             } else {
                 // unchanged
-                Ok(())
+                Ok(false)
             }
         } else {
             // new
@@ -107,16 +146,45 @@ impl Store {
                 deleted_version: incoming.deleted_version,
             })?;
             self.backend.insert(key, metadata)?;
-            Ok(())
+            Ok(true)
         }
     }
 
-    pub fn merge_entity_attribute(
+    /// Applies local entity attribute changes and notifies subscribers.
+    pub fn apply_local_entity_attribute(
         &self,
         entity: EntityId,
         attribute: AttributeKind,
         incoming: EntityAttributeValue,
     ) -> Result<(), anyhow::Error> {
+        if self.merge_entity_attribute(entity, attribute, incoming.clone())? {
+            self.notify(StoreChange::EntityAttribute {
+                entity,
+                attribute,
+                value: incoming,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies remote entity attribute changes.
+    pub fn apply_remote_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        incoming: EntityAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.merge_entity_attribute(entity, attribute, incoming)?;
+        Ok(())
+    }
+
+    /// Merges entity attribute changes (updating if newer), returning whether something changed.
+    fn merge_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        incoming: EntityAttributeValue,
+    ) -> Result<bool, anyhow::Error> {
         let key = make_entity_attribute_key(entity, attribute);
 
         let existing = self
@@ -136,10 +204,10 @@ impl Store {
                     version: incoming.version,
                 })?;
                 self.backend.insert(key, metadata)?;
-                Ok(())
+                Ok(true)
             } else {
                 // unchanged
-                Ok(())
+                Ok(false)
             }
         } else {
             // new
@@ -148,15 +216,41 @@ impl Store {
                 version: incoming.version,
             })?;
             self.backend.insert(key, metadata)?;
-            Ok(())
+            Ok(true)
         }
     }
 
-    pub fn merge_relation_metadata(
+    /// Applies local relation metadata changes and notifies subscribers.
+    pub fn apply_local_relation_metadata(
         &self,
         relation: RelationId,
         incoming: RelationMetadataValue,
     ) -> Result<(), anyhow::Error> {
+        if self.merge_relation_metadata(relation, incoming.clone())? {
+            self.notify(StoreChange::RelationMetadata {
+                relation,
+                value: incoming,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies remote relation metadata changes.
+    pub fn apply_remote_relation_metadata(
+        &self,
+        relation: RelationId,
+        incoming: RelationMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.merge_relation_metadata(relation, incoming)?;
+        Ok(())
+    }
+
+    /// Merges relation metadata changes (updating if newer), returning whether something changed.
+    fn merge_relation_metadata(
+        &self,
+        relation: RelationId,
+        incoming: RelationMetadataValue,
+    ) -> Result<bool, anyhow::Error> {
         let key = make_relation_metadata_key(relation);
 
         let existing = self
@@ -203,10 +297,10 @@ impl Store {
                 let target_key = make_relation_target_key(incoming.target, relation);
                 self.backend.insert(target_key, target_index)?;
 
-                Ok(())
+                Ok(true)
             } else {
                 // unchanged
-                Ok(())
+                Ok(false)
             }
         } else {
             // new
@@ -232,16 +326,45 @@ impl Store {
             let target_key = make_relation_target_key(incoming.target, relation);
             self.backend.insert(target_key, target_index)?;
 
-            Ok(())
+            Ok(true)
         }
     }
 
-    pub fn merge_relation_attribute(
+    /// Applies local relation attribute changes and notifies subscribers.
+    pub fn apply_local_relation_attribute(
         &self,
         relation: RelationId,
         attribute: AttributeKind,
         incoming: RelationAttributeValue,
     ) -> Result<(), anyhow::Error> {
+        if self.merge_relation_attribute(relation, attribute, incoming.clone())? {
+            self.notify(StoreChange::RelationAttribute {
+                relation,
+                attribute,
+                value: incoming,
+            });
+        }
+        Ok(())
+    }
+
+    /// Applies remote relation attribute changes.
+    pub fn apply_remote_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        incoming: RelationAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.merge_relation_attribute(relation, attribute, incoming)?;
+        Ok(())
+    }
+
+    /// Merges relation attribute changes (updating if newer), returning whether something changed.
+    fn merge_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        incoming: RelationAttributeValue,
+    ) -> Result<bool, anyhow::Error> {
         let key = make_relation_attribute_key(relation, attribute);
 
         let existing = self
@@ -261,10 +384,10 @@ impl Store {
                     version: incoming.version,
                 })?;
                 self.backend.insert(key, metadata)?;
-                Ok(())
+                Ok(true)
             } else {
                 // unchanged
-                Ok(())
+                Ok(false)
             }
         } else {
             // new
@@ -273,7 +396,7 @@ impl Store {
                 version: incoming.version,
             })?;
             self.backend.insert(key, metadata)?;
-            Ok(())
+            Ok(true)
         }
     }
 
@@ -884,6 +1007,31 @@ impl<T: DeserializeOwned> RawValue<T> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum StoreChange {
+    EntityMetadata {
+        entity: EntityId,
+        value: EntityMetadataValue,
+    },
+    EntityAttribute {
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: EntityAttributeValue,
+    },
+    RelationMetadata {
+        relation: RelationId,
+        value: RelationMetadataValue,
+    },
+    RelationAttribute {
+        relation: RelationId,
+        attribute: AttributeKind,
+        value: RelationAttributeValue,
+    },
+}
+
+/// Number of changes to buffer if a change subscriber is lagging.
+const CHANGE_CHANNEL_CAPACITY: usize = 1024;
+
 #[cfg(test)]
 mod test {
     use crate::{
@@ -916,12 +1064,12 @@ mod test {
 
         for (entity, data) in entities.clone() {
             store
-                .merge_entity_metadata(entity, data.metadata)
+                .apply_local_entity_metadata(entity, data.metadata)
                 .expect("should merge entity metadata");
 
             for (attribute, value) in data.attributes {
                 store
-                    .merge_entity_attribute(entity, attribute, value)
+                    .apply_local_entity_attribute(entity, attribute, value)
                     .expect("should merge entity attribute");
             }
         }
@@ -938,12 +1086,12 @@ mod test {
 
         for (relation, data) in relations.clone() {
             store
-                .merge_relation_metadata(relation, data.metadata)
+                .apply_local_relation_metadata(relation, data.metadata)
                 .expect("should merge relation metadata");
 
             for (attribute, value) in data.attributes {
                 store
-                    .merge_relation_attribute(relation, attribute, value)
+                    .apply_local_relation_attribute(relation, attribute, value)
                     .expect("should merge relation attribute");
             }
         }
@@ -959,7 +1107,7 @@ mod test {
         let entity = tc.draw(gen_entity_id());
 
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity,
                 EntityMetadataValue {
                     deleted: false,
@@ -977,7 +1125,7 @@ mod test {
         };
 
         store
-            .merge_entity_attribute(entity, attribute, first.clone())
+            .apply_local_entity_attribute(entity, attribute, first.clone())
             .expect("should merge entity attribute");
 
         let first_result = store
@@ -1000,7 +1148,7 @@ mod test {
         };
 
         store
-            .merge_entity_attribute(entity, attribute, second.clone())
+            .apply_local_entity_attribute(entity, attribute, second.clone())
             .expect("should merge entity attribute");
 
         let second_result = store

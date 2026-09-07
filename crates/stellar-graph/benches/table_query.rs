@@ -22,7 +22,7 @@ fn version() -> Version {
 
 fn set_entity(store: &Store, entity: EntityId) {
     store
-        .merge_entity_metadata(
+        .apply_local_entity_metadata(
             entity,
             EntityMetadataValue {
                 deleted: false,
@@ -34,7 +34,7 @@ fn set_entity(store: &Store, entity: EntityId) {
 
 fn set_entity_attribute(store: &Store, entity: EntityId, attribute: AttributeKind, value: Value) {
     store
-        .merge_entity_attribute(
+        .apply_local_entity_attribute(
             entity,
             attribute,
             EntityAttributeValue {
@@ -47,7 +47,7 @@ fn set_entity_attribute(store: &Store, entity: EntityId, attribute: AttributeKin
 
 fn set_relation(store: &Store, relation: RelationId, source: EntityId, target: EntityId) {
     store
-        .merge_relation_metadata(
+        .apply_local_relation_metadata(
             relation,
             RelationMetadataValue {
                 source,
@@ -66,7 +66,7 @@ fn set_relation_attribute(
     value: Value,
 ) {
     store
-        .merge_relation_attribute(
+        .apply_local_relation_attribute(
             relation,
             attribute,
             RelationAttributeValue {

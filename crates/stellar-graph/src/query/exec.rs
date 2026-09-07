@@ -860,7 +860,7 @@ mod test {
         let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
 
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity_id,
                 EntityMetadataValue {
                     deleted: false,
@@ -869,7 +869,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_attribute(
+            .apply_local_entity_attribute(
                 entity_id,
                 attribute,
                 EntityAttributeValue {
@@ -923,7 +923,7 @@ mod test {
 
         // 1 and 3 not deleted, 2 deleted
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity1,
                 EntityMetadataValue {
                     deleted: false,
@@ -932,7 +932,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity2,
                 EntityMetadataValue {
                     deleted: true,
@@ -941,7 +941,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity3,
                 EntityMetadataValue {
                     deleted: false,
@@ -993,7 +993,7 @@ mod test {
         let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
 
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity1,
                 EntityMetadataValue {
                     deleted: false,
@@ -1002,7 +1002,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity2,
                 EntityMetadataValue {
                     deleted: false,
@@ -1011,7 +1011,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity3,
                 EntityMetadataValue {
                     deleted: false,
@@ -1020,7 +1020,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity4,
                 EntityMetadataValue {
                     deleted: false,
@@ -1030,7 +1030,7 @@ mod test {
             .expect("should update");
 
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation1,
                 RelationMetadataValue {
                     source: entity1,
@@ -1041,7 +1041,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation2,
                 RelationMetadataValue {
                     source: entity3,
@@ -1126,7 +1126,7 @@ mod test {
 
         for entity_id in [entity1, entity2, entity3] {
             store
-                .merge_entity_metadata(
+                .apply_local_entity_metadata(
                     entity_id,
                     EntityMetadataValue {
                         deleted: false,
@@ -1137,7 +1137,7 @@ mod test {
         }
 
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation1,
                 RelationMetadataValue {
                     source: entity1,
@@ -1148,7 +1148,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation2,
                 RelationMetadataValue {
                     source: entity1,
@@ -1159,7 +1159,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 other_relation1,
                 RelationMetadataValue {
                     source: entity1,
@@ -1170,7 +1170,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation3,
                 RelationMetadataValue {
                     source: entity3,
@@ -1251,7 +1251,7 @@ mod test {
         let version = Version::new(Timestamp::now(), AuthorId::from_bytes([0u8; 32]));
 
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity1,
                 EntityMetadataValue {
                     deleted: false,
@@ -1260,7 +1260,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity2,
                 EntityMetadataValue {
                     deleted: false,
@@ -1269,7 +1269,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity3,
                 EntityMetadataValue {
                     deleted: false,
@@ -1279,7 +1279,7 @@ mod test {
             .expect("should update");
 
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation1,
                 RelationMetadataValue {
                     source: entity1,
@@ -1290,7 +1290,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation2,
                 RelationMetadataValue {
                     source: entity1,
@@ -1302,7 +1302,7 @@ mod test {
             .expect("should update");
 
         store
-            .merge_entity_attribute(
+            .apply_local_entity_attribute(
                 entity2,
                 attribute,
                 EntityAttributeValue {
@@ -1312,7 +1312,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_entity_attribute(
+            .apply_local_entity_attribute(
                 entity3,
                 attribute,
                 EntityAttributeValue {
@@ -1323,7 +1323,7 @@ mod test {
             .expect("should update");
 
         store
-            .merge_relation_attribute(
+            .apply_local_relation_attribute(
                 relation1,
                 attribute,
                 RelationAttributeValue {
@@ -1333,7 +1333,7 @@ mod test {
             )
             .expect("should update");
         store
-            .merge_relation_attribute(
+            .apply_local_relation_attribute(
                 relation2,
                 attribute,
                 RelationAttributeValue {

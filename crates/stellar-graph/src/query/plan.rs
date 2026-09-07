@@ -476,7 +476,7 @@ mod test {
 
     fn set_entity(store: &Store, entity: EntityId) {
         store
-            .merge_entity_metadata(
+            .apply_local_entity_metadata(
                 entity,
                 EntityMetadataValue {
                     deleted: false,
@@ -493,7 +493,7 @@ mod test {
         value: &Value,
     ) {
         store
-            .merge_entity_attribute(
+            .apply_local_entity_attribute(
                 entity,
                 attribute,
                 EntityAttributeValue {
@@ -506,7 +506,7 @@ mod test {
 
     fn set_relation(store: &Store, relation: RelationId, source: EntityId, target: EntityId) {
         store
-            .merge_relation_metadata(
+            .apply_local_relation_metadata(
                 relation,
                 RelationMetadataValue {
                     source,
@@ -525,7 +525,7 @@ mod test {
         value: &Value,
     ) {
         store
-            .merge_relation_attribute(
+            .apply_local_relation_attribute(
                 relation,
                 attribute,
                 RelationAttributeValue {

@@ -50,16 +50,16 @@ impl Database {
             deleted: false,
             deleted_version: version,
         };
-        self.store.merge_entity_metadata(entity, value)?;
+        self.store.apply_local_entity_metadata(entity, value)?;
 
         Ok(entity)
     }
 
     pub fn upsert_entity(&self, entity: EntityId, data: EntityData) -> Result<(), anyhow::Error> {
-        self.store.merge_entity_metadata(entity, data.metadata)?;
+        self.store.apply_local_entity_metadata(entity, data.metadata)?;
         for (attribute, value) in data.attributes {
             self.store
-                .merge_entity_attribute(entity, attribute, value)?;
+                .apply_local_entity_attribute(entity, attribute, value)?;
         }
         Ok(())
     }
@@ -71,7 +71,7 @@ impl Database {
         value: Value,
         version: Version,
     ) -> Result<(), anyhow::Error> {
-        self.store.merge_entity_attribute(
+        self.store.apply_local_entity_attribute(
             entity,
             attribute,
             EntityAttributeValue { value, version },
@@ -80,7 +80,7 @@ impl Database {
     }
 
     pub fn delete_entity(&self, entity: EntityId, version: Version) -> Result<(), anyhow::Error> {
-        self.store.merge_entity_metadata(
+        self.store.apply_local_entity_metadata(
             entity,
             EntityMetadataValue {
                 deleted: true,
@@ -109,7 +109,7 @@ impl Database {
             deleted: false,
             deleted_version: version,
         };
-        self.store.merge_relation_metadata(relation, value)?;
+        self.store.apply_local_relation_metadata(relation, value)?;
 
         Ok(relation)
     }
@@ -120,10 +120,10 @@ impl Database {
         data: RelationData,
     ) -> Result<(), anyhow::Error> {
         self.store
-            .merge_relation_metadata(relation, data.metadata)?;
+            .apply_local_relation_metadata(relation, data.metadata)?;
         for (attribute, value) in data.attributes {
             self.store
-                .merge_relation_attribute(relation, attribute, value)?;
+                .apply_local_relation_attribute(relation, attribute, value)?;
         }
         Ok(())
     }
@@ -135,7 +135,7 @@ impl Database {
         value: Value,
         version: Version,
     ) -> Result<(), anyhow::Error> {
-        self.store.merge_relation_attribute(
+        self.store.apply_local_relation_attribute(
             relation,
             attribute,
             RelationAttributeValue { value, version },
@@ -151,7 +151,7 @@ impl Database {
         let Some(existing) = self.store.get_relation_metadata(relation)? else {
             anyhow::bail!("Relation does not exist");
         };
-        self.store.merge_relation_metadata(
+        self.store.apply_local_relation_metadata(
             relation,
             RelationMetadataValue {
                 source: existing.source,

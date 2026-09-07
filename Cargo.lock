@@ -5028,6 +5028,7 @@ dependencies = [
  "serde",
  "stellar-uniffi",
  "testdir",
+ "tokio",
  "tracing",
  "uniffi",
  "uuid",
