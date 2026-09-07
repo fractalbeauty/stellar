@@ -1,7 +1,6 @@
 package net.trillia.stellar.desktop.table
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -14,7 +13,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
@@ -84,10 +82,9 @@ fun TableHeaderColumn(
                     .height(tableRowHeight)
                     .runIf(DEBUG_REORDER_DRAG) {
                         background(Color.Blue.copy(alpha = 0.5f))
-                    }.pointerInput(id) {
-                        detectTapGestures(onTap = { onTap() })
                     }.pointerInputHorizontalDrag(
                         key = id,
+                        onTap = onTap,
                         onDragStart = { columnState.handleReorderDragStart(id) },
                         onDragEnd = { columnState.handleReorderDragEnd(id, scope) },
                         onDrag = { deltaX -> columnState.handleReorderDragMove(id, deltaX, scope) },
