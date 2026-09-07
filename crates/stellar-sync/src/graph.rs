@@ -9,13 +9,17 @@ use std::{
     hash::Hasher,
     pin::Pin,
     sync::Arc,
+    time::Duration,
 };
 use stellar_graph::{
-    entity::{EntityId, RelationId, Version},
-    store::{EntityData, RelationData},
+    entity::{AttributeKind, EntityId, RelationId, Version},
+    store::{
+        EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
+        RelationData, RelationMetadataValue, StoreChange,
+    },
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc};
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -30,10 +34,12 @@ impl PeerSyncClientTask {
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
+        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
     ) -> Self {
         tokio::spawn({
             async move {
-                let result = Self::run(database, sync_manager, connection).await;
+                let result =
+                    Self::run(database, sync_manager, connection, incremental_changes).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer sync client task errored: {error}");
@@ -50,6 +56,7 @@ impl PeerSyncClientTask {
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
+        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSyncClient starting");
 
@@ -138,6 +145,9 @@ impl PeerSyncClientTask {
 
         tracing::debug!("PeerSyncClient finished");
 
+        // Spawn a task to send incremental changes
+        PeerIncrementalClientTask::spawn(connection, incremental_changes);
+
         Ok(())
     }
 }
@@ -205,12 +215,14 @@ pub struct PeerDifferenceServerTask {}
 impl PeerDifferenceServerTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
+        connection: Connection,
         tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
         rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
     ) -> Self {
         tokio::spawn({
             async move {
-                let result = Self::run(database, tx, rx).await;
+                let result = Self::run(database, connection, tx, rx, incremental_changes).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer difference server task errored: {error}");
@@ -225,8 +237,10 @@ impl PeerDifferenceServerTask {
 
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
+        connection: Connection,
         mut tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
         mut rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerDifferenceServer starting");
 
@@ -257,6 +271,263 @@ impl PeerDifferenceServerTask {
         .context("Failed to send DifferenceServerMessage")?;
 
         tracing::debug!("PeerSyncServer finished");
+
+        // Spawn a task to send incremental changes
+        PeerIncrementalClientTask::spawn(connection, incremental_changes);
+
+        Ok(())
+    }
+}
+
+/// How long to wait to batch incremental changes.
+const INCREMENTAL_BATCH_DELAY: Duration = Duration::from_millis(100);
+
+/// A batch of incremental changes.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct IncrementalMessage {
+    entity_metadata: HashMap<EntityId, EntityMetadataValue>,
+    entity_attributes: HashMap<(EntityId, AttributeKind), EntityAttributeValue>,
+    relation_metadata: HashMap<RelationId, RelationMetadataValue>,
+    relation_attributes: HashMap<(RelationId, AttributeKind), RelationAttributeValue>,
+}
+
+impl IncrementalMessage {
+    pub fn encode(message: &Self) -> Bytes {
+        postcard::to_stdvec(&message)
+            .expect("Failed to serialize message")
+            .into()
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
+        postcard::from_bytes(bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entity_metadata.is_empty()
+            && self.entity_attributes.is_empty()
+            && self.relation_metadata.is_empty()
+            && self.relation_attributes.is_empty()
+    }
+
+    /// Add a change to the batch, overwriting an older change if it exists.
+    fn add_change(&mut self, change: StoreChange) {
+        match change {
+            StoreChange::EntityMetadata { entity, value } => {
+                self.entity_metadata.insert(entity, value);
+            }
+            StoreChange::EntityAttribute {
+                entity,
+                attribute,
+                value,
+            } => {
+                self.entity_attributes.insert((entity, attribute), value);
+            }
+            StoreChange::RelationMetadata { relation, value } => {
+                self.relation_metadata.insert(relation, value);
+            }
+            StoreChange::RelationAttribute {
+                relation,
+                attribute,
+                value,
+            } => {
+                self.relation_attributes
+                    .insert((relation, attribute), value);
+            }
+        }
+    }
+}
+
+/// Waits for the pending batch's timeout to finish, or waits forever if there's no batch pending.
+async fn incremental_batch_timeout(timeout: &mut Pin<&mut Option<tokio::time::Sleep>>) {
+    match timeout.as_mut().as_pin_mut() {
+        Some(sleep) => sleep.await,
+        None => std::future::pending().await,
+    }
+}
+
+pub enum IncrementalEvent {
+    Change(StoreChange),
+    Lagged { skipped: u64 },
+}
+
+/// Spawns a task to forward local changes from the database to a channel for an incremental sync
+/// task. Exits if the subscriber lagged too far behind the store.
+pub fn subscribe_incremental(
+    database: &Arc<dyn PeersDatabasePort>,
+) -> mpsc::UnboundedReceiver<IncrementalEvent> {
+    let mut changes = database.subscribe();
+    let (tx, rx) = mpsc::unbounded_channel();
+
+    tokio::spawn(async move {
+        loop {
+            let event = match changes.recv().await {
+                Ok(change) => IncrementalEvent::Change(change),
+                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    let _ = tx.send(IncrementalEvent::Lagged { skipped });
+                    break;
+                }
+            };
+
+            if tx.send(event).is_err() {
+                break;
+            }
+        }
+    });
+
+    rx
+}
+
+/// Handle for a peer incremental client task
+pub struct PeerIncrementalClientTask {}
+
+impl PeerIncrementalClientTask {
+    pub fn spawn(
+        connection: Connection,
+        changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+    ) -> Self {
+        tokio::spawn({
+            async move {
+                let result = Self::run(connection.clone(), changes).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer incremental client task errored: {error}");
+                } else {
+                    tracing::debug!("Peer incremental client task finished");
+                }
+            }
+        });
+
+        Self {}
+    }
+
+    async fn run(
+        connection: Connection,
+        mut changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("PeerIncrementalClient starting");
+
+        let (tx, _rx) = connection.open_bi().await?;
+        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
+
+        let stream_header = StreamHeader::encode(&StreamHeader::Incremental);
+        tx.send(stream_header)
+            .await
+            .context("Failed to send stream header")?;
+
+        let mut batch = IncrementalMessage::default();
+
+        let timeout = None;
+        tokio::pin!(timeout);
+
+        loop {
+            tokio::select! {
+                event = changes.recv() => {
+                    let Some(event) = event else { break; };
+
+                    let change = match event {
+                        IncrementalEvent::Change(change) => change,
+                        IncrementalEvent::Lagged { skipped } => {
+                            anyhow::bail!("Incremental subscriber lagged by {skipped} changes");
+                        }
+                    };
+
+                    batch.add_change(change);
+
+                    if timeout.as_mut().as_pin_mut().is_none() {
+                        timeout.set(Some(tokio::time::sleep(INCREMENTAL_BATCH_DELAY)));
+                    }
+                }
+
+                _ = incremental_batch_timeout(&mut timeout) => {
+                    Self::flush(&mut tx, &mut batch).await?;
+                    timeout.set(None);
+                }
+            }
+        }
+
+        Self::flush(&mut tx, &mut batch).await?;
+
+        tracing::debug!("PeerIncrementalClient finished");
+
+        Ok(())
+    }
+
+    async fn flush(
+        tx: &mut FramedWrite<iroh::endpoint::SendStream, LengthDelimitedCodec>,
+        batch: &mut IncrementalMessage,
+    ) -> Result<(), anyhow::Error> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+
+        let message = std::mem::take(batch);
+
+        tracing::trace!("PeerIncrementalClient sending {message:?}");
+        tx.send(IncrementalMessage::encode(&message))
+            .await
+            .context("Failed to send")?;
+
+        Ok(())
+    }
+}
+
+/// Handle for a peer incremental server task
+pub struct PeerIncrementalServerTask {}
+
+impl PeerIncrementalServerTask {
+    pub fn spawn(
+        database: Arc<dyn PeersDatabasePort>,
+        rx: Pin<Box<dyn Stream<Item = Result<IncrementalMessage, anyhow::Error>> + Send>>,
+    ) -> Self {
+        tokio::spawn({
+            async move {
+                let result = Self::run(database, rx).await;
+
+                if let Err(error) = result {
+                    tracing::error!("Peer incremental server task errored: {error}");
+                } else {
+                    tracing::debug!("Peer incremental server task finished");
+                }
+            }
+        });
+
+        Self {}
+    }
+
+    async fn run(
+        database: Arc<dyn PeersDatabasePort>,
+        mut rx: Pin<Box<dyn Stream<Item = Result<IncrementalMessage, anyhow::Error>> + Send>>,
+    ) -> Result<(), anyhow::Error> {
+        tracing::debug!("PeerIncrementalServer starting");
+
+        while let Some(message) = rx.next().await {
+            let message = message.context("Failed to receive")?;
+            tracing::trace!("PeerIncrementalServer received {message:?}");
+
+            let IncrementalMessage {
+                entity_metadata,
+                entity_attributes,
+                relation_metadata,
+                relation_attributes,
+            } = message;
+
+            for (entity, value) in entity_metadata {
+                database.apply_remote_entity_metadata(entity, value)?;
+            }
+            for ((entity, attribute), value) in entity_attributes {
+                database.apply_remote_entity_attribute(entity, attribute, value)?;
+            }
+            for (relation, value) in relation_metadata {
+                database.apply_remote_relation_metadata(relation, value)?;
+            }
+            for ((relation, attribute), value) in relation_attributes {
+                database.apply_remote_relation_attribute(relation, attribute, value)?;
+            }
+        }
+
+        tracing::debug!("PeerIncrementalServer finished");
 
         Ok(())
     }

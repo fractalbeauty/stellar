@@ -1030,7 +1030,7 @@ pub enum StoreChange {
 }
 
 /// Number of changes to buffer if a change subscriber is lagging.
-const CHANGE_CHANNEL_CAPACITY: usize = 1024;
+const CHANGE_CHANNEL_CAPACITY: usize = 128;
 
 #[cfg(test)]
 mod test {

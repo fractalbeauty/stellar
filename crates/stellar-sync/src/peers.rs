@@ -1,8 +1,9 @@
 use crate::{
     devices::Device,
     graph::{
-        DifferenceClientMessage, DifferenceServerMessage, PeerDifferenceServerTask,
-        PeerSyncClientTask, PeerSyncServerTask, SyncManager, SyncServerMessage,
+        DifferenceClientMessage, DifferenceServerMessage, IncrementalMessage,
+        PeerDifferenceServerTask, PeerIncrementalServerTask, PeerSyncClientTask,
+        PeerSyncServerTask, SyncManager, SyncServerMessage, subscribe_incremental,
     },
     protocol::StreamHeader,
     schema::{
@@ -21,10 +22,13 @@ use std::{
 };
 use stellar_graph::{
     database::Database,
-    entity::{EntityId, RelationId},
-    store::{EntityData, RelationData},
+    entity::{AttributeKind, EntityId, RelationId},
+    store::{
+        EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
+        RelationData, RelationMetadataValue, StoreChange,
+    },
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
     sync::CancellationToken,
@@ -304,6 +308,12 @@ impl Peer {
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("Peer starting");
 
+        // Subscribe to incremental changes immediately after connecting. Incremental sync only
+        // starts after the full sync finishes, but the full sync snapshots the graph when it
+        // starts, so we need to subscribe to incremental changes before that to not miss changes
+        // that happen during the sync.
+        let mut incremental_changes = Some(subscribe_incremental(&database));
+
         let (mut tx, mut rx) = {
             match side {
                 PeerSide::Incoming => connection.accept_bi().await?,
@@ -313,7 +323,15 @@ impl Peer {
 
         // Start syncing if we're the outgoing side
         if side == PeerSide::Outgoing {
-            PeerSyncClientTask::spawn(database.clone(), sync_manager.clone(), connection.clone());
+            let incremental_changes = incremental_changes
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("Incremental subscription already consumed"))?;
+            PeerSyncClientTask::spawn(
+                database.clone(),
+                sync_manager.clone(),
+                connection.clone(),
+                incremental_changes,
+            );
             PeerSchemaClientTask::spawn(schema.clone(), connection.clone());
         }
 
@@ -359,7 +377,16 @@ impl Peer {
                                         Ok(bytes) => DifferenceClientMessage::decode(&bytes),
                                         Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
                                     }));
-                                    PeerDifferenceServerTask::spawn(database.clone(), tx, rx);
+                                    let incremental_changes = incremental_changes.take().ok_or_else(|| {
+                                        anyhow::anyhow!("Incremental subscription already consumed but accepted a second Difference stream")
+                                    })?;
+                                    PeerDifferenceServerTask::spawn(
+                                        database.clone(),
+                                        connection.clone(),
+                                        tx,
+                                        rx,
+                                        incremental_changes,
+                                    );
                                 },
                                 StreamHeader::SchemaSync => {
                                     let tx = Box::pin(tx.with(|message| {
@@ -370,6 +397,13 @@ impl Peer {
                                         Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
                                     }));
                                     PeerSchemaServerTask::spawn(schema.clone(), tx, rx);
+                                }
+                                StreamHeader::Incremental => {
+                                    let rx = Box::pin( rx.map(|result| match result {
+                                        Ok(bytes) => IncrementalMessage::decode(&bytes),
+                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+                                    }));
+                                    PeerIncrementalServerTask::spawn(database.clone(), rx);
                                 }
                             }
                         }
@@ -386,6 +420,9 @@ impl Peer {
 }
 
 pub trait PeersDatabasePort: Send + Sync {
+    /// Subscribes to local changes. Remote changes are not re-broadcast.
+    fn subscribe(&self) -> broadcast::Receiver<StoreChange>;
+
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
 
     fn get_entities_by_id(
@@ -395,6 +432,21 @@ pub trait PeersDatabasePort: Send + Sync {
 
     fn upsert_entities(&self, entities: HashMap<EntityId, EntityData>)
     -> Result<(), anyhow::Error>;
+
+    /// Applies an entity metadata change received from a peer.
+    fn apply_remote_entity_metadata(
+        &self,
+        entity: EntityId,
+        value: EntityMetadataValue,
+    ) -> Result<(), anyhow::Error>;
+
+    /// Applies an entity attribute change received from a peer.
+    fn apply_remote_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: EntityAttributeValue,
+    ) -> Result<(), anyhow::Error>;
 
     fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error>;
 
@@ -406,6 +458,21 @@ pub trait PeersDatabasePort: Send + Sync {
     fn upsert_relations(
         &self,
         relations: HashMap<RelationId, RelationData>,
+    ) -> Result<(), anyhow::Error>;
+
+    /// Applies a relation metadata change received from a peer.
+    fn apply_remote_relation_metadata(
+        &self,
+        relation: RelationId,
+        value: RelationMetadataValue,
+    ) -> Result<(), anyhow::Error>;
+
+    /// Applies a relation attribute change received from a peer.
+    fn apply_remote_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        value: RelationAttributeValue,
     ) -> Result<(), anyhow::Error>;
 }
 
@@ -420,6 +487,10 @@ impl PeersDatabaseAdapter {
 }
 
 impl PeersDatabasePort for PeersDatabaseAdapter {
+    fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
+        self.database.subscribe()
+    }
+
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
         self.database.get_entities()
     }
@@ -442,9 +513,27 @@ impl PeersDatabasePort for PeersDatabaseAdapter {
     ) -> Result<(), anyhow::Error> {
         // TODO: batch this somewhere (maybe a level above this; inside peer, outside database)
         for (entity, data) in entities {
-            self.database.upsert_entity(entity, data)?;
+            self.database.apply_remote_entity(entity, data)?;
         }
         Ok(())
+    }
+
+    fn apply_remote_entity_metadata(
+        &self,
+        entity: EntityId,
+        value: EntityMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.database.apply_remote_entity_metadata(entity, value)
+    }
+
+    fn apply_remote_entity_attribute(
+        &self,
+        entity: EntityId,
+        attribute: AttributeKind,
+        value: EntityAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.database
+            .apply_remote_entity_attribute(entity, attribute, value)
     }
 
     fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error> {
@@ -469,9 +558,28 @@ impl PeersDatabasePort for PeersDatabaseAdapter {
     ) -> Result<(), anyhow::Error> {
         // TODO: batch this somewhere (maybe a level above this; inside peer, outside database)
         for (relation, data) in relations {
-            self.database.upsert_relation(relation, data)?;
+            self.database.apply_remote_relation(relation, data)?;
         }
         Ok(())
+    }
+
+    fn apply_remote_relation_metadata(
+        &self,
+        relation: RelationId,
+        value: RelationMetadataValue,
+    ) -> Result<(), anyhow::Error> {
+        self.database
+            .apply_remote_relation_metadata(relation, value)
+    }
+
+    fn apply_remote_relation_attribute(
+        &self,
+        relation: RelationId,
+        attribute: AttributeKind,
+        value: RelationAttributeValue,
+    ) -> Result<(), anyhow::Error> {
+        self.database
+            .apply_remote_relation_attribute(relation, attribute, value)
     }
 }
 

@@ -10,6 +10,7 @@ pub enum StreamHeader {
     Sync,
     Difference,
     SchemaSync,
+    Incremental,
 }
 
 impl StreamHeader {
