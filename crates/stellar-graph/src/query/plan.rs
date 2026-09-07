@@ -469,7 +469,6 @@ mod test {
         generators::{self as gs},
     };
     use std::collections::{HashMap, HashSet};
-    use uuid::Uuid;
 
     fn version() -> Version {
         Version::new(Timestamp::new(0), AuthorId::from_bytes([0u8; 32]))
@@ -539,12 +538,7 @@ mod test {
 
     #[test]
     fn table_query() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let album = EntityKind::random();
         let song = EntityKind::random();
@@ -664,12 +658,7 @@ mod test {
     /// [`TableQuery`] should return the requested attributes from the store
     #[hegel::test]
     fn entity_attributes_match_store(tc: TestCase) {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity_kind = tc.draw(gen_entity_kind());
         let attribute_kinds = tc
@@ -744,12 +733,7 @@ mod test {
     /// [`TableQuery`] should return requested attributes for outgoing relations and target entities
     #[hegel::test]
     fn outgoing_relation_attributes_match_store(tc: TestCase) {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity_kind = tc.draw(gen_entity_kind());
         let relation_kind = tc.draw(gen_relation_kind());

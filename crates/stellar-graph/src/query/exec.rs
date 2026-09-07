@@ -846,16 +846,10 @@ mod test {
         },
     };
     use std::collections::{HashMap, HashSet};
-    use uuid::Uuid;
 
     #[test]
     fn scan_entity_metadata() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = EntityKind::random();
         let entity_id = EntityId::random(entity);
@@ -918,12 +912,7 @@ mod test {
 
     #[test]
     fn filter_eq() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = EntityKind::random();
         let entity1 = EntityId::random(entity);
@@ -989,12 +978,7 @@ mod test {
 
     #[test]
     fn relation_source_join() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = EntityKind::random();
         let entity1 = EntityId::random(entity);
@@ -1113,12 +1097,7 @@ mod test {
 
     #[test]
     fn relation_source_merge_join() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = EntityKind::random();
         // entity1: two matching-kind relations (fan-out) plus one other-kind relation, to check
@@ -1252,12 +1231,7 @@ mod test {
 
     #[test]
     fn collect_relation_attributes() {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = EntityKind::random();
         let entity1 = EntityId::random(entity);

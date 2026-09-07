@@ -22,6 +22,12 @@ impl Database {
         Ok(Self { store })
     }
 
+    pub fn in_memory() -> Self {
+        Self {
+            store: Store::in_memory(),
+        }
+    }
+
     pub fn table_query(
         &self,
         query: &TableQuery,

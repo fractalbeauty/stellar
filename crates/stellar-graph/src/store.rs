@@ -1,16 +1,16 @@
-use crate::entity::{
-    AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, Version,
+use crate::{
+    backend::{Backend, MemoryBackend},
+    entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, Version},
 };
 use anyhow::Context;
-use fjall::{Database, Keyspace, KeyspaceCreateOptions, Slice};
+use fjall::{Database, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{collections::HashMap, marker::PhantomData, path::Path};
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
 pub struct Store {
-    database: Database,
-    keyspace: Keyspace,
+    backend: Backend,
 }
 
 impl Store {
@@ -22,7 +22,18 @@ impl Store {
 
         let keyspace = database.keyspace("graph_v1", KeyspaceCreateOptions::default)?;
 
-        Ok(Self { database, keyspace })
+        Ok(Self {
+            backend: Backend::Fjall {
+                _database: database,
+                keyspace,
+            },
+        })
+    }
+
+    pub fn in_memory() -> Self {
+        Self {
+            backend: Backend::Memory(MemoryBackend::default()),
+        }
     }
 
     pub fn get_entity_metadata(
@@ -31,7 +42,7 @@ impl Store {
     ) -> Result<Option<EntityMetadataValue>, anyhow::Error> {
         let key = make_entity_metadata_key(entity);
         let metadata = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
@@ -47,7 +58,7 @@ impl Store {
     ) -> Result<Option<RelationMetadataValue>, anyhow::Error> {
         let key = make_relation_metadata_key(relation);
         let metadata = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<RelationMetadataValue>(value.as_ref())
@@ -65,7 +76,7 @@ impl Store {
         let key = make_entity_metadata_key(entity);
 
         let existing = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
@@ -83,7 +94,7 @@ impl Store {
                     deleted: incoming.deleted,
                     deleted_version: incoming.deleted_version,
                 })?;
-                self.keyspace.insert(key, metadata)?;
+                self.backend.insert(key, metadata)?;
                 Ok(())
             } else {
                 // unchanged
@@ -95,7 +106,7 @@ impl Store {
                 deleted: incoming.deleted,
                 deleted_version: incoming.deleted_version,
             })?;
-            self.keyspace.insert(key, metadata)?;
+            self.backend.insert(key, metadata)?;
             Ok(())
         }
     }
@@ -109,7 +120,7 @@ impl Store {
         let key = make_entity_attribute_key(entity, attribute);
 
         let existing = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<EntityAttributeValue>(value.as_ref())
@@ -124,7 +135,7 @@ impl Store {
                     value: incoming.value,
                     version: incoming.version,
                 })?;
-                self.keyspace.insert(key, metadata)?;
+                self.backend.insert(key, metadata)?;
                 Ok(())
             } else {
                 // unchanged
@@ -136,7 +147,7 @@ impl Store {
                 value: incoming.value,
                 version: incoming.version,
             })?;
-            self.keyspace.insert(key, metadata)?;
+            self.backend.insert(key, metadata)?;
             Ok(())
         }
     }
@@ -149,7 +160,7 @@ impl Store {
         let key = make_relation_metadata_key(relation);
 
         let existing = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<RelationMetadataValue>(value.as_ref())
@@ -176,21 +187,21 @@ impl Store {
                     deleted: incoming.deleted,
                     deleted_version: incoming.deleted_version,
                 })?;
-                self.keyspace.insert(key, metadata)?;
+                self.backend.insert(key, metadata)?;
 
                 let source_index = postcard::to_allocvec(&RelationIndexValue {
                     other: incoming.target,
                     deleted: incoming.deleted,
                 })?;
                 let source_key = make_relation_source_key(incoming.source, relation);
-                self.keyspace.insert(source_key, source_index)?;
+                self.backend.insert(source_key, source_index)?;
 
                 let target_index = postcard::to_allocvec(&RelationIndexValue {
                     other: incoming.source,
                     deleted: incoming.deleted,
                 })?;
                 let target_key = make_relation_target_key(incoming.target, relation);
-                self.keyspace.insert(target_key, target_index)?;
+                self.backend.insert(target_key, target_index)?;
 
                 Ok(())
             } else {
@@ -205,21 +216,21 @@ impl Store {
                 deleted: incoming.deleted,
                 deleted_version: incoming.deleted_version,
             })?;
-            self.keyspace.insert(key, metadata)?;
+            self.backend.insert(key, metadata)?;
 
             let source_index = postcard::to_allocvec(&RelationIndexValue {
                 other: incoming.target,
                 deleted: incoming.deleted,
             })?;
             let source_key = make_relation_source_key(incoming.source, relation);
-            self.keyspace.insert(source_key, source_index)?;
+            self.backend.insert(source_key, source_index)?;
 
             let target_index = postcard::to_allocvec(&RelationIndexValue {
                 other: incoming.source,
                 deleted: incoming.deleted,
             })?;
             let target_key = make_relation_target_key(incoming.target, relation);
-            self.keyspace.insert(target_key, target_index)?;
+            self.backend.insert(target_key, target_index)?;
 
             Ok(())
         }
@@ -234,7 +245,7 @@ impl Store {
         let key = make_relation_attribute_key(relation, attribute);
 
         let existing = self
-            .keyspace
+            .backend
             .get(key)?
             .map(|value| {
                 postcard::from_bytes::<RelationAttributeValue>(value.as_ref())
@@ -249,7 +260,7 @@ impl Store {
                     value: incoming.value,
                     version: incoming.version,
                 })?;
-                self.keyspace.insert(key, metadata)?;
+                self.backend.insert(key, metadata)?;
                 Ok(())
             } else {
                 // unchanged
@@ -261,14 +272,14 @@ impl Store {
                 value: incoming.value,
                 version: incoming.version,
             })?;
-            self.keyspace.insert(key, metadata)?;
+            self.backend.insert(key, metadata)?;
             Ok(())
         }
     }
 
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {
-        let metadata_iter = self.keyspace.prefix([ENTITY_METADATA_PREFIX]).map(|guard| {
-            let (key, value) = guard.into_inner().context("Fjall error reading metadata")?;
+        let metadata_iter = self.backend.prefix([ENTITY_METADATA_PREFIX]).map(|entry| {
+            let (key, value) = entry?;
 
             let key = parse_entity_metadata_key(key).context("Failed to parse metadata key")?;
             let value = postcard::from_bytes::<EntityMetadataValue>(value.as_ref())
@@ -278,12 +289,10 @@ impl Store {
         });
 
         let mut attributes_iter = self
-            .keyspace
+            .backend
             .prefix([ENTITY_ATTRIBUTE_PREFIX])
-            .map(|guard| {
-                let (key, value) = guard
-                    .into_inner()
-                    .context("Fjall error reading attribute")?;
+            .map(|entry| {
+                let (key, value) = entry?;
 
                 let key =
                     parse_entity_attribute_key(key).context("Failed to parse attribute key")?;
@@ -330,10 +339,10 @@ impl Store {
 
     pub fn get_relations(&self) -> Result<HashMap<RelationId, RelationData>, anyhow::Error> {
         let metadata_iter = self
-            .keyspace
+            .backend
             .prefix([RELATION_METADATA_PREFIX])
-            .map(|guard| {
-                let (key, value) = guard.into_inner().context("Fjall error reading metadata")?;
+            .map(|entry| {
+                let (key, value) = entry?;
 
                 let key =
                     parse_relation_metadata_key(key).context("Failed to parse metadata key")?;
@@ -344,12 +353,10 @@ impl Store {
             });
 
         let mut attributes_iter = self
-            .keyspace
+            .backend
             .prefix([RELATION_ATTRIBUTE_PREFIX])
-            .map(|guard| {
-                let (key, value) = guard
-                    .into_inner()
-                    .context("Fjall error reading attribute")?;
+            .map(|entry| {
+                let (key, value) = entry?;
 
                 let key =
                     parse_relation_attribute_key(key).context("Failed to parse attribute key")?;
@@ -398,10 +405,10 @@ impl Store {
         &self,
         entity: EntityKind,
     ) -> impl Iterator<Item = (EntityId, RawValue<EntityMetadataValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_entity_metadata_prefix_by_kind(entity))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading entity metadata");
@@ -428,10 +435,10 @@ impl Store {
         entity: EntityKind,
     ) -> impl Iterator<Item = (EntityId, AttributeKind, RawValue<EntityAttributeValue>)> + use<>
     {
-        self.keyspace
+        self.backend
             .prefix(make_entity_attribute_prefix_by_kind(entity))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading entity attribute");
@@ -457,10 +464,10 @@ impl Store {
         &self,
         entity: EntityId,
     ) -> impl Iterator<Item = (AttributeKind, RawValue<EntityAttributeValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_entity_attribute_prefix_by_id(entity))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading entity attribute");
@@ -486,10 +493,10 @@ impl Store {
         &self,
         relation: RelationId,
     ) -> impl Iterator<Item = (AttributeKind, RawValue<RelationAttributeValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_relation_attribute_prefix_by_id(relation))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading relation attribute");
@@ -516,10 +523,10 @@ impl Store {
         source: EntityId,
         kind: RelationKind,
     ) -> impl Iterator<Item = (RelationId, RawValue<RelationIndexValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_relation_source_prefix_by_source_and_kind(source, kind))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading relation index");
@@ -546,10 +553,10 @@ impl Store {
         target: EntityId,
         kind: RelationKind,
     ) -> impl Iterator<Item = (RelationId, RawValue<RelationIndexValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_relation_target_prefix_by_target_and_kind(target, kind))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading relation index");
@@ -575,10 +582,10 @@ impl Store {
         &self,
         entity_kind: EntityKind,
     ) -> impl Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_relation_source_prefix_by_entity_kind(entity_kind))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading relation index");
@@ -604,10 +611,10 @@ impl Store {
         &self,
         entity_kind: EntityKind,
     ) -> impl Iterator<Item = (EntityId, RelationId, RawValue<RelationIndexValue>)> + use<> {
-        self.keyspace
+        self.backend
             .prefix(make_relation_target_prefix_by_entity_kind(entity_kind))
-            .filter_map(|guard| {
-                let (key, value) = match guard.into_inner() {
+            .filter_map(|entry| {
+                let (key, value) = match entry {
                     Ok(x) => x,
                     Err(e) => {
                         tracing::error!(?e, "Fjall error reading relation index");
@@ -900,16 +907,10 @@ mod test {
         },
     };
     use hegel::{Generator, TestCase, generators as gs};
-    use uuid::Uuid;
 
     #[hegel::test(test_cases = 10)]
     fn retrieve_entities(tc: TestCase) {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entities = tc.draw(gs::hashmaps(gen_entity_id(), gen_entity_data()));
 
@@ -931,12 +932,7 @@ mod test {
 
     #[hegel::test(test_cases = 10)]
     fn retrieve_relations(tc: TestCase) {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let relations = tc.draw(gs::hashmaps(gen_relation_id(), gen_relation_data()));
 
@@ -958,12 +954,7 @@ mod test {
 
     #[hegel::test(test_cases = 10)]
     fn merge_entity_attribute(tc: TestCase) {
-        let store = Store::open(
-            testdir::testdir!()
-                .join(Uuid::new_v4().to_string())
-                .join("store"),
-        )
-        .expect("should open");
+        let store = Store::in_memory();
 
         let entity = tc.draw(gen_entity_id());
 
