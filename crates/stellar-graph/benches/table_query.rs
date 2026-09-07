@@ -173,15 +173,25 @@ fn build_dataset(song_count: usize) -> (Store, TableQuery) {
             HashMap::from([(album_title, OutputIndex(3))]),
         )]),
         incoming_relation_others: HashMap::new(),
+        sort: None,
     };
 
     (store, query)
 }
 
+fn song_counts() -> Vec<usize> {
+    // Run quickly when `STELLAR_BENCH_QUICK=1`
+    if std::env::var("STELLAR_BENCH_QUICK").as_deref() == Ok("1") {
+        vec![10]
+    } else {
+        vec![1_000, 10_000, 100_000]
+    }
+}
+
 fn bench_table_query(c: &mut Criterion) {
     let mut group = c.benchmark_group("table_query");
 
-    for song_count in [1_000, 10_000, 100_000] {
+    for song_count in song_counts() {
         let (store, query) = build_dataset(song_count);
 
         group.bench_with_input(
