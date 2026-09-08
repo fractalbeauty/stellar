@@ -1,12 +1,16 @@
 use crate::{
     entity::{AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Value, Version},
-    query::{exec::SlotValue, plan::TableQuery},
+    query::{
+        exec::SlotValue,
+        plan::TableQuery,
+        subscribe::{TableQueryChangeHandler, TableQuerySubscription},
+    },
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
         RelationData, RelationMetadataValue, Store, StoreChange,
     },
 };
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, sync::Arc};
 use tokio::sync::broadcast;
 
 /// Handle to the database for graph data. Provides higher-level operations than the store.
@@ -36,9 +40,26 @@ impl Database {
         Ok(query.execute(self.store.clone()))
     }
 
-    /// Subscribes to local changes. Remote changes are not re-broadcast.
-    pub fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
-        self.store.subscribe()
+    /// Subscribes to a [`TableQuery`], returning a [`TableQuerySubscription`] with the query's
+    /// current results. Calls `handler` when results may have changed.
+    ///
+    /// The subscription must be cancelled when no longer needed, or the subscription will leak.
+    pub fn subscribe_table_query(
+        &self,
+        query: TableQuery,
+        handler: Arc<dyn TableQueryChangeHandler>,
+    ) -> TableQuerySubscription {
+        TableQuerySubscription::spawn(self.store.clone(), query, handler)
+    }
+
+    /// Subscribes to local changes.
+    pub fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
+        self.store.subscribe_local()
+    }
+
+    /// Subscribes to remote changes.
+    pub fn subscribe_remote(&self) -> broadcast::Receiver<StoreChange> {
+        self.store.subscribe_remote()
     }
 
     pub fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {

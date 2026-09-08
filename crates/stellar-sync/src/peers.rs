@@ -421,7 +421,7 @@ impl Peer {
 
 pub trait PeersDatabasePort: Send + Sync {
     /// Subscribes to local changes. Remote changes are not re-broadcast.
-    fn subscribe(&self) -> broadcast::Receiver<StoreChange>;
+    fn subscribe_local(&self) -> broadcast::Receiver<StoreChange>;
 
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
 
@@ -487,8 +487,8 @@ impl PeersDatabaseAdapter {
 }
 
 impl PeersDatabasePort for PeersDatabaseAdapter {
-    fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
-        self.database.subscribe()
+    fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
+        self.database.subscribe_local()
     }
 
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error> {

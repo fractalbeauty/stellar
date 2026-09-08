@@ -12,7 +12,8 @@ use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct Store {
     backend: Backend,
-    changes: broadcast::Sender<StoreChange>,
+    local_changes: broadcast::Sender<StoreChange>,
+    remote_changes: broadcast::Sender<StoreChange>,
 }
 
 impl Store {
@@ -29,24 +30,35 @@ impl Store {
                 _database: database,
                 keyspace,
             },
-            changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            local_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            remote_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
         })
     }
 
     pub fn in_memory() -> Self {
         Self {
             backend: Backend::Memory(MemoryBackend::default()),
-            changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            local_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            remote_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
         }
     }
 
-    /// Subscribes to local changes. Remote changes are not re-broadcast.
-    pub fn subscribe(&self) -> broadcast::Receiver<StoreChange> {
-        self.changes.subscribe()
+    /// Subscribes to local changes.
+    pub fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
+        self.local_changes.subscribe()
     }
 
-    fn notify(&self, change: StoreChange) {
-        let _ = self.changes.send(change);
+    /// Subscribes to remote changes.
+    pub fn subscribe_remote(&self) -> broadcast::Receiver<StoreChange> {
+        self.remote_changes.subscribe()
+    }
+
+    fn notify_local(&self, change: StoreChange) {
+        let _ = self.local_changes.send(change);
+    }
+
+    fn notify_remote(&self, change: StoreChange) {
+        let _ = self.remote_changes.send(change);
     }
 
     pub fn get_entity_metadata(
@@ -88,7 +100,7 @@ impl Store {
         incoming: EntityMetadataValue,
     ) -> Result<(), anyhow::Error> {
         if self.merge_entity_metadata(entity, incoming.clone())? {
-            self.notify(StoreChange::EntityMetadata {
+            self.notify_local(StoreChange::EntityMetadata {
                 entity,
                 value: incoming,
             });
@@ -96,13 +108,18 @@ impl Store {
         Ok(())
     }
 
-    /// Applies remote entity metadata changes.
+    /// Applies remote entity metadata changes and notifies subscribers.
     pub fn apply_remote_entity_metadata(
         &self,
         entity: EntityId,
         incoming: EntityMetadataValue,
     ) -> Result<(), anyhow::Error> {
-        self.merge_entity_metadata(entity, incoming)?;
+        if self.merge_entity_metadata(entity, incoming.clone())? {
+            self.notify_remote(StoreChange::EntityMetadata {
+                entity,
+                value: incoming,
+            });
+        }
         Ok(())
     }
 
@@ -158,7 +175,7 @@ impl Store {
         incoming: EntityAttributeValue,
     ) -> Result<(), anyhow::Error> {
         if self.merge_entity_attribute(entity, attribute, incoming.clone())? {
-            self.notify(StoreChange::EntityAttribute {
+            self.notify_local(StoreChange::EntityAttribute {
                 entity,
                 attribute,
                 value: incoming,
@@ -167,14 +184,20 @@ impl Store {
         Ok(())
     }
 
-    /// Applies remote entity attribute changes.
+    /// Applies remote entity attribute changes and notifies subscribers.
     pub fn apply_remote_entity_attribute(
         &self,
         entity: EntityId,
         attribute: AttributeKind,
         incoming: EntityAttributeValue,
     ) -> Result<(), anyhow::Error> {
-        self.merge_entity_attribute(entity, attribute, incoming)?;
+        if self.merge_entity_attribute(entity, attribute, incoming.clone())? {
+            self.notify_remote(StoreChange::EntityAttribute {
+                entity,
+                attribute,
+                value: incoming,
+            });
+        }
         Ok(())
     }
 
@@ -227,7 +250,7 @@ impl Store {
         incoming: RelationMetadataValue,
     ) -> Result<(), anyhow::Error> {
         if self.merge_relation_metadata(relation, incoming.clone())? {
-            self.notify(StoreChange::RelationMetadata {
+            self.notify_local(StoreChange::RelationMetadata {
                 relation,
                 value: incoming,
             });
@@ -235,13 +258,18 @@ impl Store {
         Ok(())
     }
 
-    /// Applies remote relation metadata changes.
+    /// Applies remote relation metadata changes and notifies subscribers.
     pub fn apply_remote_relation_metadata(
         &self,
         relation: RelationId,
         incoming: RelationMetadataValue,
     ) -> Result<(), anyhow::Error> {
-        self.merge_relation_metadata(relation, incoming)?;
+        if self.merge_relation_metadata(relation, incoming.clone())? {
+            self.notify_remote(StoreChange::RelationMetadata {
+                relation,
+                value: incoming,
+            });
+        }
         Ok(())
     }
 
@@ -338,7 +366,7 @@ impl Store {
         incoming: RelationAttributeValue,
     ) -> Result<(), anyhow::Error> {
         if self.merge_relation_attribute(relation, attribute, incoming.clone())? {
-            self.notify(StoreChange::RelationAttribute {
+            self.notify_local(StoreChange::RelationAttribute {
                 relation,
                 attribute,
                 value: incoming,
@@ -347,14 +375,20 @@ impl Store {
         Ok(())
     }
 
-    /// Applies remote relation attribute changes.
+    /// Applies remote relation attribute changes and notifies subscribers.
     pub fn apply_remote_relation_attribute(
         &self,
         relation: RelationId,
         attribute: AttributeKind,
         incoming: RelationAttributeValue,
     ) -> Result<(), anyhow::Error> {
-        self.merge_relation_attribute(relation, attribute, incoming)?;
+        if self.merge_relation_attribute(relation, attribute, incoming.clone())? {
+            self.notify_remote(StoreChange::RelationAttribute {
+                relation,
+                attribute,
+                value: incoming,
+            });
+        }
         Ok(())
     }
 

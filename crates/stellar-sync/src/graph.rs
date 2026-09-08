@@ -356,7 +356,7 @@ pub enum IncrementalEvent {
 pub fn subscribe_incremental(
     database: &Arc<dyn PeersDatabasePort>,
 ) -> mpsc::UnboundedReceiver<IncrementalEvent> {
-    let mut changes = database.subscribe();
+    let mut changes = database.subscribe_local();
     let (tx, rx) = mpsc::unbounded_channel();
 
     tokio::spawn(async move {

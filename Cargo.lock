@@ -5029,6 +5029,7 @@ dependencies = [
  "stellar-uniffi",
  "testdir",
  "tokio",
+ "tokio-util",
  "tracing",
  "uniffi",
  "uuid",

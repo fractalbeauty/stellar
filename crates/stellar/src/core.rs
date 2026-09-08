@@ -13,6 +13,7 @@ use stellar_graph::entity::{
 };
 use stellar_graph::query::exec::SlotValue;
 use stellar_graph::query::plan::TableQuery;
+use stellar_graph::query::subscribe::{TableQueryChangeHandler, TableQuerySubscription};
 use stellar_graph::schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema};
 use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_import::ports::{ImportDatabaseAdapter, ImportSchemaPort};
@@ -630,6 +631,18 @@ impl Core {
     pub fn table_query(&self, query: TableQuery) -> Result<Vec<Vec<Option<SlotValue>>>, CoreError> {
         Ok(self.database.table_query(&query)?)
     }
+
+    pub fn subscribe_table_query(
+        &self,
+        query: TableQuery,
+        handler: Arc<dyn TableQueryChangeHandler>,
+    ) -> Result<CoreTableQuerySubscription, CoreError> {
+        let _guard = self.runtime_handle.enter();
+
+        let inner = self.database.subscribe_table_query(query, handler);
+
+        Ok(CoreTableQuerySubscription { inner })
+    }
 }
 
 #[derive(uniffi::Record)]
@@ -849,6 +862,23 @@ impl CoreImportTask {
 
     pub fn import(&self) -> Result<(), CoreError> {
         self.inner.import();
+        Ok(())
+    }
+}
+
+#[derive(uniffi::Object)]
+pub struct CoreTableQuerySubscription {
+    pub inner: TableQuerySubscription,
+}
+
+#[uniffi::export]
+impl CoreTableQuerySubscription {
+    pub fn rows(&self) -> Vec<Vec<Option<SlotValue>>> {
+        self.inner.rows()
+    }
+
+    pub fn cancel(&self) -> Result<(), CoreError> {
+        self.inner.cancel();
         Ok(())
     }
 }
