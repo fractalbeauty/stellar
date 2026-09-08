@@ -1,22 +1,26 @@
 package net.trillia.stellar.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import net.trillia.stellar.AttributeKind
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
 import net.trillia.stellar.formatFloat
-import net.trillia.stellar.getPlatform
 import net.trillia.stellar.isCtrlLikePressed
+import uniffi.stellar.Core
+import uniffi.stellar.CoreTableQuerySubscription
 import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
 import uniffi.stellar_graph.EntitySchema
@@ -25,6 +29,7 @@ import uniffi.stellar_graph.SlotValue
 import uniffi.stellar_graph.Sort
 import uniffi.stellar_graph.SortDirection
 import uniffi.stellar_graph.TableQuery
+import uniffi.stellar_graph.TableQueryChangeHandler
 import uniffi.stellar_graph.Value
 import uniffi.stellar_sync.Schema
 import kotlin.collections.component1
@@ -36,13 +41,15 @@ import kotlin.time.measureTimedValue
 
 @Composable
 fun EntityTable(
+    core: Core,
     schema: Schema,
     entityKind: EntityKind,
-    runTableQuery: (TableQuery) -> List<List<SlotValue?>>,
 ) {
     val entitySchema = schema.graph.entities[entityKind] ?: return
 
     var columns by remember(entitySchema) { mutableStateOf(buildEntityTableColumns(schema, entityKind, entitySchema)) }
+
+    val coroutineScope = rememberCoroutineScope()
 
     val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
 
@@ -89,12 +96,40 @@ fun EntityTable(
             buildEntityTableQuery(schema, entityKind, entitySchema, columns)
         }
 
-    val data =
+    var data by remember(query) { mutableStateOf<List<List<SlotValue?>>>(emptyList()) }
+
+    val subscription =
         remember(query) {
-            val (data, elapsed) = measureTimedValue { runTableQuery(query) }
-            logDebug("TableQuery returned ${data.size} rows in $elapsed (${elapsed / data.size} per row)")
-            data
+            lateinit var subscription: CoreTableQuerySubscription
+            val (created, elapsed) =
+                measureTimedValue {
+                    core.subscribeTableQuery(
+                        query,
+                        // Called from a background thread, so state updates need to be
+                        // launched on the dispatcher for the main thread.
+                        object : TableQueryChangeHandler {
+                            override fun onChange() {
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    data = subscription.rows()
+                                }
+                            }
+                        },
+                    )
+                }
+            subscription = created
+
+            data = subscription.rows()
+            logDebug("TableQuery subscription returned ${data.size} rows in $elapsed (${elapsed / data.size} per row)")
+
+            subscription
         }
+
+    // Cancel the previous subscription whenever the query changes, and on unmount.
+    DisposableEffect(subscription) {
+        onDispose {
+            subscription.cancel()
+        }
+    }
 
     var selected by remember(entityKind) { mutableStateOf<Int?>(null) }
 

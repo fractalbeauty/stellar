@@ -14,35 +14,18 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import net.trillia.stellar.desktop.EntityTable
-import net.trillia.stellar.desktop.formatDurationSlot
-import net.trillia.stellar.desktop.formatSizeSlot
-import net.trillia.stellar.desktop.table.Table
-import net.trillia.stellar.desktop.table.TableCellText
-import net.trillia.stellar.desktop.table.TableColumnDefinition
 import uniffi.stellar.Core
-import uniffi.stellar.logDebug
 import uniffi.stellar_graph.EntityKind
-import uniffi.stellar_graph.EntitySchema
-import uniffi.stellar_graph.SlotValue
-import uniffi.stellar_graph.Sort
-import uniffi.stellar_graph.SortDirection
-import uniffi.stellar_graph.TableQuery
-import uniffi.stellar_graph.Value
-import uniffi.stellar_sync.Schema
 import kotlin.collections.component1
 import kotlin.collections.component2
-import kotlin.time.measureTimedValue
 
 @Composable
 fun InspectPane(
@@ -104,7 +87,7 @@ fun InspectPane(
 //            }
 //        }
 
-        EntityTable(schema = schema, entityKind = selectedEntity, runTableQuery = { core.tableQuery(it) })
+        EntityTable(core = core, schema = schema, entityKind = selectedEntity)
 
 //        selected?.let { idx -> data.getOrNull(idx)?.let { Inspector(it) } }
     }
