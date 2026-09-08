@@ -19,7 +19,7 @@ use stellar_graph::{
     },
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, broadcast, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tokio_util::{
     bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
@@ -34,7 +34,7 @@ impl PeerSyncClientTask {
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
-        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -56,7 +56,7 @@ impl PeerSyncClientTask {
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
         connection: Connection,
-        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSyncClient starting");
 
@@ -218,7 +218,7 @@ impl PeerDifferenceServerTask {
         connection: Connection,
         tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
         rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
-        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -240,7 +240,7 @@ impl PeerDifferenceServerTask {
         connection: Connection,
         mut tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
         mut rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
-        incremental_changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerDifferenceServer starting");
 
@@ -346,46 +346,13 @@ async fn incremental_batch_timeout(timeout: &mut Pin<&mut Option<tokio::time::Sl
     }
 }
 
-pub enum IncrementalEvent {
-    Change(StoreChange),
-    Lagged { skipped: u64 },
-}
-
-/// Spawns a task to forward local changes from the database to a channel for an incremental sync
-/// task. Exits if the subscriber lagged too far behind the store.
-pub fn subscribe_incremental(
-    database: &Arc<dyn PeersDatabasePort>,
-) -> mpsc::UnboundedReceiver<IncrementalEvent> {
-    let mut changes = database.subscribe_local();
-    let (tx, rx) = mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            let event = match changes.recv().await {
-                Ok(change) => IncrementalEvent::Change(change),
-                Err(broadcast::error::RecvError::Closed) => break,
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    let _ = tx.send(IncrementalEvent::Lagged { skipped });
-                    break;
-                }
-            };
-
-            if tx.send(event).is_err() {
-                break;
-            }
-        }
-    });
-
-    rx
-}
-
 /// Handle for a peer incremental client task
 pub struct PeerIncrementalClientTask {}
 
 impl PeerIncrementalClientTask {
     pub fn spawn(
         connection: Connection,
-        changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -404,7 +371,7 @@ impl PeerIncrementalClientTask {
 
     async fn run(
         connection: Connection,
-        mut changes: mpsc::UnboundedReceiver<IncrementalEvent>,
+        mut changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerIncrementalClient starting");
 
@@ -423,15 +390,8 @@ impl PeerIncrementalClientTask {
 
         loop {
             tokio::select! {
-                event = changes.recv() => {
-                    let Some(event) = event else { break; };
-
-                    let change = match event {
-                        IncrementalEvent::Change(change) => change,
-                        IncrementalEvent::Lagged { skipped } => {
-                            anyhow::bail!("Incremental subscriber lagged by {skipped} changes");
-                        }
-                    };
+                change = changes.recv() => {
+                    let Some(change) = change else { break; };
 
                     batch.add_change(change);
 

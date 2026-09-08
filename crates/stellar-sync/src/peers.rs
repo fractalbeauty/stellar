@@ -3,7 +3,7 @@ use crate::{
     graph::{
         DifferenceClientMessage, DifferenceServerMessage, IncrementalMessage,
         PeerDifferenceServerTask, PeerIncrementalServerTask, PeerSyncClientTask,
-        PeerSyncServerTask, SyncManager, SyncServerMessage, subscribe_incremental,
+        PeerSyncServerTask, SyncManager, SyncServerMessage,
     },
     protocol::StreamHeader,
     schema::{
@@ -28,7 +28,7 @@ use stellar_graph::{
         RelationData, RelationMetadataValue, StoreChange,
     },
 };
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
     sync::CancellationToken,
@@ -312,7 +312,7 @@ impl Peer {
         // starts after the full sync finishes, but the full sync snapshots the graph when it
         // starts, so we need to subscribe to incremental changes before that to not miss changes
         // that happen during the sync.
-        let mut incremental_changes = Some(subscribe_incremental(&database));
+        let mut incremental_changes = Some(database.subscribe_local());
 
         let (mut tx, mut rx) = {
             match side {
@@ -420,8 +420,8 @@ impl Peer {
 }
 
 pub trait PeersDatabasePort: Send + Sync {
-    /// Subscribes to local changes. Remote changes are not re-broadcast.
-    fn subscribe_local(&self) -> broadcast::Receiver<StoreChange>;
+    /// Subscribes to local changes.
+    fn subscribe_local(&self) -> mpsc::UnboundedReceiver<StoreChange>;
 
     fn get_entities(&self) -> Result<HashMap<EntityId, EntityData>, anyhow::Error>;
 
@@ -487,7 +487,7 @@ impl PeersDatabaseAdapter {
 }
 
 impl PeersDatabasePort for PeersDatabaseAdapter {
-    fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
+    fn subscribe_local(&self) -> mpsc::UnboundedReceiver<StoreChange> {
         self.database.subscribe_local()
     }
 

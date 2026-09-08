@@ -9,7 +9,6 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 
 /// How long to wait before rerunning an invalidated query.
@@ -148,7 +147,12 @@ impl TableQuerySubscription {
 
         let dependencies = dependencies_for_table_query(&query);
 
-        // Subscribe before running the initial query so concurrent changes are observed
+        // Subscribe before running the initial query so concurrent changes are observed.
+        //
+        // TODO: `subscribe_local`/`subscribe_remote` currently queue every raw `StoreChange` for
+        // this subscription. Large bursts of changes temporarily require memory proportional to the
+        // number of active subscriptions. This could be optimized by registering a filter or map on
+        // the subscription to compute the information earlier and avoid buffering the changes.
         let mut local_changes = store.subscribe_local();
         let mut remote_changes = store.subscribe_remote();
         let rows = Arc::new(Mutex::new(query.execute(store.clone())));
@@ -165,11 +169,8 @@ impl TableQuerySubscription {
                         _ = cancellation_token.cancelled() => break,
 
                         change = local_changes.recv() => {
-                            let invalidated = match change {
-                                Ok(change) => dependencies.iter().any(|dependency| dependency.matches(&change)),
-                                Err(broadcast::error::RecvError::Lagged(_)) => true,
-                                Err(broadcast::error::RecvError::Closed) => break,
-                            };
+                            let Some(change) = change else { break; };
+                            let invalidated = dependencies.iter().any(|dependency| dependency.matches(&change));
 
                             if invalidated && timeout.as_mut().as_pin_mut().is_none() {
                                 timeout.set(Some(tokio::time::sleep(DEBOUNCE)));
@@ -177,11 +178,8 @@ impl TableQuerySubscription {
                         }
 
                         change = remote_changes.recv() => {
-                            let invalidated = match change {
-                                Ok(change) => dependencies.iter().any(|dependency| dependency.matches(&change)),
-                                Err(broadcast::error::RecvError::Lagged(_)) => true,
-                                Err(broadcast::error::RecvError::Closed) => break,
-                            };
+                            let Some(change) = change else { break; };
+                            let invalidated = dependencies.iter().any(|dependency| dependency.matches(&change));
 
                             if invalidated && timeout.as_mut().as_pin_mut().is_none() {
                                 timeout.set(Some(tokio::time::sleep(DEBOUNCE)));

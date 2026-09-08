@@ -11,7 +11,7 @@ use crate::{
     },
 };
 use std::{collections::HashMap, path::Path, sync::Arc};
-use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
 /// Handle to the database for graph data. Provides higher-level operations than the store.
 #[derive(Clone)]
@@ -53,12 +53,12 @@ impl Database {
     }
 
     /// Subscribes to local changes.
-    pub fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
+    pub fn subscribe_local(&self) -> mpsc::UnboundedReceiver<StoreChange> {
         self.store.subscribe_local()
     }
 
     /// Subscribes to remote changes.
-    pub fn subscribe_remote(&self) -> broadcast::Receiver<StoreChange> {
+    pub fn subscribe_remote(&self) -> mpsc::UnboundedReceiver<StoreChange> {
         self.store.subscribe_remote()
     }
 

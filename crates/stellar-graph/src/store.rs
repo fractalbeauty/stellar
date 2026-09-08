@@ -5,15 +5,20 @@ use crate::{
 use anyhow::Context;
 use fjall::{Database, KeyspaceCreateOptions, Slice};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::{collections::HashMap, marker::PhantomData, path::Path};
-use tokio::sync::broadcast;
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::mpsc;
 
 /// Handle to the store for graph data. Provides primitive operations.
 #[derive(Clone)]
 pub struct Store {
     backend: Backend,
-    local_changes: broadcast::Sender<StoreChange>,
-    remote_changes: broadcast::Sender<StoreChange>,
+    local_change_senders: Arc<Mutex<Vec<mpsc::UnboundedSender<StoreChange>>>>,
+    remote_change_senders: Arc<Mutex<Vec<mpsc::UnboundedSender<StoreChange>>>>,
 }
 
 impl Store {
@@ -30,35 +35,41 @@ impl Store {
                 _database: database,
                 keyspace,
             },
-            local_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
-            remote_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            local_change_senders: Arc::new(Mutex::new(Vec::new())),
+            remote_change_senders: Arc::new(Mutex::new(Vec::new())),
         })
     }
 
     pub fn in_memory() -> Self {
         Self {
             backend: Backend::Memory(MemoryBackend::default()),
-            local_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
-            remote_changes: broadcast::Sender::new(CHANGE_CHANNEL_CAPACITY),
+            local_change_senders: Arc::new(Mutex::new(Vec::new())),
+            remote_change_senders: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     /// Subscribes to local changes.
-    pub fn subscribe_local(&self) -> broadcast::Receiver<StoreChange> {
-        self.local_changes.subscribe()
+    pub fn subscribe_local(&self) -> mpsc::UnboundedReceiver<StoreChange> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.local_change_senders.lock().unwrap().push(tx);
+        rx
     }
 
     /// Subscribes to remote changes.
-    pub fn subscribe_remote(&self) -> broadcast::Receiver<StoreChange> {
-        self.remote_changes.subscribe()
+    pub fn subscribe_remote(&self) -> mpsc::UnboundedReceiver<StoreChange> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.remote_change_senders.lock().unwrap().push(tx);
+        rx
     }
 
     fn notify_local(&self, change: StoreChange) {
-        let _ = self.local_changes.send(change);
+        let mut senders = self.local_change_senders.lock().unwrap();
+        senders.retain(|sender| sender.send(change.clone()).is_ok());
     }
 
     fn notify_remote(&self, change: StoreChange) {
-        let _ = self.remote_changes.send(change);
+        let mut senders = self.remote_change_senders.lock().unwrap();
+        senders.retain(|sender| sender.send(change.clone()).is_ok());
     }
 
     pub fn get_entity_metadata(
@@ -1062,9 +1073,6 @@ pub enum StoreChange {
         value: RelationAttributeValue,
     },
 }
-
-/// Number of changes to buffer if a change subscriber is lagging.
-const CHANGE_CHANNEL_CAPACITY: usize = 128;
 
 #[cfg(test)]
 mod test {
