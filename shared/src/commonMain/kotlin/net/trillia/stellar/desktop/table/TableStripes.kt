@@ -19,9 +19,10 @@ import net.trillia.stellar.AppColors
  * Draws the table's background stripes.
  */
 @Composable
-fun TableStripes(
+fun <Row> TableStripes(
+    data: List<Row>,
+    isSelected: (Row) -> Boolean,
     listState: LazyListState,
-    selectedItemListIndex: Int? = null,
 ) {
     val rowHeightPx = with(LocalDensity.current) { tableRowHeight.toPx() }
 
@@ -32,9 +33,19 @@ fun TableStripes(
                 var itemIndex = listState.firstVisibleItemIndex
                 var offsetY = -listState.firstVisibleItemScrollOffset.toFloat()
                 while (offsetY < size.height) {
+                    val selected =
+                        if (itemIndex >= 1) {
+                            // Table header is the first item, so we need to subtract 1 before indexing data
+                            val dataIndex = itemIndex - 1
+                            val row = data[dataIndex]
+                            isSelected(row)
+                        } else {
+                            false
+                        }
+
                     val color =
                         when {
-                            itemIndex == selectedItemListIndex -> AppColors.TableRowSelected
+                            selected -> AppColors.TableRowSelected
                             itemIndex % 2 == 1 -> AppColors.TableRowSecondary
                             else -> AppColors.TableRowPrimary
                         }
@@ -56,6 +67,6 @@ fun TableStripesPreview() {
     Box(
         Modifier.size(100.dp),
     ) {
-        TableStripes(rememberLazyListState())
+        TableStripes(listOf(1, 2, 3, 4), { it == 3 }, rememberLazyListState())
     }
 }

@@ -3,7 +3,9 @@ package net.trillia.stellar.desktop
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -14,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.trillia.stellar.AttributeKind
+import net.trillia.stellar.EntityId
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
@@ -131,13 +134,32 @@ fun EntityTable(
         }
     }
 
-    var selected by remember(entityKind) { mutableStateOf<Int?>(null) }
+    val selected = remember(entityKind) { mutableStateSetOf<EntityId?>(null) }
 
     Table(
         data,
         tableColumns,
-        selected,
-        { selected = it },
+        { row ->
+            when (val entityId = row[0]) {
+                is SlotValue.SvEntityId -> selected.contains(entityId.v1)
+                else -> error("expected EntityId in slot 0")
+            }
+        },
+        { row ->
+            when (val entityId = row[0]) {
+                is SlotValue.SvEntityId -> selected.add(entityId.v1)
+                else -> error("expected EntityId in slot 0")
+            }
+        },
+        onDeselectRow = { row ->
+            when (val entityId = row[0]) {
+                is SlotValue.SvEntityId -> selected.remove(entityId.v1)
+                else -> error("expected EntityId in slot 0")
+            }
+        },
+        onDeselectAllRows = {
+            selected.clear()
+        },
         onColumnTap = handleColumnTap,
     )
 }
@@ -311,6 +333,8 @@ fun buildEntityTableQuery(
         nextOutputIndexInner += 1
         outputIndex
     }
+
+    val entityIdOutputIndex = nextOutputIndex()
 
     val tableColumns = mutableListOf<TableColumnDefinition<List<SlotValue?>, *>>()
 
@@ -545,7 +569,7 @@ fun buildEntityTableQuery(
     val query =
         TableQuery(
             entity = entityKind,
-            id = null,
+            id = entityIdOutputIndex.toUShort(),
             attributes = attributes,
             outgoingRelationAttributes = outgoingRelationAttributes,
             outgoingRelationEntityAttributes = outgoingRelationEntityAttributes,
