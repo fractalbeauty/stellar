@@ -29,10 +29,10 @@ run-tui *FLAGS:
   cargo run --package stellar-tui -- {{FLAGS}}
 
 run-desktop *FLAGS:
-  ./gradlew :desktopApp:run --args="{{FLAGS}}"
+  ./gradlew :desktopApp:run {{ if FLAGS != "" { "--args=" + quote(FLAGS) } else { "" } }}
 
 run-desktop-hot *FLAGS:
-  ./gradlew :desktopApp:hotRun --auto --args="{{FLAGS}}"
+  ./gradlew :desktopApp:hotRun --auto {{ if FLAGS != "" { "--args=" + quote(FLAGS) } else { "" } }}
 
 run-desktop-release *FLAGS:
   ./gradlew :desktopApp:createDistributable -Pnet.trillia.stellar.rust.variant=release
