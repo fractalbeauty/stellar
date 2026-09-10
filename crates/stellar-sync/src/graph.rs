@@ -350,10 +350,7 @@ async fn incremental_batch_timeout(timeout: &mut Pin<&mut Option<tokio::time::Sl
 pub struct PeerIncrementalClientTask {}
 
 impl PeerIncrementalClientTask {
-    pub fn spawn(
-        connection: Connection,
-        changes: mpsc::UnboundedReceiver<StoreChange>,
-    ) -> Self {
+    pub fn spawn(connection: Connection, changes: mpsc::UnboundedReceiver<StoreChange>) -> Self {
         tokio::spawn({
             async move {
                 let result = Self::run(connection.clone(), changes).await;

@@ -3,7 +3,6 @@ package net.trillia.stellar.desktop.table
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import net.trillia.stellar.AttributeKind
 import uniffi.stellar_graph.SortDirection
 
 data class TableColumnDefinition<Row, Value>(

@@ -2,14 +2,15 @@ package net.trillia.stellar.desktop
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateSet
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.trillia.stellar.AttributeKind
 import net.trillia.stellar.EntityId
+import net.trillia.stellar.desktop.buildEntityTableColumns
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
@@ -44,17 +46,12 @@ import kotlin.time.measureTimedValue
 
 @Composable
 fun EntityTable(
-    core: Core,
-    schema: Schema,
-    entityKind: EntityKind,
+    state: EntityTableState,
+    selected: SnapshotStateSet<EntityId>,
 ) {
-    val entitySchema = schema.graph.entities[entityKind] ?: return
-
-    var columns by remember(entitySchema) { mutableStateOf(buildEntityTableColumns(schema, entityKind, entitySchema)) }
-
-    val coroutineScope = rememberCoroutineScope()
-
     val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
+
+    var columns by state.columns
 
     val handleColumnTap = { columnId: String ->
         val existing = columns.find { it.id == columnId } ?: error("Missing columnId")
@@ -94,51 +91,11 @@ fun EntityTable(
             }
     }
 
-    val (query, tableColumns) =
-        remember(columns) {
-            buildEntityTableQuery(schema, entityKind, entitySchema, columns)
-        }
-
-    var data by remember(query) { mutableStateOf<List<List<SlotValue?>>>(emptyList()) }
-
-    val subscription =
-        remember(query) {
-            lateinit var subscription: CoreTableQuerySubscription
-            val (created, elapsed) =
-                measureTimedValue {
-                    core.subscribeTableQuery(
-                        query,
-                        // Called from a background thread, so state updates need to be
-                        // launched on the dispatcher for the main thread.
-                        object : TableQueryChangeHandler {
-                            override fun onChange() {
-                                coroutineScope.launch(Dispatchers.Main) {
-                                    data = subscription.rows()
-                                }
-                            }
-                        },
-                    )
-                }
-            subscription = created
-
-            data = subscription.rows()
-            logDebug("TableQuery subscription returned ${data.size} rows in $elapsed (${elapsed / data.size} per row)")
-
-            subscription
-        }
-
-    // Cancel the previous subscription whenever the query changes, and on unmount.
-    DisposableEffect(subscription) {
-        onDispose {
-            subscription.cancel()
-        }
-    }
-
-    val selected = remember(entityKind) { mutableStateSetOf<EntityId?>(null) }
+    val data by state.data
 
     Table(
         data,
-        tableColumns,
+        state.tableColumns,
         { row ->
             when (val entityId = row[0]) {
                 is SlotValue.SvEntityId -> selected.contains(entityId.v1)
@@ -162,6 +119,90 @@ fun EntityTable(
         },
         onColumnTap = handleColumnTap,
     )
+}
+
+class EntityTableState(
+    val schema: Schema,
+    val entityKind: EntityKind,
+    val entitySchema: EntitySchema,
+    val columns: MutableState<List<EntityTableColumn>>,
+    val data: MutableState<List<List<SlotValue?>>>,
+) {
+    val queryAndTableColumns by derivedStateOf {
+        buildEntityTableQuery(schema, entityKind, entitySchema, columns.value)
+    }
+    val query: TableQuery
+        get() = queryAndTableColumns.first
+    val tableColumns: List<TableColumnDefinition<List<SlotValue?>, *>>
+        get() = queryAndTableColumns.second
+
+    companion object {
+        fun start(
+            schema: Schema,
+            entityKind: EntityKind,
+        ): EntityTableState {
+            val entitySchema = schema.graph.entities[entityKind] ?: error("missing entity schema for selected entity kind")
+
+            val initialColumns = buildEntityTableColumns(schema, entityKind, entitySchema)
+
+            return EntityTableState(
+                schema,
+                entityKind,
+                entitySchema,
+                columns = mutableStateOf(initialColumns),
+                data = mutableStateOf(emptyList()),
+            )
+        }
+    }
+}
+
+@Composable
+fun rememberEntityTableState(
+    core: Core,
+    schema: Schema,
+    entityKind: EntityKind,
+): EntityTableState {
+    val coroutineScope = rememberCoroutineScope()
+
+    val state = remember(schema, entityKind) { EntityTableState.start(schema, entityKind) }
+
+    // Create the subscription on mount and whenever the query changes
+    val subscription =
+        remember(state.query) {
+            lateinit var subscription: CoreTableQuerySubscription
+            val (created, elapsed) =
+                measureTimedValue {
+                    core.subscribeTableQuery(
+                        state.query,
+                        // Called from a background thread, so state updates need to be
+                        // launched on the dispatcher for the main thread.
+                        object : TableQueryChangeHandler {
+                            override fun onChange() {
+                                coroutineScope.launch(Dispatchers.Main) {
+                                    state.data.value = subscription.rows()
+                                }
+                            }
+                        },
+                    )
+                }
+            subscription = created
+
+            state.data.value = subscription.rows()
+            logDebug(
+                "TableQuery subscription returned ${state.data.value.size} rows in $elapsed (${elapsed / state.data.value.size} per row)",
+            )
+
+            subscription
+        }
+
+    // Cancel the previous subscription whenever the subscription changes, and on unmount.
+    DisposableEffect(subscription) {
+        onDispose {
+            subscription.cancel()
+        }
+    }
+
+    return state
 }
 
 fun buildEntityTableColumns(

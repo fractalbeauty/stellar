@@ -14,6 +14,8 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateSetOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import net.trillia.stellar.desktop.EntityTable
+import net.trillia.stellar.desktop.rememberEntityTableState
 import uniffi.stellar.Core
 import uniffi.stellar_graph.EntityKind
 import kotlin.collections.component1
@@ -33,63 +36,22 @@ fun InspectPane(
     schemaManager: SchemaManager,
     selectedEntity: EntityKind,
 ) {
-//    val entities =
-//        remember {
-//            try {
-//                core.getEntities()
-//            } catch (e: CoreException) {
-//                logCoreError(e)
-//                throw e
-//            }
-//        }
     val schemaNullable by schemaManager.schemaState.collectAsState()
-
     val schema = schemaNullable ?: return
 
-//    var selectedEntity by remember { mutableStateOf(schema.importRules.songEntity) }
+    val state = rememberEntityTableState(core, schema, entityKind = selectedEntity)
 
-    val selectedEntitySchema = schema.graph.entities[selectedEntity] ?: return
-
-//    val selectedEntityColumns =
-//        remember(selectedEntitySchema) {
-//            selectedEntitySchema.attributes.map { it ->
-//                TableColumnDefinition<Map<String, String>, String>(
-//                    id = it.value.name,
-//                    header = it.value.name,
-//                    initialWidth = 300.dp,
-//                    accessor = { row -> row[it.value.name].orEmpty() },
-//                    renderer = { TableCellText(it) },
-//                )
-//            }
-//        }
-//
-//    val selectedEntityEntities = entities.filterValues { it.kind == selectedEntity }
-//    val selectedEntityData =
-//        selectedEntityEntities
-//            .map {
-//                it.value.attributes.entries.associate { attributeEntry ->
-//                    val name = selectedEntitySchema.attributes[attributeEntry.key]?.name ?: attributeEntry.key.toString()
-//                    val value =
-//                        when (val attributeValue = attributeEntry.value.value) {
-//                            is Value.Bytes -> "<bytes>"
-//                            is Value.Number -> attributeValue.v1.toString()
-//                            is Value.Text -> attributeValue.v1
-//                            is Value.Bool -> attributeValue.v1.toString()
-//                        }
-//                    name to value
-//                }
-//            }
+    val selected = remember(selectedEntity) { mutableStateSetOf<EntityId>() }
 
     Column {
-//        Row {
-//            schema.graph.entities.forEach {
-//                Button(it.value.name, onClick = { selectedEntity = it.key })
-//            }
-//        }
+        EntityTable(
+            state = state,
+            selected = selected,
+        )
 
-        EntityTable(core = core, schema = schema, entityKind = selectedEntity)
-
-//        selected?.let { idx -> data.getOrNull(idx)?.let { Inspector(it) } }
+        if (selected.isNotEmpty()) {
+//            Inspector(selected)
+        }
     }
 }
 

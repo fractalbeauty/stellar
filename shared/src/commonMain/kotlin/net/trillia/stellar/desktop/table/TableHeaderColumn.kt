@@ -26,7 +26,6 @@ import net.trillia.stellar.runIf
 import org.jetbrains.compose.resources.Font
 import stellar.shared.generated.resources.Res
 import stellar.shared.generated.resources.tahoma
-import uniffi.stellar.logDebug
 import uniffi.stellar_graph.SortDirection
 
 @Composable

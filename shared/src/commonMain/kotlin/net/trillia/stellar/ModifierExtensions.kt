@@ -32,7 +32,7 @@ fun Modifier.pointerInputHorizontalDrag(
 
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
-                
+
                 var dragOffset = Offset.Zero
                 var dragStarted = false
 

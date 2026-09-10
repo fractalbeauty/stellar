@@ -34,7 +34,7 @@ fun <Row> TableStripes(
                 var offsetY = -listState.firstVisibleItemScrollOffset.toFloat()
                 while (offsetY < size.height) {
                     val selected =
-                        if (itemIndex >= 1) {
+                        if (itemIndex >= 1 && itemIndex <= data.size) {
                             // Table header is the first item, so we need to subtract 1 before indexing data
                             val dataIndex = itemIndex - 1
                             val row = data[dataIndex]

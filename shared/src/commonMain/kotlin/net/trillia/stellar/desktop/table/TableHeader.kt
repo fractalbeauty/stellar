@@ -14,7 +14,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import net.trillia.stellar.AppColors
 import net.trillia.stellar.FakeHandler
-import uniffi.stellar_graph.SortDirection
 
 @Composable
 fun TableHeader(

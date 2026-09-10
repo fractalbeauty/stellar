@@ -15,12 +15,12 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import net.trillia.stellar.desktop.Button
 import net.trillia.stellar.DevicesManager
+import net.trillia.stellar.desktop.Button
 import uniffi.stellar.Core
 import uniffi.stellar_sync.DevicesStateDevice
 import uniffi.stellar_uniffi.PublicKey

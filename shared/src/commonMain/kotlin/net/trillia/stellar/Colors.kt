@@ -13,7 +13,6 @@ object AppColors {
     val TextSecondary = Color(0xFF1A1A1A)
     val TextOnPrimary = Color.White
 
-
     // Table
     val TableRowPrimary = Color(0xFFFAFAFA)
     val TableRowSecondary = Color(0xFFEEEEEE)
@@ -21,7 +20,4 @@ object AppColors {
 
     val TableHeaderBackground = Color(0xFFDADADA)
     val TableHeaderBackgroundDragged = Color(0xFFABB3BA)
-
-
 }
-
