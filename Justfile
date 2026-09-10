@@ -21,9 +21,13 @@ test:
   just test-rust
   ./gradlew compileKotlin --quiet
   ./gradlew ktlintFormat --quiet
+  just test-kotlin
 
 test-rust *FLAGS:
   STELLAR_BENCH_QUICK=1 cargo nextest run --all-targets {{FLAGS}}
+
+test-kotlin *FLAGS:
+  ./gradlew :shared:jvmTest --quiet {{FLAGS}}
 
 run-tui *FLAGS:
   cargo run --package stellar-tui -- {{FLAGS}}

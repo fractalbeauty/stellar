@@ -18,3 +18,10 @@ inline fun <T> T.runIf(
         this
     }
 }
+
+infix fun Int.upOrDownTo(to: Int): IntProgression =
+    if (this <= to) {
+        this..to
+    } else {
+        this downTo to
+    }
