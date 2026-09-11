@@ -1,0 +1,16 @@
+[package]
+name = "stellar-player"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+stellar-graph = { path = "../stellar-graph" }
+
+anyhow = "1.0.103"
+tracing = "0.1.44"
+cpal = "0.18.2"
+ringbuf = "0.5.1"
+tokio = { version = "1.52.3", features = ["sync"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }

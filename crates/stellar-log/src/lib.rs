@@ -135,6 +135,7 @@ pub const STELLAR_CRATES: &[&str] = &[
     "stellar_graph",
     "stellar_import",
     "stellar_log",
+    "stellar_player",
     "stellar_resources",
     "stellar_riblt",
     "stellar_sync",
