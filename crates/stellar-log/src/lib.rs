@@ -1,16 +1,10 @@
-use std::path::Path;
+use std::{iter, path::Path};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{
     EnvFilter, Registry,
     fmt::{self, format::FmtSpan},
     prelude::*,
 };
-
-/// Default filter:
-/// - `warn` by default
-/// - `stellar_*=debug`: include debug logs from us
-/// - `iroh=error`: suppress noisy warnings from Iroh
-const DEFAULT_ENV_FILTER: &str = "warn,stellar=debug,stellar_graph=debug,stellar_import=debug,stellar_log=debug,stellar_resources=debug,stellar_sync=debug,stellar_riblt=debug,iroh=error";
 
 /// Initialize logging.
 ///
@@ -22,7 +16,7 @@ const DEFAULT_ENV_FILTER: &str = "warn,stellar=debug,stellar_graph=debug,stellar
 /// platforms, logs will also be written to stderr.
 pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
     let filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_ENV_FILTER));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_env_filter()));
 
     let guard = if let Some(log_dir) = log_dir {
         if let Err(e) = std::fs::create_dir_all(log_dir) {
@@ -117,4 +111,59 @@ pub fn init(log_dir: Option<&Path>) -> anyhow::Result<Option<LogGuard>> {
 /// Guard that should be kept alive until the application exits to flush logs on drop.
 pub struct LogGuard {
     _guard: WorkerGuard,
+}
+
+/// Default filter:
+/// - `warn` by default
+/// - `stellar_*=debug`: include debug logs from us
+/// - `iroh=error`: suppress noisy warnings from Iroh
+fn default_env_filter() -> String {
+    let stellar_crate_filters = STELLAR_CRATES
+        .iter()
+        .map(|c| format!("{}=debug", c))
+        .collect::<Vec<_>>();
+
+    iter::once("warn")
+        .chain(stellar_crate_filters.iter().map(|f| f.as_str()))
+        .chain(["iroh=error"])
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub const STELLAR_CRATES: &[&str] = &[
+    "stellar",
+    "stellar_graph",
+    "stellar_import",
+    "stellar_log",
+    "stellar_resources",
+    "stellar_riblt",
+    "stellar_sync",
+    "stellar_tui",
+    "stellar_uniffi",
+];
+
+#[cfg(test)]
+mod test {
+    use crate::STELLAR_CRATES;
+    use std::path::PathBuf;
+
+    #[test]
+    fn matches_workspace_crates() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let crates_dir = crate_dir.join("..");
+
+        let mut crates = std::fs::read_dir(crates_dir)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_dir()))
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .map(|dir_name| dir_name.replace("-", "_"))
+            .collect::<Vec<_>>();
+        crates.sort();
+
+        assert_eq!(
+            STELLAR_CRATES, crates,
+            "STELLAR_CRATES should contain all workspace crates"
+        )
+    }
 }
