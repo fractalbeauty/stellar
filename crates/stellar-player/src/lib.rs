@@ -1,18 +1,24 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-
 use anyhow::Context;
 use cpal::{
-    Device, FromSample, OutputCallbackInfo, Sample, SampleFormat, SampleRate, Stream,
-    SupportedOutputConfigs, SupportedStreamConfig,
+    FromSample, OutputCallbackInfo, Sample, SampleFormat, Stream,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use ringbuf::{
-    HeapRb, SharedRb,
-    traits::{Consumer, Observer, Producer},
+    CachingCons, HeapRb,
+    traits::{Consumer, Observer},
+};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::Thread,
 };
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
+pub mod decode;
 pub mod queue;
 
 pub struct CpalBackend {
@@ -77,55 +83,73 @@ impl CpalBackend {
 
         tx.send(DataCallbackMessage::PlayNow {
             buffer: {
-                let d = 3;
-                let frames = (output_config.sample_rate() as usize) * d;
-                let mut buffer = HeapRb::new(frames * (output_config.channels() as usize));
-                buffer.push_iter((0..frames).flat_map(|i| {
-                    let clock = i as f32 / (output_config.sample_rate() as f32);
+                let file = PathBuf::from(todo!());
+                let (consumer, done, thread) = decode::spawn_decode(
+                    file,
+                    output_config.sample_rate(),
+                    output_config.channels(),
+                )?;
 
-                    let a = 440.0;
-                    let b = 880.0;
-                    let phase = 2.0
-                        * std::f32::consts::PI
-                        * (a * clock + (b - a) / (2.0 * d as f32) * clock * clock);
-                    let sample = phase.sin();
-
-                    vec![sample; output_config.channels() as usize]
-                }));
-                dbg!(buffer.vacant_len(), buffer.occupied_len());
                 DataCallbackBuffer {
-                    buffer,
-                    done: AtomicBool::new(true),
+                    buffer: consumer,
+                    done,
+                    thread,
                 }
             },
         })
         .unwrap();
 
-        tx.send(DataCallbackMessage::PlayNext {
-            buffer: {
-                let d = 3;
-                let frames = (output_config.sample_rate() as usize) * d;
-                let mut buffer = HeapRb::new(frames * (output_config.channels() as usize));
-                buffer.push_iter((0..frames).flat_map(|i| {
-                    let clock = i as f32 / (output_config.sample_rate() as f32);
+        // tx.send(DataCallbackMessage::PlayNow {
+        //     buffer: {
+        //         let d = 3;
+        //         let frames = (output_config.sample_rate() as usize) * d;
+        //         let mut buffer = HeapRb::new(frames * (output_config.channels() as usize));
+        //         buffer.push_iter((0..frames).flat_map(|i| {
+        //             let clock = i as f32 / (output_config.sample_rate() as f32);
 
-                    let a = 440.0;
-                    let b = 880.0;
-                    let phase = 2.0
-                        * std::f32::consts::PI
-                        * (a * clock + (b - a) / (2.0 * d as f32) * clock * clock);
-                    let sample = phase.sin();
+        //             let a = 440.0;
+        //             let b = 880.0;
+        //             let phase = 2.0
+        //                 * std::f32::consts::PI
+        //                 * (a * clock + (b - a) / (2.0 * d as f32) * clock * clock);
+        //             let sample = phase.sin();
 
-                    vec![sample; output_config.channels() as usize]
-                }));
-                dbg!(buffer.vacant_len(), buffer.occupied_len());
-                DataCallbackBuffer {
-                    buffer,
-                    done: AtomicBool::new(true),
-                }
-            },
-        })
-        .unwrap();
+        //             vec![sample; output_config.channels() as usize]
+        //         }));
+        //         dbg!(buffer.vacant_len(), buffer.occupied_len());
+        //         DataCallbackBuffer {
+        //             buffer,
+        //             done: AtomicBool::new(true),
+        //         }
+        //     },
+        // })
+        // .unwrap();
+
+        // tx.send(DataCallbackMessage::PlayNext {
+        //     buffer: {
+        //         let d = 3;
+        //         let frames = (output_config.sample_rate() as usize) * d;
+        //         let mut buffer = HeapRb::new(frames * (output_config.channels() as usize));
+        //         buffer.push_iter((0..frames).flat_map(|i| {
+        //             let clock = i as f32 / (output_config.sample_rate() as f32);
+
+        //             let a = 440.0;
+        //             let b = 880.0;
+        //             let phase = 2.0
+        //                 * std::f32::consts::PI
+        //                 * (a * clock + (b - a) / (2.0 * d as f32) * clock * clock);
+        //             let sample = phase.sin();
+
+        //             vec![sample; output_config.channels() as usize]
+        //         }));
+        //         dbg!(buffer.vacant_len(), buffer.occupied_len());
+        //         DataCallbackBuffer {
+        //             buffer,
+        //             done: AtomicBool::new(true),
+        //         }
+        //     },
+        // })
+        // .unwrap();
 
         stream.play().unwrap();
 
@@ -165,6 +189,9 @@ fn make_data_callback<T: Sample + FromSample<f32>>(
                 };
                 *output_sample = Sample::from_sample(buffer_sample);
             }
+
+            // Wake decoder thread
+            current.thread.unpark();
         }
 
         if state
@@ -196,6 +223,7 @@ enum DataCallbackMessage {
 }
 
 struct DataCallbackBuffer {
-    buffer: HeapRb<f32>,
-    done: AtomicBool,
+    buffer: CachingCons<Arc<HeapRb<f32>>>,
+    done: Arc<AtomicBool>,
+    thread: Thread,
 }
