@@ -86,8 +86,8 @@ impl CpalBackend {
                 let file = PathBuf::from(todo!());
                 let (consumer, done, thread) = decode::spawn_decode(
                     file,
-                    output_config.sample_rate(),
-                    output_config.channels(),
+                    output_config.sample_rate() as usize,
+                    output_config.channels() as usize,
                 )?;
 
                 DataCallbackBuffer {
