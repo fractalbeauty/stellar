@@ -1,13 +1,9 @@
 package net.trillia.stellar.desktop.table
 
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.v2.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import net.trillia.stellar.uiTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -15,7 +11,7 @@ import kotlin.test.assertEquals
 class TableTest {
     @Test
     fun test() =
-        runComposeUiTest {
+        uiTest {
             val row1 = 1 to "one"
             val row2 = 2 to "two"
             val row3 = 3 to "three"
