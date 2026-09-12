@@ -1,6 +1,5 @@
 use std::time::Duration;
-
-use stellar_player::CpalBackend;
+use stellar_player::backend::CpalBackend;
 use tracing_subscriber::EnvFilter;
 
 fn main() {

@@ -57,27 +57,67 @@ impl CpalBackend {
         let error_callback = |err| error!(?err, "cpal error");
 
         let stream = match output_config.sample_format() {
-            SampleFormat::I8 => todo!(),
-            SampleFormat::I16 => todo!(),
-            SampleFormat::I24 => todo!(),
-            SampleFormat::I32 => todo!(),
-            SampleFormat::I64 => todo!(),
-            SampleFormat::U8 => todo!(),
-            SampleFormat::U16 => todo!(),
-            SampleFormat::U24 => todo!(),
-            SampleFormat::U32 => todo!(),
-            SampleFormat::U64 => todo!(),
+            SampleFormat::I8 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<i8>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::I16 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<i16>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::I32 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<i32>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::I64 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<i64>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::U8 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<u8>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::U16 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<u16>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::U32 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<u32>(rx),
+                error_callback,
+                None,
+            )?,
+            SampleFormat::U64 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<u64>(rx),
+                error_callback,
+                None,
+            )?,
             SampleFormat::F32 => device.build_output_stream(
                 output_config.config(),
                 make_data_callback::<f32>(rx),
                 error_callback,
                 None,
             )?,
-            SampleFormat::F64 => todo!(),
-            SampleFormat::DsdU8 => todo!(),
-            SampleFormat::DsdU16 => todo!(),
-            SampleFormat::DsdU32 => todo!(),
-            _ => todo!(),
+            SampleFormat::F64 => device.build_output_stream(
+                output_config.config(),
+                make_data_callback::<f64>(rx),
+                error_callback,
+                None,
+            )?,
+            other => anyhow::bail!("Unsupported sample format: {other:?}"),
         };
 
         tx.send(DataCallbackMessage::PlayNow {
