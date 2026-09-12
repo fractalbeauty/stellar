@@ -2,10 +2,14 @@ package net.trillia.stellar.desktop.table
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import net.trillia.stellar.uiTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalTestApi::class)
 class TableTest {
@@ -38,6 +42,7 @@ class TableTest {
                 )
 
             var selected: Pair<Int, String>? = null
+            var columnTapped = false
 
             setContent {
                 Table(
@@ -47,12 +52,16 @@ class TableTest {
                     onSelectRow = { selected = it },
                     onDeselectRow = { selected = null },
                     onDeselectAllRows = { selected = null },
-                    onColumnTap = {},
+                    onColumnTap = { columnTapped = true },
                 )
             }
 
-//            onNodeWithText("one").performClick()
-
+            assertEquals(selected, null)
+            onNodeWithText("one").performClick()
             assertEquals(selected, row1)
+
+            assertFalse(columnTapped)
+            onNodeWithText("First", substring = true).performClick()
+            assertTrue(columnTapped)
         }
 }

@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -48,7 +49,15 @@ fun TableHeaderColumn(
 
     val isDragging = columnState.draggedColumnId == id
 
-    Box(modifier = Modifier.layoutId(id).width(widthDp).height(tableRowHeight)) {
+    Box(
+        modifier =
+            Modifier
+                .layoutId(id)
+                .width(widthDp)
+                .height(tableRowHeight)
+                // Merge accessibility semantics of descendants here.
+                .semantics(mergeDescendants = true) {},
+    ) {
         Box(
             contentAlignment = Alignment.CenterStart,
         ) {
