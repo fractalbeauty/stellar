@@ -1,6 +1,7 @@
 package net.trillia.stellar.desktop.table
 
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -17,9 +18,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed as isShiftKeyPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
@@ -30,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import net.trillia.stellar.FakeHandler
 import net.trillia.stellar.isCtrlLikePressed
 import net.trillia.stellar.upOrDownTo
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 @Composable
@@ -43,6 +54,7 @@ fun <Row> Table(
     onColumnTap: (String) -> Unit,
 ) {
     val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
 
     val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
 
@@ -51,10 +63,51 @@ fun <Row> Table(
 
     val backgroundInteractionSource = remember { MutableInteractionSource() }
 
+    val tableFocusRequester = remember { FocusRequester() }
+
     val totalWidthDp = with(density) { columnState.totalWidthPx.toDp() }
 
     var lastClickedRowIndex by remember { mutableStateOf(0) }
     var lastAnchoredRowIndex by remember { mutableStateOf(0) }
+
+    fun scrollRowIntoView(rowIndex: Int, direction: Int) {
+        coroutineScope.launch {
+            // Account for the sticky header occupying item index 0.
+            val itemIndex = rowIndex + 1
+            val rowHeightPx = with(density) { tableRowHeight.toPx() }
+            val viewportHeightPx = listState.layoutInfo.viewportSize.height.toFloat()
+
+            val itemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == itemIndex }
+
+            val needsScrollUp = if (itemInfo != null) itemInfo.offset < rowHeightPx else direction < 0
+            val needsScrollDown = if (itemInfo != null) itemInfo.offset + itemInfo.size > viewportHeightPx else direction > 0
+
+            when {
+                needsScrollUp -> listState.animateScrollToItem(itemIndex, scrollOffset = -rowHeightPx.roundToInt())
+                needsScrollDown -> listState.animateScrollToItem(itemIndex, scrollOffset = -(viewportHeightPx - rowHeightPx).roundToInt())
+            }
+        }
+    }
+
+    fun handleMoveKeyboardSelection(direction: Int, isShiftPressed: Boolean) {
+        val clampedIndex = (lastClickedRowIndex + direction).coerceIn(0, data.size - 1)
+
+        if (isShiftPressed) {
+            for (index in clampedIndex upOrDownTo lastClickedRowIndex) {
+                onDeselectRow(data[index])
+            }
+            for (index in clampedIndex upOrDownTo lastAnchoredRowIndex) {
+                onSelectRow(data[index])
+            }
+        } else {
+            onDeselectAllRows()
+            onSelectRow(data[clampedIndex])
+            lastAnchoredRowIndex = clampedIndex
+        }
+
+        lastClickedRowIndex = clampedIndex
+        scrollRowIntoView(clampedIndex, direction)
+    }
 
     BoxWithConstraints(
         modifier =
@@ -63,7 +116,25 @@ fun <Row> Table(
                 .combinedClickable(
                     onClick = { onDeselectAllRows() },
                     interactionSource = backgroundInteractionSource,
-                ),
+                )
+                .focusRequester(tableFocusRequester)
+                .focusable()
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown || data.isEmpty()) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.DirectionDown -> {
+                            handleMoveKeyboardSelection(direction = 1, isShiftPressed = event.isShiftKeyPressed)
+                            true
+                        }
+
+                        Key.DirectionUp -> {
+                            handleMoveKeyboardSelection(direction = -1, isShiftPressed = event.isShiftKeyPressed)
+                            true
+                        }
+
+                        else -> false
+                    }
+                },
     ) {
         // Render with the larger of the width of the columns or the width available, so the table
         // fills the available space.
@@ -87,6 +158,8 @@ fun <Row> Table(
                             columnState = columnState,
                             row = row,
                             onSelected = {
+                                tableFocusRequester.requestFocus()
+
                                 when {
                                     keyboardModifiers.isCtrlLikePressed -> {
                                         if (isRowSelected(row)) {
