@@ -1,7 +1,16 @@
 package net.trillia.stellar
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.input.pointer.PointerKeyboardModifiers
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
 import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.captureToImage
@@ -34,16 +43,36 @@ fun uiTest(block: ComposeUiTest.() -> Unit) {
 }
 
 @OptIn(ExperimentalTestApi::class)
+fun ComposeUiTest.setContentWithTestProviders(content: @Composable () -> Unit) {
+    setContent {
+        TestWindowInfoProvider(content)
+    }
+}
+
+@Composable
+fun TestWindowInfoProvider(content: @Composable () -> Unit) {
+    val windowInfo = remember { TestWindowInfo() }
+    currentTestWindowInfo = windowInfo
+    CompositionLocalProvider(LocalWindowInfo provides windowInfo) {
+        content()
+    }
+}
+
+@OptIn(ExperimentalTestApi::class)
 fun ComposeUiTest.captureScreenshot(label: String) {
     val context = currentUiTest.get() ?: error("captureScreenshot must be called within uiTest { }")
     if (System.getenv(SCREENSHOTS_ENV_VAR) == null) return
     saveScreenshot(onRoot().captureToImage(), "${context.name}.${context.screenshotCount++}.$label")
 }
 
-/**
- * Whether to save `captureScreenshot` screenshots when running UI tests.
- */
-private const val SCREENSHOTS_ENV_VAR = "STELLAR_UI_TEST_SCREENSHOTS"
+internal lateinit var currentTestWindowInfo: TestWindowInfo
+
+internal class TestWindowInfo : WindowInfo {
+    override val isWindowFocused = true
+    override var keyboardModifiers: PointerKeyboardModifiers by mutableStateOf(PointerKeyboardModifiers())
+}
+
+private val currentUiTest = ThreadLocal<UiTestContext>()
 
 private class UiTestContext(
     val name: String,
@@ -51,7 +80,10 @@ private class UiTestContext(
     var screenshotCount = 0
 }
 
-private val currentUiTest = ThreadLocal<UiTestContext>()
+/**
+ * Whether to save `captureScreenshot` screenshots when running UI tests.
+ */
+private const val SCREENSHOTS_ENV_VAR = "STELLAR_UI_TEST_SCREENSHOTS"
 
 private fun saveScreenshot(
     bitmap: ImageBitmap,
