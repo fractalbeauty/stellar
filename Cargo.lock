@@ -5263,6 +5263,7 @@ dependencies = [
  "ringbuf",
  "rubato",
  "stellar-graph",
+ "stellar-resources",
  "symphonia",
  "tokio",
  "tokio-util",

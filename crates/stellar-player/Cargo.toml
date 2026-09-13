@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 stellar-graph = { path = "../stellar-graph" }
+stellar-resources = { path = "../stellar-resources" }
 
 anyhow = "1.0.103"
 tracing = "0.1.44"

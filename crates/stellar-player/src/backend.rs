@@ -8,13 +8,18 @@ use ringbuf::{
     traits::{Consumer, Observer},
 };
 use std::{
-    path::PathBuf,
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread::Thread,
 };
+use stellar_graph::{
+    database::Database,
+    entity::{AuthorId, EntityId},
+};
+use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, AudioResource};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
@@ -27,11 +32,14 @@ pub struct CpalBackendTask {
 
 /// Messages to the cpal backend task
 pub enum CpalBackendMessage {
-    Play(PathBuf),
+    Play { entity: EntityId },
 }
 
 impl CpalBackendTask {
-    pub fn spawn(cancellation_token: CancellationToken) -> Result<Self, anyhow::Error> {
+    pub fn spawn(
+        cancellation_token: CancellationToken,
+        resources_port: Arc<dyn PlayerResourcesPort>,
+    ) -> Result<Self, anyhow::Error> {
         let host = cpal::default_host();
 
         let Some(device) = host.default_output_device() else {
@@ -144,6 +152,7 @@ impl CpalBackendTask {
                     sample_rate,
                     channels,
                     message_rx,
+                    resources_port,
                 };
 
                 let result = backend.run(cancellation_token).await;
@@ -167,9 +176,9 @@ impl CpalBackendTask {
         self.cancellation_token.cancel();
     }
 
-    pub fn play(&self, path: PathBuf) -> Result<(), anyhow::Error> {
+    pub fn play(&self, entity: EntityId) -> Result<(), anyhow::Error> {
         self.message_tx
-            .send(CpalBackendMessage::Play(path))
+            .send(CpalBackendMessage::Play { entity })
             .map_err(|_| anyhow::anyhow!("Failed to send, cpal backend task has been dropped"))?;
 
         Ok(())
@@ -183,6 +192,7 @@ struct CpalBackend {
     sample_rate: usize,
     channels: usize,
     message_rx: mpsc::UnboundedReceiver<CpalBackendMessage>,
+    resources_port: Arc<dyn PlayerResourcesPort>,
 }
 
 impl CpalBackend {
@@ -205,9 +215,21 @@ impl CpalBackend {
 
     fn handle_message(&mut self, message: CpalBackendMessage) -> Result<(), anyhow::Error> {
         match message {
-            CpalBackendMessage::Play(path) => {
-                let (consumer, done, thread) =
-                    crate::decode::spawn_decode(path, self.sample_rate, self.channels)?;
+            CpalBackendMessage::Play { entity } => {
+                // Find local resource related to entity
+                let local_author = self.resources_port.local_author_id();
+                let resource = self
+                    .resources_port
+                    .list_related_audio_resources(entity)?
+                    .into_iter()
+                    .find(|resource| resource.location.device == local_author)
+                    .ok_or_else(|| anyhow::anyhow!("No local copy of {entity:?} available"))?;
+
+                let (consumer, done, thread) = crate::decode::spawn_decode(
+                    resource.location.path,
+                    self.sample_rate,
+                    self.channels,
+                )?;
 
                 self.data_tx
                     .send(DataCallbackMessage::PlayNow {
@@ -294,4 +316,67 @@ struct DataCallbackBuffer {
     buffer: CachingCons<Arc<HeapRb<f32>>>,
     done: Arc<AtomicBool>,
     thread: Thread,
+}
+
+/// Resolves entities to the AudioResources related to them.
+pub trait PlayerResourcesPort: Send + Sync {
+    /// The AuthorId identifying this device, for matching against `AudioResourceLocation::device`.
+    fn local_author_id(&self) -> AuthorId;
+
+    /// All `AudioResource` entities related (by any relation) to `entity`.
+    fn list_related_audio_resources(
+        &self,
+        entity: EntityId,
+    ) -> Result<Vec<AudioResource>, anyhow::Error>;
+}
+
+pub struct PlayerResourcesAdapter {
+    database: Database,
+    author_id: AuthorId,
+}
+
+impl PlayerResourcesAdapter {
+    pub fn new(database: Database, author_id: AuthorId) -> Arc<Self> {
+        Arc::new(Self {
+            database,
+            author_id,
+        })
+    }
+}
+
+impl PlayerResourcesPort for PlayerResourcesAdapter {
+    fn local_author_id(&self) -> AuthorId {
+        self.author_id
+    }
+
+    fn list_related_audio_resources(
+        &self,
+        entity: EntityId,
+    ) -> Result<Vec<AudioResource>, anyhow::Error> {
+        // TODO: optimize this query
+        let related_ids: HashSet<EntityId> = self
+            .database
+            .get_relations()?
+            .into_values()
+            .filter_map(|relation| {
+                let source = relation.metadata.source;
+                let target = relation.metadata.target;
+                if source == entity {
+                    Some(target)
+                } else if target == entity {
+                    Some(source)
+                } else {
+                    None
+                }
+            })
+            .filter(|other| other.kind() == AUDIO_RESOURCE_ENTITY)
+            .collect();
+
+        self.database
+            .get_entities()?
+            .into_iter()
+            .filter(|(id, _)| related_ids.contains(id))
+            .map(|(_, data)| AudioResource::try_from_attributes(&data.attributes))
+            .collect()
+    }
 }
