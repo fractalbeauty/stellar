@@ -17,6 +17,7 @@ stellar-uniffi = { path = "../stellar-uniffi" }
 anyhow = "1.0.103"
 async-std = "1.13.2"
 directories-next = "2.0.0"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 thiserror = "2.0.18"
 tokio = { version = "1.52.3", features = ["sync"] }
 tracing = "0.1.44"

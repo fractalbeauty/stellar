@@ -56,6 +56,8 @@ impl Core {
         devices_change_handler: Arc<dyn DevicesChangeHandler>,
         schema_change_handler: Arc<dyn SchemaChangeHandler>,
     ) -> Result<Arc<Self>, CoreError> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
         let log_guard = stellar_log::init(None)?;
 
         let (core_tx, core_rx) = oneshot::channel();

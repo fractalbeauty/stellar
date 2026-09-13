@@ -10,13 +10,13 @@ stellar-resources = { path = "../stellar-resources" }
 stellar-riblt = { path = "../stellar-riblt" }
 stellar-uniffi = { path = "../stellar-uniffi" }
 
-sorrel-client = { git = "https://github.com/fractalbeauty/sorrel", rev = "f032ec80d9320491e3547202256df1ace6f92357" }
+sorrel-client = { git = "https://github.com/fractalbeauty/sorrel", rev = "983d3c3a704984e9ae15f19d687bacf6cb49e08c" }
 
 anyhow = "1.0.103"
 arc-swap = "1.9.1"
 futures = "0.3.32"
 iroh = "1.0.0"
-reqwest = { version = "0.13.4", features = ["rustls"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "http2", "charset", "system-proxy", "rustls-no-provider"] }
 postcard = { version = "1.1.3", features = ["alloc"] }
 serde = { version = "1.0.228", features = ["derive"] }
 siphasher = "1.0.3"
