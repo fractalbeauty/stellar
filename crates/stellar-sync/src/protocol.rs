@@ -11,6 +11,7 @@ pub enum StreamHeader {
     Difference,
     SchemaSync,
     Incremental,
+    Resource,
 }
 
 impl StreamHeader {

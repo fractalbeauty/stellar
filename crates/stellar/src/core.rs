@@ -21,6 +21,7 @@ use stellar_import::rules::Rules;
 use stellar_log::LogGuard;
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
+use stellar_sync::resources::PeersResourcesAdapter;
 use stellar_sync::schema::{Schema, SchemaStoreTask, default_schema};
 use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
 use tokio::sync::{oneshot, watch};
@@ -724,10 +725,17 @@ fn run_core_thread(
 
         let data_dir = {
             let mut data_dir = project_dirs.data_local_dir().to_path_buf();
-            data_dir.push(profile);
+            data_dir.push(&profile);
             data_dir
         };
         std::fs::create_dir_all(&data_dir).context("Failed to create data dir")?;
+
+        let cache_dir = {
+            let mut cache_dir = project_dirs.cache_dir().to_path_buf();
+            cache_dir.push(&profile);
+            cache_dir
+        };
+        std::fs::create_dir_all(&cache_dir).context("Failed to create cache dir")?;
 
         let key_path = data_dir.join("secret_key");
         let secret_key = if key_path.exists() {
@@ -779,10 +787,13 @@ fn run_core_thread(
         let (endpoint_id_tx, endpoint_id_rx) = tokio::sync::watch::channel(None);
         let (devices_tx, devices_rx) = tokio::sync::watch::channel(Vec::new());
 
+        let resources_cache_dir = cache_dir.join("resources");
+
         let peers = PeersTask::spawn(
             cancellation_token.child_token(),
             PeersDatabaseAdapter::new(database.clone()),
             PeersSchemaAdapter::new(schema.clone()),
+            PeersResourcesAdapter::new(database.clone(), author, resources_cache_dir),
             devices_rx,
             secret_key,
         );

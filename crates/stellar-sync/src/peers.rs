@@ -6,6 +6,10 @@ use crate::{
         PeerSyncServerTask, SyncManager, SyncServerMessage,
     },
     protocol::StreamHeader,
+    resources::{
+        PeerResourceClientTask, PeerResourceServerTask, PeersResourcesPort, ResourceClientMessage,
+        ResourceServerMessage,
+    },
     schema::{
         PeerSchemaClientTask, PeerSchemaServerTask, Schema, SchemaStoreTask,
         SchemaSyncClientMessage, SchemaSyncServerMessage,
@@ -18,17 +22,18 @@ use futures::{SinkExt as _, StreamExt as _};
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::Connection};
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::Arc,
 };
 use stellar_graph::{
     database::Database,
-    entity::{AttributeKind, EntityId, RelationId},
+    entity::{AttributeKind, EntityId, RelationId, RelationKind},
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
         RelationData, RelationMetadataValue, StoreChange,
     },
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::{
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
     sync::CancellationToken,
@@ -39,6 +44,7 @@ use tokio_util::{
 pub struct PeersTask {
     cancellation_token: CancellationToken,
     endpoint_id: EndpointId,
+    peers_message_tx: mpsc::UnboundedSender<PeersMessage>,
 }
 
 impl PeersTask {
@@ -46,10 +52,13 @@ impl PeersTask {
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
         schema: Arc<dyn PeersSchemaPort>,
+        resources: Arc<dyn PeersResourcesPort>,
         devices_rx: watch::Receiver<Vec<Device>>,
         secret_key: SecretKey,
     ) -> Self {
         let endpoint_id = secret_key.public();
+
+        let (peers_message_tx, peers_message_rx) = mpsc::unbounded_channel();
 
         tokio::spawn({
             let cancellation_token = cancellation_token.clone();
@@ -59,7 +68,15 @@ impl PeersTask {
                 };
 
                 let result = peers
-                    .run(devices_rx, cancellation_token, database, schema, secret_key)
+                    .run(
+                        devices_rx,
+                        cancellation_token,
+                        database,
+                        schema,
+                        resources,
+                        peers_message_rx,
+                        secret_key,
+                    )
                     .await;
 
                 if let Err(error) = result {
@@ -73,6 +90,7 @@ impl PeersTask {
         Self {
             cancellation_token,
             endpoint_id,
+            peers_message_tx,
         }
     }
 
@@ -83,6 +101,53 @@ impl PeersTask {
     pub fn endpoint_id(&self) -> EndpointId {
         self.endpoint_id
     }
+
+    /// Downloads an audio resource from a peer and creates a new local audio resource related to
+    /// `parent` via `relation`. Returns the local path after downloading.
+    pub async fn download_audio_resource(
+        &self,
+        endpoint_id: EndpointId,
+        audio_resource: EntityId,
+        parent: EntityId,
+        relation: RelationKind,
+    ) -> Result<PathBuf, anyhow::Error> {
+        let (result_tx, result_rx) = oneshot::channel();
+
+        self.peers_message_tx
+            .send(PeersMessage::DownloadAudioResource {
+                endpoint_id,
+                audio_resource,
+                parent,
+                relation,
+                result_tx,
+            })
+            .map_err(|_| anyhow::anyhow!("Failed to send PeersMessage::DownloadAudioResource"))?;
+
+        result_rx
+            .await
+            .context("Failed to get PeersMessage::DownloadAudioResource result")?
+    }
+}
+
+/// Messages sent from a `PeersTask` handle to the `Peers` task.
+enum PeersMessage {
+    DownloadAudioResource {
+        endpoint_id: EndpointId,
+        audio_resource: EntityId,
+        parent: EntityId,
+        relation: RelationKind,
+        result_tx: oneshot::Sender<Result<PathBuf, anyhow::Error>>,
+    },
+}
+
+/// Messages sent from the `Peers` task to a specific `Peer` task.
+enum PeerMessage {
+    DownloadAudioResource {
+        audio_resource: EntityId,
+        parent: EntityId,
+        relation: RelationKind,
+        result_tx: oneshot::Sender<Result<PathBuf, anyhow::Error>>,
+    },
 }
 
 /// Owned state for the peers task
@@ -98,6 +163,8 @@ impl Peers {
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
         schema: Arc<dyn PeersSchemaPort>,
+        resources: Arc<dyn PeersResourcesPort>,
+        mut peers_message_rx: mpsc::UnboundedReceiver<PeersMessage>,
         secret_key: SecretKey,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!(
@@ -198,8 +265,23 @@ impl Peers {
                         self.peer_tasks.get(&connection_id.endpoint_id).unwrap().cancel();
                     }
 
-                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), database.clone(),schema.clone(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
+                    let peer = PeerTask::spawn(side, cancellation_token.child_token(), database.clone(),schema.clone(), resources.clone(), sync_manager.clone(), peer_exited_tx.clone(), connection_id, connection);
                     self.peer_tasks.insert(peer.endpoint_id(), peer);
+                }
+
+                Some(peers_message) = peers_message_rx.recv() => {
+                    match peers_message {
+                        PeersMessage::DownloadAudioResource { endpoint_id, audio_resource, parent, relation, result_tx } => {
+                            match self.peer_tasks.get(&endpoint_id) {
+                                Some(peer_task) => {
+                                    let _ = peer_task.message_tx.send(PeerMessage::DownloadAudioResource { audio_resource, parent, relation, result_tx });
+                                }
+                                None => {
+                                    let _ = result_tx.send(Err(anyhow::anyhow!("No connected peer for endpoint {endpoint_id}")));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Remove exited peer tasks
@@ -239,6 +321,7 @@ impl Peers {
 struct PeerTask {
     cancellation_token: CancellationToken,
     connection_id: ConnectionId,
+    message_tx: mpsc::UnboundedSender<PeerMessage>,
 }
 
 impl PeerTask {
@@ -247,11 +330,14 @@ impl PeerTask {
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
         schema: Arc<dyn PeersSchemaPort>,
+        resources: Arc<dyn PeersResourcesPort>,
         sync_manager: SyncManager,
         peer_exited_tx: mpsc::UnboundedSender<ConnectionId>,
         connection_id: ConnectionId,
         connection: Connection,
     ) -> Self {
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
+
         tokio::spawn({
             let cancellation_token = cancellation_token.clone();
             async move {
@@ -263,7 +349,9 @@ impl PeerTask {
                         cancellation_token,
                         database,
                         schema,
+                        resources,
                         sync_manager,
+                        message_rx,
                         connection,
                     )
                     .await;
@@ -281,6 +369,7 @@ impl PeerTask {
         Self {
             cancellation_token,
             connection_id,
+            message_tx,
         }
     }
 
@@ -303,7 +392,9 @@ impl Peer {
         cancellation_token: CancellationToken,
         database: Arc<dyn PeersDatabasePort>,
         schema: Arc<dyn PeersSchemaPort>,
+        resources: Arc<dyn PeersResourcesPort>,
         sync_manager: SyncManager,
+        mut message_rx: mpsc::UnboundedReceiver<PeerMessage>,
         connection: Connection,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("Peer starting");
@@ -345,6 +436,22 @@ impl Peer {
                 _ = connection.closed() => {
                     tracing::debug!("Connection closed");
                     break;
+                }
+
+                Some(message) = message_rx.recv() => {
+                    match message {
+                        PeerMessage::DownloadAudioResource { audio_resource, parent, relation, result_tx } => {
+                            PeerResourceClientTask::spawn(
+                                database.clone(),
+                                resources.clone(),
+                                connection.clone(),
+                                audio_resource,
+                                parent,
+                                relation,
+                                result_tx,
+                            );
+                        }
+                    }
                 }
 
                 // TODO: move to another task, so it doesn't block the Peer loop
@@ -392,18 +499,28 @@ impl Peer {
                                     let tx = Box::pin(tx.with(|message| {
                                         futures::future::ready(Ok::<_, std::io::Error>(SchemaSyncServerMessage::encode(&message)))
                                     }));
-                                    let rx = Box::pin( rx.map(|result| match result {
+                                    let rx = Box::pin(rx.map(|result| match result {
                                         Ok(bytes) => SchemaSyncClientMessage::decode(&bytes),
                                         Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
                                     }));
                                     PeerSchemaServerTask::spawn(schema.clone(), tx, rx);
                                 }
                                 StreamHeader::Incremental => {
-                                    let rx = Box::pin( rx.map(|result| match result {
+                                    let rx = Box::pin(rx.map(|result| match result {
                                         Ok(bytes) => IncrementalMessage::decode(&bytes),
                                         Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
                                     }));
                                     PeerIncrementalServerTask::spawn(database.clone(), rx);
+                                }
+                                StreamHeader::Resource => {
+                                    let tx = Box::pin(tx.with(|message| {
+                                        futures::future::ready(Ok::<_, std::io::Error>(ResourceServerMessage::encode(&message)))
+                                    }));
+                                    let rx = Box::pin( rx.map(|result| match result {
+                                        Ok(bytes) => ResourceClientMessage::decode(&bytes),
+                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
+                                    }));
+                                    PeerResourceServerTask::spawn(resources.clone(), tx, rx);
                                 }
                             }
                         }
