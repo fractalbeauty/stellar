@@ -10,10 +10,12 @@ anyhow = "1.0.103"
 tracing = "0.1.44"
 cpal = "0.18.2"
 ringbuf = "0.5.1"
-tokio = { version = "1.52.3", features = ["sync"] }
+tokio = { version = "1.52.3", features = ["sync", "rt"] }
+tokio-util = "0.7.18"
 symphonia = { version = "0.6.1", features = ["all-formats", "all-codecs", "all"] }
 rubato = "5.0.0"
 audioadapter-buffers = "5.2.0"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "time"] }

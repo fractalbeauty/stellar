@@ -16,16 +16,22 @@ use std::{
     thread::Thread,
 };
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::decode;
-
-pub struct CpalBackend {
-    stream: Stream,
+/// Handle to the cpal backend task
+pub struct CpalBackendTask {
+    cancellation_token: CancellationToken,
+    message_tx: mpsc::UnboundedSender<CpalBackendMessage>,
 }
 
-impl CpalBackend {
-    pub fn new() -> Result<Self, anyhow::Error> {
+/// Messages to the cpal backend task
+pub enum CpalBackendMessage {
+    Play(PathBuf),
+}
+
+impl CpalBackendTask {
+    pub fn spawn(cancellation_token: CancellationToken) -> Result<Self, anyhow::Error> {
         let host = cpal::default_host();
 
         let Some(device) = host.default_output_device() else {
@@ -52,95 +58,170 @@ impl CpalBackend {
             "Configured output"
         );
 
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let sample_rate = output_config.sample_rate() as usize;
+        let channels = output_config.channels() as usize;
+
+        let (data_tx, data_rx) = tokio::sync::mpsc::unbounded_channel();
 
         let error_callback = |err| error!(?err, "cpal error");
 
         let stream = match output_config.sample_format() {
             SampleFormat::I8 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<i8>(rx),
+                make_data_callback::<i8>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::I16 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<i16>(rx),
+                make_data_callback::<i16>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::I32 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<i32>(rx),
+                make_data_callback::<i32>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::I64 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<i64>(rx),
+                make_data_callback::<i64>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::U8 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<u8>(rx),
+                make_data_callback::<u8>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::U16 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<u16>(rx),
+                make_data_callback::<u16>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::U32 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<u32>(rx),
+                make_data_callback::<u32>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::U64 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<u64>(rx),
+                make_data_callback::<u64>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::F32 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<f32>(rx),
+                make_data_callback::<f32>(data_rx),
                 error_callback,
                 None,
             )?,
             SampleFormat::F64 => device.build_output_stream(
                 output_config.config(),
-                make_data_callback::<f64>(rx),
+                make_data_callback::<f64>(data_rx),
                 error_callback,
                 None,
             )?,
             other => anyhow::bail!("Unsupported sample format: {other:?}"),
         };
 
-        tx.send(DataCallbackMessage::PlayNow {
-            buffer: {
-                let file = PathBuf::from(todo!());
-                let (consumer, done, thread) = decode::spawn_decode(
-                    file,
-                    output_config.sample_rate() as usize,
-                    output_config.channels() as usize,
-                )?;
+        stream.play().context("Failed to start stream")?;
 
-                DataCallbackBuffer {
-                    buffer: consumer,
-                    done,
-                    thread,
+        let (message_tx, message_rx) = mpsc::unbounded_channel();
+
+        tokio::spawn({
+            let cancellation_token = cancellation_token.clone();
+            async move {
+                debug!("Cpal backend task starting");
+
+                let mut backend = CpalBackend {
+                    stream,
+                    data_tx,
+                    sample_rate,
+                    channels,
+                    message_rx,
+                };
+
+                let result = backend.run(cancellation_token).await;
+
+                if let Err(error) = result {
+                    error!(?error, "Cpal backend task errored");
+                } else {
+                    debug!("Cpal backend task finished");
                 }
-            },
+            }
+        });
+
+        Ok(Self {
+            cancellation_token,
+            message_tx,
         })
-        .unwrap();
+    }
 
-        stream.play().unwrap();
+    pub fn cancel(&self) {
+        debug!("Cancelling cpal backend task");
+        self.cancellation_token.cancel();
+    }
 
-        Ok(Self { stream })
+    pub fn play(&self, path: PathBuf) -> Result<(), anyhow::Error> {
+        self.message_tx
+            .send(CpalBackendMessage::Play(path))
+            .map_err(|_| anyhow::anyhow!("Failed to send, cpal backend task has been dropped"))?;
+
+        Ok(())
+    }
+}
+
+/// Owned state for the cpal backend task
+struct CpalBackend {
+    stream: Stream,
+    data_tx: mpsc::UnboundedSender<DataCallbackMessage>,
+    sample_rate: usize,
+    channels: usize,
+    message_rx: mpsc::UnboundedReceiver<CpalBackendMessage>,
+}
+
+impl CpalBackend {
+    async fn run(&mut self, cancellation_token: CancellationToken) -> Result<(), anyhow::Error> {
+        loop {
+            tokio::select! {
+                Some(message) = self.message_rx.recv() => {
+                    self.handle_message(message)?;
+                }
+
+                _ = cancellation_token.cancelled() => {
+                    debug!("Cancelled");
+                    break;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_message(&mut self, message: CpalBackendMessage) -> Result<(), anyhow::Error> {
+        match message {
+            CpalBackendMessage::Play(path) => {
+                let (consumer, done, thread) =
+                    crate::decode::spawn_decode(path, self.sample_rate, self.channels)?;
+
+                self.data_tx
+                    .send(DataCallbackMessage::PlayNow {
+                        buffer: DataCallbackBuffer {
+                            buffer: consumer,
+                            done,
+                            thread,
+                        },
+                    })
+                    .map_err(|_| anyhow::anyhow!("Failed to send, data callback dropped"))?;
+            }
+        }
+
+        Ok(())
     }
 }
 
