@@ -28,7 +28,7 @@ use std::{
 };
 use stellar_graph::{
     database::Database,
-    entity::{AttributeKind, EntityId, RelationId, RelationKind},
+    entity::{AttributeKind, EntityId, RelationDirection, RelationId, RelationKind},
     store::{
         EntityAttributeValue, EntityData, EntityMetadataValue, RelationAttributeValue,
         RelationData, RelationMetadataValue, StoreChange,
@@ -101,13 +101,15 @@ impl PeersTask {
     }
 
     /// Downloads an audio resource from a peer and creates a new local audio resource related to
-    /// `parent` via `relation`. Returns the local path after downloading.
+    /// `parent` via `relation`. `relation_direction` is from the audio resource to the parent.
+    /// Returns the local path after downloading.
     pub async fn download_audio_resource(
         &self,
         endpoint_id: EndpointId,
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
     ) -> Result<PathBuf, anyhow::Error> {
         let (result_tx, result_rx) = oneshot::channel();
 
@@ -117,6 +119,7 @@ impl PeersTask {
                 audio_resource,
                 parent,
                 relation,
+                relation_direction,
                 result_tx,
             })
             .map_err(|_| anyhow::anyhow!("Failed to send PeersMessage::DownloadAudioResource"))?;
@@ -134,6 +137,7 @@ enum PeersMessage {
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
         result_tx: oneshot::Sender<Result<PathBuf, anyhow::Error>>,
     },
 }
@@ -144,6 +148,7 @@ enum PeerMessage {
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
         result_tx: oneshot::Sender<Result<PathBuf, anyhow::Error>>,
     },
 }
@@ -269,10 +274,10 @@ impl Peers {
 
                 Some(peers_message) = peers_message_rx.recv() => {
                     match peers_message {
-                        PeersMessage::DownloadAudioResource { endpoint_id, audio_resource, parent, relation, result_tx } => {
+                        PeersMessage::DownloadAudioResource { endpoint_id, audio_resource, parent, relation, relation_direction, result_tx } => {
                             match self.peer_tasks.get(&endpoint_id) {
                                 Some(peer_task) => {
-                                    let _ = peer_task.message_tx.send(PeerMessage::DownloadAudioResource { audio_resource, parent, relation, result_tx });
+                                    let _ = peer_task.message_tx.send(PeerMessage::DownloadAudioResource { audio_resource, parent, relation, relation_direction, result_tx });
                                 }
                                 None => {
                                     let _ = result_tx.send(Err(anyhow::anyhow!("No connected peer for endpoint {endpoint_id}")));
@@ -440,7 +445,7 @@ impl Peer {
 
                 Some(message) = message_rx.recv() => {
                     match message {
-                        PeerMessage::DownloadAudioResource { audio_resource, parent, relation, result_tx } => {
+                        PeerMessage::DownloadAudioResource { audio_resource, parent, relation, relation_direction, result_tx } => {
                             PeerResourceClientTask::spawn(
                                 database.clone(),
                                 resources.clone(),
@@ -448,6 +453,7 @@ impl Peer {
                                 audio_resource,
                                 parent,
                                 relation,
+                                relation_direction,
                                 result_tx,
                             );
                         }

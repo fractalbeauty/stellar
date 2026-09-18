@@ -13,7 +13,7 @@ use std::{
 };
 use stellar_graph::{
     database::Database,
-    entity::{AuthorId, EntityId, RelationKind, Timestamp, Version},
+    entity::{AuthorId, EntityId, RelationDirection, RelationKind, Timestamp, Version},
     store::{EntityData, EntityMetadataValue},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, AudioResource, AudioResourceLocation};
@@ -52,6 +52,7 @@ impl PeerResourceClientTask {
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
         result_tx: oneshot::Sender<Result<PathBuf, anyhow::Error>>,
     ) -> Self {
         tokio::spawn({
@@ -63,6 +64,7 @@ impl PeerResourceClientTask {
                     audio_resource,
                     parent,
                     relation,
+                    relation_direction,
                 )
                 .await;
 
@@ -86,6 +88,7 @@ impl PeerResourceClientTask {
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
     ) -> Result<PathBuf, anyhow::Error> {
         tracing::debug!("PeerResourceClient starting");
 
@@ -152,7 +155,13 @@ impl PeerResourceClientTask {
             .await
             .context("Failed to move temporary audio cache file into place")?;
 
-        resources.create_local_audio_resource(&source, final_path.clone(), parent, relation)?;
+        resources.create_local_audio_resource(
+            &source,
+            final_path.clone(),
+            parent,
+            relation,
+            relation_direction,
+        )?;
 
         tracing::debug!("PeerResourceClient finished");
 
@@ -263,13 +272,15 @@ pub trait PeersResourcesPort: Send + Sync {
     ) -> Result<Option<PathBuf>, anyhow::Error>;
 
     /// Creates an audio resource entity for a downloaded resource from the `source` resource,
-    /// pointing to the same `parent` entity via `relation`.
+    /// pointing to the same `parent` entity via `relation`. `relation_direction` is from the
+    /// audio resource to the parent.
     fn create_local_audio_resource(
         &self,
         source: &AudioResource,
         local_path: PathBuf,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
     ) -> Result<EntityId, anyhow::Error>;
 }
 
@@ -317,6 +328,7 @@ impl PeersResourcesPort for PeersResourcesAdapter {
         local_path: PathBuf,
         parent: EntityId,
         relation: RelationKind,
+        relation_direction: RelationDirection,
     ) -> Result<EntityId, anyhow::Error> {
         let version = Version::new(Timestamp::now(), self.author_id);
 
@@ -356,8 +368,9 @@ impl PeersResourcesPort for PeersResourcesAdapter {
             },
         )?;
 
+        let (source, target) = relation_direction.source_and_target(entity, parent);
         self.database
-            .create_relation(relation, parent, entity, version)?;
+            .create_relation(relation, source, target, version)?;
 
         Ok(entity)
     }
@@ -402,6 +415,7 @@ mod test {
 
         let parent = EntityId::random(AUDIO_RESOURCE_ENTITY);
         let relation = RelationKind::random();
+        let relation_direction = RelationDirection::Incoming;
         let (result_tx, result_rx) = oneshot::channel();
         PeerResourceClientTask::spawn(
             database,
@@ -410,6 +424,7 @@ mod test {
             audio_resource,
             parent,
             relation,
+            relation_direction,
             result_tx,
         );
 
@@ -420,19 +435,29 @@ mod test {
         );
 
         let created = client_resources.created.lock().unwrap();
-        let (created_source, created_path, created_parent, created_relation) = created
-            .first()
-            .expect("create_local_audio_resource was not called");
+        let (created_source, created_path, created_parent, created_relation, created_direction) =
+            created
+                .first()
+                .expect("create_local_audio_resource was not called");
         assert_eq!(*created_source, source);
         assert_eq!(*created_path, downloaded_path);
         assert_eq!(*created_parent, parent);
         assert_eq!(*created_relation, relation);
+        assert_eq!(*created_direction, relation_direction);
     }
 
     struct FakeResources {
         cache_dir: PathBuf,
         files: HashMap<EntityId, PathBuf>,
-        created: Mutex<Vec<(AudioResource, PathBuf, EntityId, RelationKind)>>,
+        created: Mutex<
+            Vec<(
+                AudioResource,
+                PathBuf,
+                EntityId,
+                RelationKind,
+                RelationDirection,
+            )>,
+        >,
     }
 
     impl FakeResources {
@@ -463,11 +488,15 @@ mod test {
             local_path: PathBuf,
             parent: EntityId,
             relation: RelationKind,
+            relation_direction: RelationDirection,
         ) -> Result<EntityId, anyhow::Error> {
-            self.created
-                .lock()
-                .unwrap()
-                .push((source.clone(), local_path, parent, relation));
+            self.created.lock().unwrap().push((
+                source.clone(),
+                local_path,
+                parent,
+                relation,
+                relation_direction,
+            ));
             Ok(EntityId::random(AUDIO_RESOURCE_ENTITY))
         }
     }
