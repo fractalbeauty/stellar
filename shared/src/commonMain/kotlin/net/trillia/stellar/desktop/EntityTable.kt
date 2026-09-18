@@ -607,6 +607,13 @@ fun buildEntityTableQuery(
 
     val tableQuerySort = sortedOutputs.entries.sortedBy { it.key }.map { it.value }
 
+    val outgoingRelationOthers =
+        (outgoingRelationAttributes.keys + outgoingRelationEntityAttributes.keys)
+            .associateWith { nextOutputIndex().toUShort() }
+    val incomingRelationOthers =
+        (incomingRelationAttributes.keys + incomingRelationEntityAttributes.keys)
+            .associateWith { nextOutputIndex().toUShort() }
+
     val query =
         TableQuery(
             entity = entityKind,
@@ -614,10 +621,10 @@ fun buildEntityTableQuery(
             attributes = attributes,
             outgoingRelationAttributes = outgoingRelationAttributes,
             outgoingRelationEntityAttributes = outgoingRelationEntityAttributes,
-            outgoingRelationOthers = emptyMap(),
+            outgoingRelationOthers = outgoingRelationOthers,
             incomingRelationAttributes = incomingRelationAttributes,
             incomingRelationEntityAttributes = incomingRelationEntityAttributes,
-            incomingRelationOthers = emptyMap(),
+            incomingRelationOthers = incomingRelationOthers,
             sort = tableQuerySort,
         )
 
