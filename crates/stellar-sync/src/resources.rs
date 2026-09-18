@@ -1,12 +1,14 @@
-use crate::{peers::PeersDatabasePort, protocol::StreamHeader};
+use crate::{
+    connection::{Message, MessageSink, MessageStream, PeerConnection, open_message_stream},
+    peers::PeersDatabasePort,
+    protocol::StreamHeader,
+};
 use anyhow::Context;
-use futures::{Sink, SinkExt as _, Stream, StreamExt as _};
-use iroh::endpoint::Connection;
+use futures::{SinkExt as _, StreamExt as _};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
-    pin::Pin,
     sync::Arc,
 };
 use stellar_graph::{
@@ -20,10 +22,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::oneshot,
 };
-use tokio_util::{
-    bytes::Bytes,
-    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-};
 
 const CHUNK_SIZE: usize = 64 * 1024;
 
@@ -32,18 +30,7 @@ pub enum ResourceClientMessage {
     Audio { audio_resource: EntityId },
 }
 
-impl ResourceClientMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for ResourceClientMessage {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ResourceServerMessage {
@@ -52,18 +39,7 @@ pub enum ResourceServerMessage {
     Error(String),
 }
 
-impl ResourceServerMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for ResourceServerMessage {}
 
 /// Handle for a peer resource client task
 pub struct PeerResourceClientTask {}
@@ -72,7 +48,7 @@ impl PeerResourceClientTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
         resources: Arc<dyn PeersResourcesPort>,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
@@ -106,7 +82,7 @@ impl PeerResourceClientTask {
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
         resources: Arc<dyn PeersResourcesPort>,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
         audio_resource: EntityId,
         parent: EntityId,
         relation: RelationKind,
@@ -121,25 +97,11 @@ impl PeerResourceClientTask {
             })?;
         let source = AudioResource::try_from_attributes(&source_data.attributes)?;
 
-        let (tx, rx) = connection.open_bi().await?;
-
-        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-        let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-
-        let stream_header = StreamHeader::encode(&StreamHeader::Resource);
-        tx.send(stream_header)
-            .await
-            .context("Failed to send stream header")?;
-
-        let mut tx = Box::new(tx.with(|message| {
-            futures::future::ready(Ok::<_, std::io::Error>(ResourceClientMessage::encode(
-                &message,
-            )))
-        }));
-        let mut rx = Box::new(rx.map(|result| match result {
-            Ok(bytes) => ResourceServerMessage::decode(&bytes),
-            Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-        }));
+        let (mut tx, mut rx) = open_message_stream::<ResourceClientMessage, ResourceServerMessage>(
+            connection.as_ref(),
+            StreamHeader::Resource,
+        )
+        .await?;
 
         tx.send(ResourceClientMessage::Audio { audio_resource })
             .await
@@ -204,8 +166,8 @@ pub struct PeerResourceServerTask {}
 impl PeerResourceServerTask {
     pub fn spawn(
         resources: Arc<dyn PeersResourcesPort>,
-        tx: Pin<Box<dyn Sink<ResourceServerMessage, Error = std::io::Error> + Send>>,
-        rx: Pin<Box<dyn Stream<Item = Result<ResourceClientMessage, anyhow::Error>> + Send>>,
+        tx: MessageSink<ResourceServerMessage>,
+        rx: MessageStream<ResourceClientMessage>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -224,8 +186,8 @@ impl PeerResourceServerTask {
 
     async fn run(
         resources: Arc<dyn PeersResourcesPort>,
-        mut tx: Pin<Box<dyn Sink<ResourceServerMessage, Error = std::io::Error> + Send>>,
-        mut rx: Pin<Box<dyn Stream<Item = Result<ResourceClientMessage, anyhow::Error>> + Send>>,
+        mut tx: MessageSink<ResourceServerMessage>,
+        mut rx: MessageStream<ResourceClientMessage>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerResourceServer starting");
 

@@ -1,7 +1,10 @@
-use crate::{peers::PeersDatabasePort, protocol::StreamHeader};
+use crate::{
+    connection::{Message, MessageSink, MessageStream, PeerConnection, open_message_stream},
+    peers::PeersDatabasePort,
+    protocol::StreamHeader,
+};
 use anyhow::Context;
-use futures::{Sink, SinkExt as _, Stream, StreamExt as _};
-use iroh::endpoint::Connection;
+use futures::{SinkExt as _, StreamExt as _};
 use serde::{Deserialize, Serialize};
 use siphasher::sip::SipHasher;
 use std::{
@@ -20,10 +23,6 @@ use stellar_graph::{
 };
 use stellar_riblt::{CodedSymbol, PeelableResult, RatelessIBLT, UnmanagedRatelessIBLT};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
-use tokio_util::{
-    bytes::Bytes,
-    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-};
 use tracing::warn;
 
 /// Handle for a peer sync client task
@@ -33,7 +32,7 @@ impl PeerSyncClientTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
         incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Self {
         tokio::spawn({
@@ -55,7 +54,7 @@ impl PeerSyncClientTask {
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
         incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSyncClient starting");
@@ -72,20 +71,11 @@ impl PeerSyncClientTask {
             .context("Failed to acquire sync permit")?;
 
         {
-            let (tx, rx) = connection.open_bi().await?;
-
-            let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-            let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-
-            let stream_header = StreamHeader::encode(&StreamHeader::Sync);
-            tx.send(stream_header)
-                .await
-                .context("Failed to send stream header")?;
-
-            let mut rx = rx.map(|result| match result {
-                Ok(bytes) => SyncServerMessage::decode(&bytes),
-                Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-            });
+            let (mut tx, mut rx) = open_message_stream::<SyncClientMessage, SyncServerMessage>(
+                connection.as_ref(),
+                StreamHeader::Sync,
+            )
+            .await?;
 
             while let Some(message) = rx.next().await {
                 let message = message.context("Failed to receive")?;
@@ -97,32 +87,18 @@ impl PeerSyncClientTask {
                 }
             }
 
-            let _ = tx.get_mut().reset(0u8.into());
-            let _ = rx.get_mut().get_mut().stop(0u8.into());
+            let _ = tx.reset(0);
+            let _ = rx.stop(0);
         }
 
         let difference = protocol.finish();
 
         {
-            let (tx, rx) = connection.open_bi().await?;
-
-            let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-            let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-
-            let stream_header = StreamHeader::encode(&StreamHeader::Difference);
-            tx.send(stream_header)
-                .await
-                .context("Failed to send stream header")?;
-
-            let mut tx = tx.with(|message| {
-                futures::future::ready(Ok::<_, std::io::Error>(DifferenceClientMessage::encode(
-                    &message,
-                )))
-            });
-            let mut rx = rx.map(|result| match result {
-                Ok(bytes) => DifferenceServerMessage::decode(&bytes),
-                Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-            });
+            let (mut tx, mut rx) = open_message_stream::<
+                DifferenceClientMessage,
+                DifferenceServerMessage,
+            >(connection.as_ref(), StreamHeader::Difference)
+            .await?;
 
             tx.send(difference)
                 .await
@@ -159,7 +135,7 @@ impl PeerSyncServerTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
-        tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
+        tx: MessageSink<SyncServerMessage>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -179,7 +155,7 @@ impl PeerSyncServerTask {
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
         sync_manager: SyncManager,
-        mut tx: Pin<Box<dyn Sink<SyncServerMessage, Error = std::io::Error> + Send>>,
+        mut tx: MessageSink<SyncServerMessage>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerSyncServer starting");
 
@@ -215,9 +191,9 @@ pub struct PeerDifferenceServerTask {}
 impl PeerDifferenceServerTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
-        connection: Connection,
-        tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
-        rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+        connection: Arc<dyn PeerConnection>,
+        tx: MessageSink<DifferenceServerMessage>,
+        rx: MessageStream<DifferenceClientMessage>,
         incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Self {
         tokio::spawn({
@@ -237,9 +213,9 @@ impl PeerDifferenceServerTask {
 
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
-        connection: Connection,
-        mut tx: Pin<Box<dyn Sink<DifferenceServerMessage, Error = std::io::Error> + Send>>,
-        mut rx: Pin<Box<dyn Stream<Item = Result<DifferenceClientMessage, anyhow::Error>> + Send>>,
+        connection: Arc<dyn PeerConnection>,
+        mut tx: MessageSink<DifferenceServerMessage>,
+        mut rx: MessageStream<DifferenceClientMessage>,
         incremental_changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::info!("PeerDifferenceServer starting");
@@ -291,18 +267,14 @@ pub struct IncrementalMessage {
     relation_attributes: HashMap<(RelationId, AttributeKind), RelationAttributeValue>,
 }
 
+impl Message for IncrementalMessage {}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum IncrementalServerMessage {}
+
+impl Message for IncrementalServerMessage {}
+
 impl IncrementalMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-
     fn is_empty(&self) -> bool {
         self.entity_metadata.is_empty()
             && self.entity_attributes.is_empty()
@@ -350,10 +322,13 @@ async fn incremental_batch_timeout(timeout: &mut Pin<&mut Option<tokio::time::Sl
 pub struct PeerIncrementalClientTask {}
 
 impl PeerIncrementalClientTask {
-    pub fn spawn(connection: Connection, changes: mpsc::UnboundedReceiver<StoreChange>) -> Self {
+    pub fn spawn(
+        connection: Arc<dyn PeerConnection>,
+        changes: mpsc::UnboundedReceiver<StoreChange>,
+    ) -> Self {
         tokio::spawn({
             async move {
-                let result = Self::run(connection.clone(), changes).await;
+                let result = Self::run(connection, changes).await;
 
                 if let Err(error) = result {
                     tracing::error!("Peer incremental client task errored: {error}");
@@ -367,18 +342,16 @@ impl PeerIncrementalClientTask {
     }
 
     async fn run(
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
         mut changes: mpsc::UnboundedReceiver<StoreChange>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerIncrementalClient starting");
 
-        let (tx, _rx) = connection.open_bi().await?;
-        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-
-        let stream_header = StreamHeader::encode(&StreamHeader::Incremental);
-        tx.send(stream_header)
-            .await
-            .context("Failed to send stream header")?;
+        let (mut tx, _rx) = open_message_stream::<IncrementalMessage, IncrementalServerMessage>(
+            connection.as_ref(),
+            StreamHeader::Incremental,
+        )
+        .await?;
 
         let mut batch = IncrementalMessage::default();
 
@@ -412,7 +385,7 @@ impl PeerIncrementalClientTask {
     }
 
     async fn flush(
-        tx: &mut FramedWrite<iroh::endpoint::SendStream, LengthDelimitedCodec>,
+        tx: &mut MessageSink<IncrementalMessage>,
         batch: &mut IncrementalMessage,
     ) -> Result<(), anyhow::Error> {
         if batch.is_empty() {
@@ -422,9 +395,7 @@ impl PeerIncrementalClientTask {
         let message = std::mem::take(batch);
 
         tracing::trace!("PeerIncrementalClient sending {message:?}");
-        tx.send(IncrementalMessage::encode(&message))
-            .await
-            .context("Failed to send")?;
+        tx.send(message).await.context("Failed to send")?;
 
         Ok(())
     }
@@ -436,7 +407,7 @@ pub struct PeerIncrementalServerTask {}
 impl PeerIncrementalServerTask {
     pub fn spawn(
         database: Arc<dyn PeersDatabasePort>,
-        rx: Pin<Box<dyn Stream<Item = Result<IncrementalMessage, anyhow::Error>> + Send>>,
+        rx: MessageStream<IncrementalMessage>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -455,7 +426,7 @@ impl PeerIncrementalServerTask {
 
     async fn run(
         database: Arc<dyn PeersDatabasePort>,
-        mut rx: Pin<Box<dyn Stream<Item = Result<IncrementalMessage, anyhow::Error>> + Send>>,
+        mut rx: MessageStream<IncrementalMessage>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerIncrementalServer starting");
 
@@ -801,6 +772,11 @@ pub enum SyncServerMessage {
     },
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum SyncClientMessage {}
+
+impl Message for SyncClientMessage {}
+
 impl SyncServerProtocol {
     const BATCH_CODED_SYMBOLS: usize = 10;
 
@@ -861,18 +837,7 @@ impl SyncServerProtocol {
     }
 }
 
-impl SyncServerMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for SyncServerMessage {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceClientMessage {
@@ -884,18 +849,7 @@ pub enum DifferenceClientMessage {
     },
 }
 
-impl DifferenceClientMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for DifferenceClientMessage {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DifferenceServerMessage {
@@ -905,18 +859,7 @@ pub enum DifferenceServerMessage {
     },
 }
 
-impl DifferenceServerMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for DifferenceServerMessage {}
 
 #[cfg(test)]
 mod test {

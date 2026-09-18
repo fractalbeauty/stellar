@@ -1,3 +1,4 @@
+pub mod connection;
 pub mod devices;
 pub mod graph;
 pub mod peers;

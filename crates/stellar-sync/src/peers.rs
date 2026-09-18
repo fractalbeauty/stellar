@@ -1,4 +1,5 @@
 use crate::{
+    connection::{IrohPeerConnection, Message, MessageSink, MessageStream, PeerConnection},
     devices::Device,
     graph::{
         DifferenceClientMessage, DifferenceServerMessage, IncrementalMessage,
@@ -18,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use async_trait::async_trait;
 use automerge::AutoCommit;
-use futures::{SinkExt as _, StreamExt as _};
+use futures::StreamExt as _;
 use iroh::{Endpoint, EndpointId, SecretKey, endpoint::Connection};
 use std::{
     collections::{HashMap, HashSet},
@@ -34,10 +35,7 @@ use stellar_graph::{
     },
 };
 use tokio::sync::{mpsc, oneshot, watch};
-use tokio_util::{
-    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-    sync::CancellationToken,
-};
+use tokio_util::sync::CancellationToken;
 
 /// Handle to the peers task
 #[derive(Debug, Clone)]
@@ -343,6 +341,8 @@ impl PeerTask {
             async move {
                 let mut peer = Peer {};
 
+                let connection: Arc<dyn PeerConnection> = IrohPeerConnection::new(connection);
+
                 let result = peer
                     .run(
                         side,
@@ -395,7 +395,7 @@ impl Peer {
         resources: Arc<dyn PeersResourcesPort>,
         sync_manager: SyncManager,
         mut message_rx: mpsc::UnboundedReceiver<PeerMessage>,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("Peer starting");
 
@@ -430,7 +430,7 @@ impl Peer {
             tokio::select! {
                 _ = cancellation_token.cancelled() => {
                     tracing::debug!("Peer task cancelled");
-                    connection.close(1u8.into(), b"close");
+                    connection.close(1, b"close");
                 }
 
                 _ = connection.closed() => {
@@ -458,10 +458,7 @@ impl Peer {
                 // the task will probably need have clones of everything to hand out
                 result = connection.accept_bi() => {
                     match result {
-                        Ok((tx, rx)) => {
-                            let tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-                            let mut rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-
+                        Ok((tx, mut rx)) => {
                             let Some(stream_header_result) = rx.next().await else {
                                 tracing::error!("Stream closed before stream header was read");
                                 continue;
@@ -471,19 +468,12 @@ impl Peer {
 
                             match stream_header {
                                 StreamHeader::Sync => {
-                                    let tx = Box::pin(tx.with(|message| {
-                                        futures::future::ready(Ok::<_, std::io::Error>(SyncServerMessage::encode(&message)))
-                                    }));
+                                    let tx = MessageSink::<SyncServerMessage>::new(tx);
                                     PeerSyncServerTask::spawn(database.clone(), sync_manager.clone(), tx);
                                 },
                                 StreamHeader::Difference => {
-                                    let tx = Box::pin(tx.with(|message| {
-                                        futures::future::ready(Ok::<_, std::io::Error>(DifferenceServerMessage::encode(&message)))
-                                    }));
-                                    let rx = Box::pin( rx.map(|result| match result {
-                                        Ok(bytes) => DifferenceClientMessage::decode(&bytes),
-                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-                                    }));
+                                    let tx = MessageSink::<DifferenceServerMessage>::new(tx);
+                                    let rx = MessageStream::<DifferenceClientMessage>::new(rx);
                                     let incremental_changes = incremental_changes.take().ok_or_else(|| {
                                         anyhow::anyhow!("Incremental subscription already consumed but accepted a second Difference stream")
                                     })?;
@@ -496,30 +486,17 @@ impl Peer {
                                     );
                                 },
                                 StreamHeader::SchemaSync => {
-                                    let tx = Box::pin(tx.with(|message| {
-                                        futures::future::ready(Ok::<_, std::io::Error>(SchemaSyncServerMessage::encode(&message)))
-                                    }));
-                                    let rx = Box::pin(rx.map(|result| match result {
-                                        Ok(bytes) => SchemaSyncClientMessage::decode(&bytes),
-                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-                                    }));
+                                    let tx = MessageSink::<SchemaSyncServerMessage>::new(tx);
+                                    let rx = MessageStream::<SchemaSyncClientMessage>::new(rx);
                                     PeerSchemaServerTask::spawn(schema.clone(), tx, rx);
                                 }
                                 StreamHeader::Incremental => {
-                                    let rx = Box::pin(rx.map(|result| match result {
-                                        Ok(bytes) => IncrementalMessage::decode(&bytes),
-                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-                                    }));
+                                    let rx = MessageStream::<IncrementalMessage>::new(rx);
                                     PeerIncrementalServerTask::spawn(database.clone(), rx);
                                 }
                                 StreamHeader::Resource => {
-                                    let tx = Box::pin(tx.with(|message| {
-                                        futures::future::ready(Ok::<_, std::io::Error>(ResourceServerMessage::encode(&message)))
-                                    }));
-                                    let rx = Box::pin( rx.map(|result| match result {
-                                        Ok(bytes) => ResourceClientMessage::decode(&bytes),
-                                        Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-                                    }));
+                                    let tx = MessageSink::<ResourceServerMessage>::new(tx);
+                                    let rx = MessageStream::<ResourceClientMessage>::new(rx);
                                     PeerResourceServerTask::spawn(resources.clone(), tx, rx);
                                 }
                             }

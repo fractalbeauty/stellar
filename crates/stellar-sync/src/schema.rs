@@ -1,9 +1,12 @@
-use crate::{peers::PeersSchemaPort, protocol::StreamHeader};
+use crate::{
+    connection::{Message, MessageSink, MessageStream, PeerConnection, open_message_stream},
+    peers::PeersSchemaPort,
+    protocol::StreamHeader,
+};
 use anyhow::Context;
 use automerge::{AutoCommit, ROOT, sync::SyncDoc};
 use automorph::Automorph;
-use futures::{Sink, SinkExt as _, Stream, StreamExt};
-use iroh::endpoint::Connection;
+use futures::{SinkExt as _, StreamExt};
 use pin_project_lite::pin_project;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -26,11 +29,7 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Sleep,
 };
-use tokio_util::{
-    bytes::Bytes,
-    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-    sync::CancellationToken,
-};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, automorph::Automorph, uniffi::Record)]
 pub struct Schema {
@@ -409,7 +408,7 @@ impl SchemaEditBatch {
 pub struct PeerSchemaClientTask {}
 
 impl PeerSchemaClientTask {
-    pub fn spawn(schema: Arc<dyn PeersSchemaPort>, connection: Connection) -> Self {
+    pub fn spawn(schema: Arc<dyn PeersSchemaPort>, connection: Arc<dyn PeerConnection>) -> Self {
         tokio::spawn({
             async move {
                 let result = Self::run(schema, connection).await;
@@ -427,29 +426,15 @@ impl PeerSchemaClientTask {
 
     async fn run(
         schema: Arc<dyn PeersSchemaPort>,
-        connection: Connection,
+        connection: Arc<dyn PeerConnection>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSchemaClient starting");
 
-        let (tx, rx) = connection.open_bi().await?;
-
-        let mut tx = FramedWrite::new(tx, LengthDelimitedCodec::new());
-        let rx = FramedRead::new(rx, LengthDelimitedCodec::new());
-
-        let stream_header = StreamHeader::encode(&StreamHeader::SchemaSync);
-        tx.send(stream_header)
-            .await
-            .context("Failed to send stream header")?;
-
-        let mut tx = Box::new(tx.with(|message| {
-            futures::future::ready(Ok::<_, std::io::Error>(SchemaSyncClientMessage::encode(
-                &message,
-            )))
-        }));
-        let mut rx = Box::new(rx.map(|result| match result {
-            Ok(bytes) => SchemaSyncServerMessage::decode(&bytes),
-            Err(e) => Err(anyhow::anyhow!("Failed to read from stream: {e:?}")),
-        }));
+        let (mut tx, mut rx) = open_message_stream::<
+            SchemaSyncClientMessage,
+            SchemaSyncServerMessage,
+        >(connection.as_ref(), StreamHeader::SchemaSync)
+        .await?;
 
         let mut doc = schema.fork_doc().await?;
         let mut sync_doc = doc.sync();
@@ -503,8 +488,8 @@ pub struct PeerSchemaServerTask {}
 impl PeerSchemaServerTask {
     pub fn spawn(
         schema: Arc<dyn PeersSchemaPort>,
-        tx: Pin<Box<dyn Sink<SchemaSyncServerMessage, Error = std::io::Error> + Send>>,
-        rx: Pin<Box<dyn Stream<Item = Result<SchemaSyncClientMessage, anyhow::Error>> + Send>>,
+        tx: MessageSink<SchemaSyncServerMessage>,
+        rx: MessageStream<SchemaSyncClientMessage>,
     ) -> Self {
         tokio::spawn({
             async move {
@@ -523,8 +508,8 @@ impl PeerSchemaServerTask {
 
     async fn run(
         schema: Arc<dyn PeersSchemaPort>,
-        mut tx: Pin<Box<dyn Sink<SchemaSyncServerMessage, Error = std::io::Error> + Send>>,
-        mut rx: Pin<Box<dyn Stream<Item = Result<SchemaSyncClientMessage, anyhow::Error>> + Send>>,
+        mut tx: MessageSink<SchemaSyncServerMessage>,
+        mut rx: MessageStream<SchemaSyncClientMessage>,
     ) -> Result<(), anyhow::Error> {
         tracing::debug!("PeerSchemaServer starting");
 
@@ -580,18 +565,7 @@ pub enum SchemaSyncClientMessage {
     Done,
 }
 
-impl SchemaSyncClientMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for SchemaSyncClientMessage {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum SchemaSyncServerMessage {
@@ -599,18 +573,7 @@ pub enum SchemaSyncServerMessage {
     Done,
 }
 
-impl SchemaSyncServerMessage {
-    pub fn encode(message: &Self) -> Bytes {
-        postcard::to_stdvec(&message)
-            .expect("Failed to serialize message")
-            .into()
-    }
-
-    pub fn decode(bytes: &[u8]) -> Result<Self, anyhow::Error> {
-        postcard::from_bytes(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {e:?}"))
-    }
-}
+impl Message for SchemaSyncServerMessage {}
 
 /// Creates a new schema with the default configuration.
 pub fn default_schema() -> Schema {
