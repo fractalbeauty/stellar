@@ -362,3 +362,173 @@ impl PeersResourcesPort for PeersResourcesAdapter {
         Ok(entity)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{connection::MemoryPeerConnection, peers::PeersDatabaseAdapter};
+    use std::{collections::HashMap, sync::Mutex};
+    use stellar_graph::database::Database;
+
+    #[tokio::test]
+    async fn download_resource() {
+        let author = AuthorId::from_slice(&[1u8; 32]);
+        let dir = testdir::testdir!();
+
+        let source_path = dir.join("source.mp3");
+        let source_bytes: Vec<u8> = (0..(CHUNK_SIZE * 3)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&source_path, &source_bytes).unwrap();
+
+        let database = Database::in_memory();
+        let (audio_resource, source) = insert_audio_resource(
+            &database,
+            author,
+            source_path.clone(),
+            source_bytes.len() as u64,
+        );
+        let database = PeersDatabaseAdapter::new(database);
+
+        let client_resources = FakeResources::new(dir.join("client-cache"), HashMap::new());
+        let server_resources = FakeResources::new(
+            dir.join("server-cache"),
+            HashMap::from([(audio_resource, source_path)]),
+        );
+
+        let (client_connection, server_connection) = MemoryPeerConnection::new();
+        tokio::spawn(accept_and_spawn_resource_server(
+            server_connection,
+            server_resources,
+        ));
+
+        let parent = EntityId::random(AUDIO_RESOURCE_ENTITY);
+        let relation = RelationKind::random();
+        let (result_tx, result_rx) = oneshot::channel();
+        PeerResourceClientTask::spawn(
+            database,
+            client_resources.clone(),
+            client_connection,
+            audio_resource,
+            parent,
+            relation,
+            result_tx,
+        );
+
+        let downloaded_path = result_rx.await.unwrap().unwrap();
+        assert_eq!(
+            tokio::fs::read(&downloaded_path).await.unwrap(),
+            source_bytes
+        );
+
+        let created = client_resources.created.lock().unwrap();
+        let (created_source, created_path, created_parent, created_relation) = created
+            .first()
+            .expect("create_local_audio_resource was not called");
+        assert_eq!(*created_source, source);
+        assert_eq!(*created_path, downloaded_path);
+        assert_eq!(*created_parent, parent);
+        assert_eq!(*created_relation, relation);
+    }
+
+    struct FakeResources {
+        cache_dir: PathBuf,
+        files: HashMap<EntityId, PathBuf>,
+        created: Mutex<Vec<(AudioResource, PathBuf, EntityId, RelationKind)>>,
+    }
+
+    impl FakeResources {
+        fn new(cache_dir: PathBuf, files: HashMap<EntityId, PathBuf>) -> Arc<Self> {
+            Arc::new(Self {
+                cache_dir,
+                files,
+                created: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    impl PeersResourcesPort for FakeResources {
+        fn cache_dir(&self) -> &Path {
+            &self.cache_dir
+        }
+
+        fn resolve_audio_resource_path(
+            &self,
+            entity: EntityId,
+        ) -> Result<Option<PathBuf>, anyhow::Error> {
+            Ok(self.files.get(&entity).cloned())
+        }
+
+        fn create_local_audio_resource(
+            &self,
+            source: &AudioResource,
+            local_path: PathBuf,
+            parent: EntityId,
+            relation: RelationKind,
+        ) -> Result<EntityId, anyhow::Error> {
+            self.created
+                .lock()
+                .unwrap()
+                .push((source.clone(), local_path, parent, relation));
+            Ok(EntityId::random(AUDIO_RESOURCE_ENTITY))
+        }
+    }
+
+    fn insert_audio_resource(
+        database: &Database,
+        author: AuthorId,
+        path: PathBuf,
+        size: u64,
+    ) -> (EntityId, AudioResource) {
+        let version = Version::new(Timestamp::now(), author);
+        let source = AudioResource {
+            location: AudioResourceLocation {
+                device: author,
+                path,
+            },
+            location_version: version,
+            hash: [0u8; 32],
+            hash_version: version,
+            size,
+            size_version: version,
+            duration: 1.0,
+            duration_version: version,
+            codec: "mp3".to_string(),
+            codec_version: version,
+            bitrate: 128_000,
+            bitrate_version: version,
+            sample_rate: 44_100,
+            sample_rate_version: version,
+            bit_depth: 16,
+            bit_depth_version: version,
+            channels: 2,
+            channels_version: version,
+        };
+
+        let entity = EntityId::random(AUDIO_RESOURCE_ENTITY);
+        database
+            .apply_local_entity(
+                entity,
+                EntityData {
+                    metadata: EntityMetadataValue {
+                        deleted: false,
+                        deleted_version: version,
+                    },
+                    attributes: source.to_attributes(),
+                },
+            )
+            .unwrap();
+
+        (entity, source)
+    }
+
+    async fn accept_and_spawn_resource_server(
+        connection: Arc<dyn PeerConnection>,
+        resources: Arc<dyn PeersResourcesPort>,
+    ) {
+        let (tx, mut rx) = connection.accept_bi().await.unwrap();
+
+        let header = StreamHeader::decode(&rx.next().await.unwrap().unwrap()).unwrap();
+        assert!(matches!(header, StreamHeader::Resource));
+
+        PeerResourceServerTask::spawn(resources, MessageSink::new(tx), MessageStream::new(rx));
+    }
+}
