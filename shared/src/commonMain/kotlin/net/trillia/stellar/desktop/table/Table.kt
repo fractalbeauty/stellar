@@ -26,7 +26,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isShiftPressed as isShiftKeyPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -37,11 +36,12 @@ import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import net.trillia.stellar.FakeHandler
 import net.trillia.stellar.isCtrlLikePressed
 import net.trillia.stellar.upOrDownTo
-import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import androidx.compose.ui.input.key.isShiftPressed as isShiftKeyPressed
 
 @Composable
 fun <Row> Table(
@@ -70,12 +70,17 @@ fun <Row> Table(
     var lastClickedRowIndex by remember { mutableStateOf(0) }
     var lastAnchoredRowIndex by remember { mutableStateOf(0) }
 
-    fun scrollRowIntoView(rowIndex: Int, direction: Int) {
+    fun scrollRowIntoView(
+        rowIndex: Int,
+        direction: Int,
+    ) {
         coroutineScope.launch {
             // Account for the sticky header occupying item index 0.
             val itemIndex = rowIndex + 1
             val rowHeightPx = with(density) { tableRowHeight.toPx() }
-            val viewportHeightPx = listState.layoutInfo.viewportSize.height.toFloat()
+            val viewportHeightPx =
+                listState.layoutInfo.viewportSize.height
+                    .toFloat()
 
             val itemInfo = listState.layoutInfo.visibleItemsInfo.find { it.index == itemIndex }
 
@@ -89,7 +94,10 @@ fun <Row> Table(
         }
     }
 
-    fun handleMoveKeyboardSelection(direction: Int, isShiftPressed: Boolean) {
+    fun handleMoveKeyboardSelection(
+        direction: Int,
+        isShiftPressed: Boolean,
+    ) {
         val clampedIndex = (lastClickedRowIndex + direction).coerceIn(0, data.size - 1)
 
         if (isShiftPressed) {
@@ -116,8 +124,7 @@ fun <Row> Table(
                 .combinedClickable(
                     onClick = { onDeselectAllRows() },
                     interactionSource = backgroundInteractionSource,
-                )
-                .focusRequester(tableFocusRequester)
+                ).focusRequester(tableFocusRequester)
                 .focusable()
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown || data.isEmpty()) return@onPreviewKeyEvent false
@@ -132,7 +139,9 @@ fun <Row> Table(
                             true
                         }
 
-                        else -> false
+                        else -> {
+                            false
+                        }
                     }
                 },
     ) {
