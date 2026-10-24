@@ -363,6 +363,33 @@ pub enum ValueKind {
     Bytes,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    automorph::Automorph,
+    uniffi::Enum,
+)]
+pub enum RelationDirection {
+    Incoming,
+    Outgoing,
+}
+
+impl RelationDirection {
+    /// Given an entity and the entity on the other end of a relation, returns `(source, target)`.
+    pub fn source_and_target<T>(self, entity: T, other: T) -> (T, T) {
+        match self {
+            Self::Incoming => (other, entity),
+            Self::Outgoing => (entity, other),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, uniffi::Enum)]
 pub enum Value {
     Text(String),
@@ -508,10 +535,22 @@ uniffi::custom_type!(OrderedFloatF64, f64, {
 #[cfg(test)]
 mod test {
     use crate::entity::{
-        AttributeKind, EntityId, EntityKind, RelationId, RelationKind, Version,
+        AttributeKind, EntityId, EntityKind, RelationDirection, RelationId, RelationKind, Version,
         hegel::{gen_author_id, gen_timestamp},
     };
     use hegel::{Generator, TestCase, generators as gs};
+
+    #[test]
+    fn relation_direction_source_and_target() {
+        assert_eq!(
+            RelationDirection::Outgoing.source_and_target("a", "b"),
+            ("a", "b")
+        );
+        assert_eq!(
+            RelationDirection::Incoming.source_and_target("a", "b"),
+            ("b", "a")
+        );
+    }
 
     #[hegel::test]
     fn latest_version_same_timestamp(tc: TestCase) {

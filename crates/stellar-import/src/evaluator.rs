@@ -1,6 +1,6 @@
 use crate::{
     ports::ImportDatabasePort,
-    rules::{AttributeRule, RelationRule, RelationRuleDirection, Rules},
+    rules::{AttributeRule, RelationRule, Rules},
 };
 use lofty::{
     file::FileType,
@@ -184,10 +184,7 @@ impl<'a> Evaluator<'a> {
             other_key_attributes,
         );
 
-        let (source, target) = match relation_rule.direction {
-            RelationRuleDirection::Incoming => (other, entity),
-            RelationRuleDirection::Outgoing => (entity, other),
-        };
+        let (source, target) = relation_rule.direction.source_and_target(entity, other);
 
         let relation_attributes = file.attributes(&relation_rule.relation_attributes);
         let relation_key_attributes = self.rules.relation_key_attributes(relation_rule.relation);
@@ -439,7 +436,7 @@ mod test {
     use crate::{
         evaluator::{Changes, Evaluator, EvaluatorFile},
         ports::ImportDatabasePort,
-        rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
+        rules::{AttributeRule, RelationRule, Rule, Rules, TagKind},
     };
     use lofty::{
         file::FileType,
@@ -449,8 +446,8 @@ mod test {
     use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
     use stellar_graph::{
         entity::{
-            AttributeKind, AuthorId, EntityId, EntityKind, RelationKind, Timestamp, Value,
-            ValueKind, Version,
+            AttributeKind, AuthorId, EntityId, EntityKind, RelationDirection, RelationKind,
+            Timestamp, Value, ValueKind, Version,
         },
         store::{EntityAttributeValue, EntityData, EntityMetadataValue},
     };
@@ -500,7 +497,7 @@ mod test {
                 relations: vec![RelationRule {
                     relation: album_song,
                     other: album,
-                    direction: RelationRuleDirection::Incoming,
+                    direction: RelationDirection::Incoming,
                     relation_attributes: vec![],
                     other_attributes: vec![AttributeRule {
                         attribute: album_title,

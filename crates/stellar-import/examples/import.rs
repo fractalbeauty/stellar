@@ -1,12 +1,12 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use stellar_graph::{
-    entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
+    entity::{AttributeKind, AuthorId, EntityKind, RelationDirection, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema},
 };
 use stellar_import::{
     import::{ImportEventHandler, ImportEventScannedFile, ImportTask},
     ports::{ImportDatabasePort, ImportSchemaPort},
-    rules::{AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind},
+    rules::{AttributeRule, RelationRule, Rule, Rules, TagKind},
 };
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::sync::{Notify, watch};
@@ -203,7 +203,7 @@ impl ExampleImportSchemaAdapter {
                     RelationRule {
                         relation: album_song,
                         other: album,
-                        direction: RelationRuleDirection::Incoming,
+                        direction: RelationDirection::Incoming,
                         relation_attributes: vec![AttributeRule {
                             attribute: album_track_number,
                             value: ValueKind::Number,
@@ -217,7 +217,7 @@ impl ExampleImportSchemaAdapter {
                         nested_relations: vec![RelationRule {
                             relation: album_artist,
                             other: artist,
-                            direction: RelationRuleDirection::Outgoing,
+                            direction: RelationDirection::Outgoing,
                             relation_attributes: vec![],
                             other_attributes: vec![AttributeRule {
                                 attribute: artist_name,
@@ -230,7 +230,7 @@ impl ExampleImportSchemaAdapter {
                     RelationRule {
                         relation: song_artist,
                         other: artist,
-                        direction: RelationRuleDirection::Outgoing,
+                        direction: RelationDirection::Outgoing,
                         relation_attributes: vec![],
                         other_attributes: vec![AttributeRule {
                             attribute: artist_name,

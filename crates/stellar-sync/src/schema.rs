@@ -18,12 +18,10 @@ use std::{
     time::Duration,
 };
 use stellar_graph::{
-    entity::{AttributeKind, AuthorId, EntityKind, RelationKind, ValueKind},
+    entity::{AttributeKind, AuthorId, EntityKind, RelationDirection, RelationKind, ValueKind},
     schema::{AttributeSchema, EntitySchema, GraphSchema, RelationSchema},
 };
-use stellar_import::rules::{
-    AttributeRule, RelationRule, RelationRuleDirection, Rule, Rules, TagKind,
-};
+use stellar_import::rules::{AttributeRule, RelationRule, Rule, Rules, TagKind};
 use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, audio_resource_schema};
 use tokio::{
     sync::{mpsc, oneshot, watch},
@@ -681,7 +679,7 @@ pub fn default_schema() -> Schema {
                 RelationRule {
                     relation: album_song,
                     other: album,
-                    direction: RelationRuleDirection::Incoming,
+                    direction: RelationDirection::Incoming,
                     relation_attributes: vec![AttributeRule {
                         attribute: album_track_number,
                         value: ValueKind::Number,
@@ -695,7 +693,7 @@ pub fn default_schema() -> Schema {
                     nested_relations: vec![RelationRule {
                         relation: album_artist,
                         other: artist,
-                        direction: RelationRuleDirection::Outgoing,
+                        direction: RelationDirection::Outgoing,
                         relation_attributes: vec![],
                         other_attributes: vec![AttributeRule {
                             attribute: artist_name,
@@ -708,7 +706,7 @@ pub fn default_schema() -> Schema {
                 RelationRule {
                     relation: song_artist,
                     other: artist,
-                    direction: RelationRuleDirection::Outgoing,
+                    direction: RelationDirection::Outgoing,
                     relation_attributes: vec![],
                     other_attributes: vec![AttributeRule {
                         attribute: artist_name,
