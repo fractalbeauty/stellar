@@ -1,3 +1,4 @@
+use crate::player::Backend;
 use anyhow::Context;
 use cpal::{
     FromSample, OutputCallbackInfo, Sample, SampleFormat, Stream,
@@ -8,7 +9,6 @@ use ringbuf::{
     traits::{Consumer, Observer},
 };
 use std::{
-    collections::HashSet,
     path::PathBuf,
     sync::{
         Arc,
@@ -16,11 +16,6 @@ use std::{
     },
     thread::Thread,
 };
-use stellar_graph::{
-    database::Database,
-    entity::{AuthorId, EntityId},
-};
-use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, AudioResource};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
@@ -304,65 +299,8 @@ struct DataCallbackBuffer {
     thread: Thread,
 }
 
-/// Resolves entities to the AudioResources related to them.
-pub trait PlayerResourcesPort: Send + Sync {
-    /// The AuthorId identifying this device, for matching against `AudioResourceLocation::device`.
-    fn local_author_id(&self) -> AuthorId;
-
-    /// All `AudioResource` entities related (by any relation) to `entity`.
-    fn list_related_audio_resources(
-        &self,
-        entity: EntityId,
-    ) -> Result<Vec<AudioResource>, anyhow::Error>;
-}
-
-pub struct PlayerResourcesAdapter {
-    database: Database,
-    author_id: AuthorId,
-}
-
-impl PlayerResourcesAdapter {
-    pub fn new(database: Database, author_id: AuthorId) -> Arc<Self> {
-        Arc::new(Self {
-            database,
-            author_id,
-        })
-    }
-}
-
-impl PlayerResourcesPort for PlayerResourcesAdapter {
-    fn local_author_id(&self) -> AuthorId {
-        self.author_id
-    }
-
-    fn list_related_audio_resources(
-        &self,
-        entity: EntityId,
-    ) -> Result<Vec<AudioResource>, anyhow::Error> {
-        // TODO: optimize this query
-        let related_ids: HashSet<EntityId> = self
-            .database
-            .get_relations()?
-            .into_values()
-            .filter_map(|relation| {
-                let source = relation.metadata.source;
-                let target = relation.metadata.target;
-                if source == entity {
-                    Some(target)
-                } else if target == entity {
-                    Some(source)
-                } else {
-                    None
-                }
-            })
-            .filter(|other| other.kind() == AUDIO_RESOURCE_ENTITY)
-            .collect();
-
-        self.database
-            .get_entities()?
-            .into_iter()
-            .filter(|(id, _)| related_ids.contains(id))
-            .map(|(_, data)| AudioResource::try_from_attributes(&data.attributes))
-            .collect()
+impl Backend for CpalBackendTask {
+    fn play(&self, path: PathBuf) -> Result<(), anyhow::Error> {
+        CpalBackendTask::play(self, path)
     }
 }
