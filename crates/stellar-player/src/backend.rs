@@ -9,6 +9,7 @@ use ringbuf::{
 };
 use std::{
     collections::HashSet,
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -32,14 +33,11 @@ pub struct CpalBackendTask {
 
 /// Messages to the cpal backend task
 pub enum CpalBackendMessage {
-    Play { entity: EntityId },
+    Play { path: PathBuf },
 }
 
 impl CpalBackendTask {
-    pub fn spawn(
-        cancellation_token: CancellationToken,
-        resources_port: Arc<dyn PlayerResourcesPort>,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn spawn(cancellation_token: CancellationToken) -> Result<Self, anyhow::Error> {
         let host = cpal::default_host();
 
         let Some(device) = host.default_output_device() else {
@@ -152,7 +150,6 @@ impl CpalBackendTask {
                     sample_rate,
                     channels,
                     message_rx,
-                    resources_port,
                 };
 
                 let result = backend.run(cancellation_token).await;
@@ -176,9 +173,9 @@ impl CpalBackendTask {
         self.cancellation_token.cancel();
     }
 
-    pub fn play(&self, entity: EntityId) -> Result<(), anyhow::Error> {
+    pub fn play(&self, path: PathBuf) -> Result<(), anyhow::Error> {
         self.message_tx
-            .send(CpalBackendMessage::Play { entity })
+            .send(CpalBackendMessage::Play { path })
             .map_err(|_| anyhow::anyhow!("Failed to send, cpal backend task has been dropped"))?;
 
         Ok(())
@@ -192,7 +189,6 @@ struct CpalBackend {
     sample_rate: usize,
     channels: usize,
     message_rx: mpsc::UnboundedReceiver<CpalBackendMessage>,
-    resources_port: Arc<dyn PlayerResourcesPort>,
 }
 
 impl CpalBackend {
@@ -200,7 +196,9 @@ impl CpalBackend {
         loop {
             tokio::select! {
                 Some(message) = self.message_rx.recv() => {
-                    self.handle_message(message)?;
+                    if let Err(error) = self.handle_message(message) {
+                        error!(?error, "Failed to handle message");
+                    }
                 }
 
                 _ = cancellation_token.cancelled() => {
@@ -215,21 +213,9 @@ impl CpalBackend {
 
     fn handle_message(&mut self, message: CpalBackendMessage) -> Result<(), anyhow::Error> {
         match message {
-            CpalBackendMessage::Play { entity } => {
-                // Find local resource related to entity
-                let local_author = self.resources_port.local_author_id();
-                let resource = self
-                    .resources_port
-                    .list_related_audio_resources(entity)?
-                    .into_iter()
-                    .find(|resource| resource.location.device == local_author)
-                    .ok_or_else(|| anyhow::anyhow!("No local copy of {entity:?} available"))?;
-
-                let (consumer, done, thread) = crate::decode::spawn_decode(
-                    resource.location.path,
-                    self.sample_rate,
-                    self.channels,
-                )?;
+            CpalBackendMessage::Play { path } => {
+                let (consumer, done, thread) =
+                    crate::decode::spawn_decode(path, self.sample_rate, self.channels)?;
 
                 self.data_tx
                     .send(DataCallbackMessage::PlayNow {
