@@ -1,7 +1,9 @@
 package net.trillia.stellar.desktop
 
 import net.trillia.stellar.AttributeKind
+import net.trillia.stellar.EntityId
 import net.trillia.stellar.EntityKind
+import net.trillia.stellar.RelationId
 import net.trillia.stellar.RelationKind
 import uniffi.stellar_graph.AttributeSchema
 import uniffi.stellar_graph.EntitySchema
@@ -20,6 +22,10 @@ val fakeArtistRelationKind = RelationKind.fromByteArray(byteArrayOf(1, 1, 0, 0, 
 val fakeTitleAttribute = AttributeKind.fromByteArray(byteArrayOf(1, 1, 0, 0, 0))
 val fakeDurationAttribute = AttributeKind.fromByteArray(byteArrayOf(2, 1, 0, 0, 0))
 val fakeArtistNameAttribute = AttributeKind.fromByteArray(byteArrayOf(3, 1, 0, 0, 0))
+
+fun makeFakeEntityId(n: Byte) = EntityId.fromByteArray(byteArrayOf(n, 0, 0, 0, 0))
+
+fun makeFakeRelationId(n: Byte) = RelationId.fromByteArray(byteArrayOf(n, 0, 0, 0, 0))
 
 fun makeFakeSchema(): Schema =
     Schema(

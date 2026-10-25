@@ -183,7 +183,7 @@ private fun <T> InspectorFieldInner(
 
 @Composable
 @Preview
-private fun `InspectorFieldText Default`() {
+private fun `Preview InspectorFieldText Default`() {
     PreviewWrapper(padded = true) {
         InspectorFieldText(label = "Text", content = FieldContent.Value("Song Title"), onSave = {})
     }
@@ -191,7 +191,7 @@ private fun `InspectorFieldText Default`() {
 
 @Composable
 @Preview
-private fun `InspectorFieldText Readonly`() {
+private fun `Preview InspectorFieldText Readonly`() {
     PreviewWrapper(padded = true) {
         InspectorFieldText(label = "Readonly", content = FieldContent.Value("Artist"), onSave = null)
     }
@@ -199,7 +199,7 @@ private fun `InspectorFieldText Readonly`() {
 
 @Composable
 @Preview
-private fun `InspectorFieldText Mixed`() {
+private fun `Preview InspectorFieldText Mixed`() {
     PreviewWrapper(padded = true) {
         InspectorFieldText(label = "Mixed", content = FieldContent.Mixed, onSave = {})
     }
@@ -207,7 +207,7 @@ private fun `InspectorFieldText Mixed`() {
 
 @Composable
 @Preview
-private fun `InspectorFieldNumber Default`() {
+private fun `Preview InspectorFieldNumber Default`() {
     PreviewWrapper(padded = true) {
         InspectorFieldNumber(label = "Number", content = FieldContent.Value(180.0), onSave = {})
     }
@@ -215,7 +215,7 @@ private fun `InspectorFieldNumber Default`() {
 
 @Composable
 @Preview
-private fun `InspectorFieldNumber Empty`() {
+private fun `Preview InspectorFieldNumber Empty`() {
     PreviewWrapper(padded = true) {
         InspectorFieldNumber(label = "Empty", content = FieldContent.None, onSave = {})
     }
@@ -223,7 +223,7 @@ private fun `InspectorFieldNumber Empty`() {
 
 @Composable
 @Preview
-private fun `InspectorFieldNumber Invalid`() {
+private fun `Preview InspectorFieldNumber Invalid`() {
     PreviewWrapper(padded = true) {
         InspectorFieldNumber(
             label = "Invalid",
