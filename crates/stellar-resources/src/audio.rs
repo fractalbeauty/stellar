@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 use stellar_graph::{
@@ -21,24 +22,26 @@ pub const AUDIO_RESOURCE_CHANNELS: AttributeKind = AttributeKind::from_bytes([10
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioResource {
     pub location: AudioResourceLocation,
-    pub hash: [u8; 32],
     pub size: u64,
     pub duration: f64,
-    pub codec: String,
-    pub bitrate: u32,
-    pub sample_rate: u32,
-    pub bit_depth: u8,
-    pub channels: u8,
+
+    pub hash: Option<[u8; 32]>,
+    pub codec: Option<String>,
+    pub bitrate: Option<u32>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u8>,
+    pub channels: Option<u8>,
 
     pub location_version: Version,
-    pub hash_version: Version,
     pub size_version: Version,
     pub duration_version: Version,
-    pub codec_version: Version,
-    pub bitrate_version: Version,
-    pub sample_rate_version: Version,
-    pub bit_depth_version: Version,
-    pub channels_version: Version,
+
+    pub hash_version: Option<Version>,
+    pub codec_version: Option<Version>,
+    pub bitrate_version: Option<Version>,
+    pub sample_rate_version: Option<Version>,
+    pub bit_depth_version: Option<Version>,
+    pub channels_version: Option<Version>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -70,11 +73,15 @@ impl AudioResource {
             })?;
         let location = AudioResourceLocation::decode(location)?;
 
-        let (hash, hash_version) = get_bytes_attribute(attributes, AUDIO_RESOURCE_HASH)
-            .ok_or_else(|| anyhow::anyhow!("AudioResource.hash is missing or wrong value kind"))?;
-        let hash = hash.try_into().map_err(|_| {
-            anyhow::anyhow!("Failed to deserialize AudioResource.hash: wrong length")
-        })?;
+        let (hash, hash_version) = get_optional_bytes_attribute(attributes, AUDIO_RESOURCE_HASH)
+            .context("AudioResource.hash is the wrong value kind")?;
+        let hash = hash
+            .map(|hash| {
+                hash.try_into().map_err(|_| {
+                    anyhow::anyhow!("Failed to deserialize AudioResource.hash: wrong length")
+                })
+            })
+            .transpose()?;
 
         let (size, size_version) = get_number_attribute(attributes, AUDIO_RESOURCE_SIZE)
             .ok_or_else(|| anyhow::anyhow!("AudioResource.size is missing or wrong value kind"))?;
@@ -85,38 +92,34 @@ impl AudioResource {
                 anyhow::anyhow!("AudioResource.duration is missing or wrong value kind")
             })?;
 
-        let (codec, codec_version) = get_text_attribute(attributes, AUDIO_RESOURCE_CODEC)
-            .ok_or_else(|| anyhow::anyhow!("AudioResource.codec is missing or wrong value kind"))?;
+        let (codec, codec_version) = get_optional_text_attribute(attributes, AUDIO_RESOURCE_CODEC)
+            .context("AudioResource.codec is the wrong value kind")?;
 
-        let (bitrate, bitrate_version) = get_number_attribute(attributes, AUDIO_RESOURCE_BITRATE)
-            .ok_or_else(|| {
-            anyhow::anyhow!("AudioResource.bitrate is missing or wrong value kind")
-        })?;
-        let bitrate = bitrate as u32;
+        let (bitrate, bitrate_version) =
+            get_optional_number_attribute(attributes, AUDIO_RESOURCE_BITRATE)
+                .context("AudioResource.bitrate is the wrong value kind")?;
+        let bitrate = bitrate.map(|bitrate| bitrate as u32);
 
         let (sample_rate, sample_rate_version) =
-            get_number_attribute(attributes, AUDIO_RESOURCE_SAMPLE_RATE).ok_or_else(|| {
-                anyhow::anyhow!("AudioResource.sample_rate is missing or wrong value kind")
-            })?;
-        let sample_rate = sample_rate as u32;
+            get_optional_number_attribute(attributes, AUDIO_RESOURCE_SAMPLE_RATE)
+                .context("AudioResource.sample_rate is the wrong value kind")?;
+        let sample_rate = sample_rate.map(|sample_rate| sample_rate as u32);
 
         let (bit_depth, bit_depth_version) =
-            get_number_attribute(attributes, AUDIO_RESOURCE_BIT_DEPTH).ok_or_else(|| {
-                anyhow::anyhow!("AudioResource.bit_depth is missing or wrong value kind")
-            })?;
-        let bit_depth = bit_depth as u8;
+            get_optional_number_attribute(attributes, AUDIO_RESOURCE_BIT_DEPTH)
+                .context("AudioResource.bit_depth is the wrong value kind")?;
+        let bit_depth = bit_depth.map(|bit_depth| bit_depth as u8);
 
         let (channels, channels_version) =
-            get_number_attribute(attributes, AUDIO_RESOURCE_CHANNELS).ok_or_else(|| {
-                anyhow::anyhow!("AudioResource.channels is missing or wrong value kind")
-            })?;
-        let channels = channels as u8;
+            get_optional_number_attribute(attributes, AUDIO_RESOURCE_CHANNELS)
+                .context("AudioResource.channels is the wrong value kind")?;
+        let channels = channels.map(|channels| channels as u8);
 
         Ok(Self {
             location,
-            hash,
             size,
             duration,
+            hash,
             codec,
             bitrate,
             sample_rate,
@@ -124,9 +127,9 @@ impl AudioResource {
             channels,
 
             location_version,
-            hash_version,
             size_version,
             duration_version,
+            hash_version,
             codec_version,
             bitrate_version,
             sample_rate_version,
@@ -136,19 +139,12 @@ impl AudioResource {
     }
 
     pub fn to_attributes(&self) -> HashMap<AttributeKind, EntityAttributeValue> {
-        HashMap::from([
+        let mut attributes = HashMap::from([
             (
                 AUDIO_RESOURCE_LOCATION,
                 EntityAttributeValue {
                     value: Value::Bytes(AudioResourceLocation::encode(&self.location)),
                     version: self.location_version,
-                },
-            ),
-            (
-                AUDIO_RESOURCE_HASH,
-                EntityAttributeValue {
-                    value: Value::Bytes(self.hash.to_vec()),
-                    version: self.hash_version,
                 },
             ),
             (
@@ -165,42 +161,57 @@ impl AudioResource {
                     version: self.duration_version,
                 },
             ),
+        ]);
+
+        let optional_attributes = [
+            (
+                AUDIO_RESOURCE_HASH,
+                self.hash.map(|hash| Value::Bytes(hash.to_vec())),
+                self.hash_version,
+            ),
             (
                 AUDIO_RESOURCE_CODEC,
-                EntityAttributeValue {
-                    value: Value::Text(self.codec.clone()),
-                    version: self.codec_version,
-                },
+                self.codec.clone().map(Value::Text),
+                self.codec_version,
             ),
             (
                 AUDIO_RESOURCE_BITRATE,
-                EntityAttributeValue {
-                    value: Value::number_from_f64(self.bitrate as f64),
-                    version: self.bitrate_version,
-                },
+                self.bitrate
+                    .map(|bitrate| Value::number_from_f64(bitrate as f64)),
+                self.bitrate_version,
             ),
             (
                 AUDIO_RESOURCE_SAMPLE_RATE,
-                EntityAttributeValue {
-                    value: Value::number_from_f64(self.sample_rate as f64),
-                    version: self.sample_rate_version,
-                },
+                self.sample_rate
+                    .map(|sample_rate| Value::number_from_f64(sample_rate as f64)),
+                self.sample_rate_version,
             ),
             (
                 AUDIO_RESOURCE_BIT_DEPTH,
-                EntityAttributeValue {
-                    value: Value::number_from_f64(self.bit_depth as f64),
-                    version: self.bit_depth_version,
-                },
+                self.bit_depth
+                    .map(|bit_depth| Value::number_from_f64(bit_depth as f64)),
+                self.bit_depth_version,
             ),
             (
                 AUDIO_RESOURCE_CHANNELS,
-                EntityAttributeValue {
-                    value: Value::number_from_f64(self.channels as f64),
-                    version: self.channels_version,
-                },
+                self.channels
+                    .map(|channels| Value::number_from_f64(channels as f64)),
+                self.channels_version,
             ),
-        ])
+        ];
+        for (attribute, value, version) in optional_attributes {
+            if let Some(version) = version {
+                attributes.insert(
+                    attribute,
+                    EntityAttributeValue {
+                        value: value.unwrap_or(Value::None),
+                        version,
+                    },
+                );
+            }
+        }
+
+        attributes
     }
 }
 
@@ -308,6 +319,60 @@ fn get_bytes_attribute(
     Some((value.as_slice(), *version))
 }
 
+fn get_optional_number_attribute(
+    attributes: &HashMap<AttributeKind, EntityAttributeValue>,
+    attribute: AttributeKind,
+) -> Result<(Option<f64>, Option<Version>), anyhow::Error> {
+    match attributes.get(&attribute) {
+        None => Ok((None, None)),
+        Some(EntityAttributeValue {
+            value: Value::None,
+            version,
+        }) => Ok((None, Some(*version))),
+        Some(EntityAttributeValue {
+            value: Value::Number(value),
+            version,
+        }) => Ok((Some(**value), Some(*version))),
+        Some(_) => anyhow::bail!("Expected a number or none"),
+    }
+}
+
+fn get_optional_text_attribute(
+    attributes: &HashMap<AttributeKind, EntityAttributeValue>,
+    attribute: AttributeKind,
+) -> Result<(Option<String>, Option<Version>), anyhow::Error> {
+    match attributes.get(&attribute) {
+        None => Ok((None, None)),
+        Some(EntityAttributeValue {
+            value: Value::None,
+            version,
+        }) => Ok((None, Some(*version))),
+        Some(EntityAttributeValue {
+            value: Value::Text(value),
+            version,
+        }) => Ok((Some(value.clone()), Some(*version))),
+        Some(_) => anyhow::bail!("Expected text or none"),
+    }
+}
+
+fn get_optional_bytes_attribute(
+    attributes: &HashMap<AttributeKind, EntityAttributeValue>,
+    attribute: AttributeKind,
+) -> Result<(Option<&[u8]>, Option<Version>), anyhow::Error> {
+    match attributes.get(&attribute) {
+        None => Ok((None, None)),
+        Some(EntityAttributeValue {
+            value: Value::None,
+            version,
+        }) => Ok((None, Some(*version))),
+        Some(EntityAttributeValue {
+            value: Value::Bytes(value),
+            version,
+        }) => Ok((Some(value.as_slice()), Some(*version))),
+        Some(_) => anyhow::bail!("Expected bytes or none"),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::audio::{AudioResource, hegel::gen_audio_resource};
@@ -327,7 +392,10 @@ mod test {
 pub mod hegel {
     use crate::audio::{AudioResource, AudioResourceLocation};
     use hegel::{TestCase, generators as gs};
-    use stellar_graph::entity::hegel::{gen_author_id, gen_value_number, gen_version};
+    use stellar_graph::entity::{
+        Version,
+        hegel::{gen_author_id, gen_value_number, gen_version},
+    };
 
     #[hegel::composite]
     pub fn gen_audio_resource(tc: TestCase) -> AudioResource {
@@ -338,27 +406,40 @@ pub mod hegel {
                 .max_value(1_000_000_000_000),
         );
 
+        let hash = tc.draw(gs::optional(gs::arrays(gs::integers())));
+        let codec = tc.draw(gs::optional(gs::text())); // TODO
+        let bitrate = tc.draw(gs::optional(gs::integers()));
+        let sample_rate = tc.draw(gs::optional(gs::integers()));
+        let bit_depth = tc.draw(gs::optional(gs::integers()));
+        let channels = tc.draw(gs::optional(gs::integers()));
+
+        let codec_version = draw_optional_version(&tc, codec.is_some());
+
         AudioResource {
             location: tc.draw(gen_audio_resource_location()),
-            hash: tc.draw(gs::arrays(gs::integers())),
             size,
             duration: tc.draw(gen_value_number()),
-            codec: tc.draw(gs::text()), // TODO
-            bitrate: tc.draw(gs::integers()),
-            sample_rate: tc.draw(gs::integers()),
-            bit_depth: tc.draw(gs::integers()),
-            channels: tc.draw(gs::integers()),
+            hash,
+            codec,
+            bitrate,
+            sample_rate,
+            bit_depth,
+            channels,
 
             location_version: tc.draw(gen_version()),
-            hash_version: tc.draw(gen_version()),
             size_version: tc.draw(gen_version()),
             duration_version: tc.draw(gen_version()),
-            codec_version: tc.draw(gen_version()),
-            bitrate_version: tc.draw(gen_version()),
-            sample_rate_version: tc.draw(gen_version()),
-            bit_depth_version: tc.draw(gen_version()),
-            channels_version: tc.draw(gen_version()),
+            hash_version: draw_optional_version(&tc, hash.is_some()),
+            codec_version,
+            bitrate_version: draw_optional_version(&tc, bitrate.is_some()),
+            sample_rate_version: draw_optional_version(&tc, sample_rate.is_some()),
+            bit_depth_version: draw_optional_version(&tc, bit_depth.is_some()),
+            channels_version: draw_optional_version(&tc, channels.is_some()),
         }
+    }
+
+    fn draw_optional_version(tc: &TestCase, has_value: bool) -> Option<Version> {
+        (has_value || tc.draw(gs::booleans())).then(|| tc.draw(gen_version()))
     }
 
     #[hegel::composite]

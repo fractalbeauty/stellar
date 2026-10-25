@@ -115,7 +115,7 @@ impl PeerResourceClientTask {
             .await
             .context("Failed to create audio cache directory")?;
 
-        let extension = codec_to_extension(&source.codec);
+        let extension = codec_to_extension(source.codec.as_deref());
         let tmp_path = audio_dir.join(format!("{audio_resource}.{extension}.tmp"));
         let final_path = audio_dir.join(format!("{audio_resource}.{extension}"));
 
@@ -256,8 +256,8 @@ impl PeerResourceServerTask {
     }
 }
 
-fn codec_to_extension(codec: &str) -> String {
-    // TODO
+// TODO: this is wrong since codec =/= container
+fn codec_to_extension(codec: Option<&str>) -> String {
     return "mp3".to_string();
 }
 
@@ -338,22 +338,22 @@ impl PeersResourcesPort for PeersResourcesAdapter {
                 path: local_path,
             },
             location_version: version,
-            hash: source.hash,
-            hash_version: version,
             size: source.size,
             size_version: version,
             duration: source.duration,
             duration_version: version,
+            hash: source.hash,
+            hash_version: source.hash.map(|_| version),
             codec: source.codec.clone(),
-            codec_version: version,
+            codec_version: source.codec.as_ref().map(|_| version),
             bitrate: source.bitrate,
-            bitrate_version: version,
+            bitrate_version: source.bitrate.map(|_| version),
             sample_rate: source.sample_rate,
-            sample_rate_version: version,
+            sample_rate_version: source.sample_rate.map(|_| version),
             bit_depth: source.bit_depth,
-            bit_depth_version: version,
+            bit_depth_version: source.bit_depth.map(|_| version),
             channels: source.channels,
-            channels_version: version,
+            channels_version: source.channels.map(|_| version),
         };
 
         let entity = EntityId::random(AUDIO_RESOURCE_ENTITY);
@@ -514,22 +514,22 @@ mod test {
                 path,
             },
             location_version: version,
-            hash: [0u8; 32],
-            hash_version: version,
             size,
             size_version: version,
             duration: 1.0,
             duration_version: version,
-            codec: "mp3".to_string(),
-            codec_version: version,
-            bitrate: 128_000,
-            bitrate_version: version,
-            sample_rate: 44_100,
-            sample_rate_version: version,
-            bit_depth: 16,
-            bit_depth_version: version,
-            channels: 2,
-            channels_version: version,
+            hash: None,
+            hash_version: None,
+            codec: Some("mp3".to_string()),
+            codec_version: Some(version),
+            bitrate: Some(128_000),
+            bitrate_version: Some(version),
+            sample_rate: Some(44_100),
+            sample_rate_version: Some(version),
+            bit_depth: None,
+            bit_depth_version: Some(version),
+            channels: Some(2),
+            channels_version: Some(version),
         };
 
         let entity = EntityId::random(AUDIO_RESOURCE_ENTITY);

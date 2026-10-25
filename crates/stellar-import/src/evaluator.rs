@@ -451,6 +451,7 @@ mod test {
         },
         store::{EntityAttributeValue, EntityData, EntityMetadataValue},
     };
+    use stellar_resources::audio::{AUDIO_RESOURCE_ENTITY, AudioResource};
 
     struct TestImportDatabaseAdapter {
         entities: HashMap<EntityId, EntityData>,
@@ -473,6 +474,65 @@ mod test {
             // TODO
             Ok(())
         }
+    }
+
+    #[test]
+    fn imported_audio_resource_parses() {
+        let song_audio_resource = RelationKind::random();
+        let rules = Rules {
+            rule: Rule {
+                attributes: vec![],
+                relations: vec![],
+            },
+            entity_key_attributes: HashMap::new(),
+            relation_key_attributes: HashMap::new(),
+            song_entity: EntityKind::random(),
+        };
+        let database: Arc<dyn ImportDatabasePort> = Arc::new(TestImportDatabaseAdapter {
+            entities: HashMap::new(),
+        });
+        let files = [EvaluatorFile {
+            path: PathBuf::from("test song.flac"),
+            size: 4_000_000,
+            file_type: FileType::Flac,
+            properties: FileProperties::new(
+                Duration::from_mins(2),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            tags: None,
+        }];
+
+        let author = AuthorId::from_bytes([0u8; 32]);
+        let changes = Evaluator::run(&rules, &database, song_audio_resource, author, &files)
+            .expect("should run");
+
+        let version = Version::new(Timestamp::new(0), author);
+        let [audio_resource] = changes.create_entities[&AUDIO_RESOURCE_ENTITY].as_slice() else {
+            panic!("should create one audio resource");
+        };
+        let attributes = audio_resource
+            .attributes
+            .iter()
+            .map(|(attribute, value)| {
+                (
+                    *attribute,
+                    EntityAttributeValue {
+                        value: value.clone(),
+                        version,
+                    },
+                )
+            })
+            .collect();
+        let audio_resource = AudioResource::try_from_attributes(&attributes).expect("should parse");
+
+        assert_eq!(audio_resource.codec, None);
+        assert_eq!(audio_resource.hash, None);
+        assert_eq!(audio_resource.bitrate, None);
     }
 
     #[test]
