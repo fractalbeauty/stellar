@@ -8,8 +8,8 @@ use std::time::Duration;
 use std::unimplemented;
 use stellar_graph::database::Database;
 use stellar_graph::entity::{
-    AttributeKind, AuthorId, EntityId, EntityKind, RelationId, RelationKind, Timestamp, Value,
-    ValueKind, Version,
+    AttributeKind, AuthorId, EntityId, EntityKind, RelationDirection, RelationId, RelationKind,
+    Timestamp, Value, ValueKind, Version,
 };
 use stellar_graph::query::exec::SlotValue;
 use stellar_graph::query::plan::TableQuery;
@@ -19,11 +19,13 @@ use stellar_import::import::{ImportEventHandler, ImportTask};
 use stellar_import::ports::{ImportDatabaseAdapter, ImportSchemaPort};
 use stellar_import::rules::Rules;
 use stellar_log::LogGuard;
+use stellar_player::player::PlayerTask;
+use stellar_player::ports::{PlayerPeersPort, PlayerResourcesAdapter};
 use stellar_sync::devices::DevicesState;
 use stellar_sync::peers::{PeersDatabaseAdapter, PeersSchemaAdapter, PeersTask};
 use stellar_sync::resources::PeersResourcesAdapter;
 use stellar_sync::schema::{Schema, SchemaStoreTask, default_schema};
-use stellar_sync::{EndpointId, SecretKey, devices::DevicesTask};
+use stellar_sync::{EndpointId, PublicKey, SecretKey, devices::DevicesTask};
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -37,6 +39,7 @@ pub struct Core {
     database: Database,
     schema: SchemaStoreTask,
     peers: PeersTask,
+    player: Option<PlayerTask>,
     devices: DevicesTask,
 
     endpoint_id: EndpointId,
@@ -111,6 +114,17 @@ impl Core {
 
     pub fn endpoint_id(&self) -> EndpointId {
         self.endpoint_id
+    }
+
+    /// Plays the audio related to an entity, downloading it from another device if needed.
+    pub fn play(&self, entity: EntityId) -> Result<(), CoreError> {
+        let player = self
+            .player
+            .as_ref()
+            .ok_or_else(|| core_error!("Playback is unavailable"))?;
+
+        player.play(entity)?;
+        Ok(())
     }
 
     pub async fn start_device_code_flow(&self) -> Result<String, CoreError> {
@@ -799,6 +813,20 @@ fn run_core_thread(
         );
         let _ = endpoint_id_tx.send(Some(peers.endpoint_id()));
 
+        let player = match PlayerTask::spawn(
+            cancellation_token.child_token(),
+            PlayerResourcesAdapter::new(database.clone(), author),
+            Arc::new(CorePlayerPeersAdapter {
+                peers: peers.clone(),
+            }),
+        ) {
+            Ok(player) => Some(player),
+            Err(error) => {
+                error!(?error, "Failed to start player, playback is unavailable");
+                None
+            }
+        };
+
         let devices = DevicesTask::spawn(
             cancellation_token.child_token(),
             data_dir,
@@ -834,6 +862,7 @@ fn run_core_thread(
             database,
             schema,
             peers,
+            player,
             devices,
             endpoint_id,
             author,
@@ -849,6 +878,37 @@ fn run_core_thread(
 
         Ok::<(), anyhow::Error>(())
     })
+}
+
+/// Downloads audio through [`PeersTask`].
+struct CorePlayerPeersAdapter {
+    peers: PeersTask,
+}
+
+#[async_trait::async_trait]
+impl PlayerPeersPort for CorePlayerPeersAdapter {
+    async fn download_audio_resource(
+        &self,
+        device: AuthorId,
+        audio_resource: EntityId,
+        parent: EntityId,
+        relation: RelationKind,
+        relation_direction: RelationDirection,
+    ) -> Result<std::path::PathBuf, anyhow::Error> {
+        let public_key = PublicKey::from_bytes(device.as_slice())
+            .context("Author is not a valid endpoint public key")?;
+        let endpoint_id = EndpointId::from(public_key);
+
+        self.peers
+            .download_audio_resource(
+                endpoint_id,
+                audio_resource,
+                parent,
+                relation,
+                relation_direction,
+            )
+            .await
+    }
 }
 
 struct CoreImportSchemaAdapter {

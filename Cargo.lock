@@ -5177,6 +5177,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-std",
+ "async-trait",
  "directories-next",
  "jni 0.21.1",
  "ndk-context",
@@ -5185,6 +5186,7 @@ dependencies = [
  "stellar-graph",
  "stellar-import",
  "stellar-log",
+ "stellar-player",
  "stellar-sync",
  "stellar-uniffi",
  "thiserror 2.0.18",
