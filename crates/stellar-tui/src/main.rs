@@ -4,7 +4,7 @@ use stellar::{
     core::{
         Core, CoreAttribute, CoreEntity, CoreRelation, DevicesChangeHandler, SchemaChangeHandler,
     },
-    graph::entity::{AttributeKind, Value},
+    graph::entity::{AttributeKind, EntityId, Value},
     sync::{devices::DevicesState, schema::Schema},
 };
 
@@ -22,6 +22,10 @@ struct Cli {
     /// Print all relations as JSON and exit, for debugging.
     #[arg(long)]
     print_relations: bool,
+
+    /// Play the audio related to an entity.
+    #[arg(long, value_name = "ENTITY")]
+    play: Option<EntityId>,
 }
 
 #[derive(Args)]
@@ -107,6 +111,10 @@ async fn main() {
 
     if let Ok(endpoint_id) = std::env::var("STELLAR_CONNECT_TO") {
         core.add_device(endpoint_id, None).unwrap();
+    }
+
+    if let Some(entity) = cli.play {
+        core.play(entity).expect("Should start playback");
     }
 
     loop {
