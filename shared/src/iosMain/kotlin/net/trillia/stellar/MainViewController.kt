@@ -7,6 +7,7 @@ import androidx.compose.ui.window.ComposeUIViewController
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import net.trillia.stellar.mobile.MobileApp
 import platform.UIKit.UIViewController
 import uniffi.stellar.Core
 
@@ -24,7 +25,7 @@ fun MainViewController(): UIViewController {
         val core by coreState
 
         core?.let { core ->
-            App(core = core, devicesManager = devicesManager, schemaManager = schemaManager)
+            MobileApp(core = core, devicesManager = devicesManager, schemaManager = schemaManager)
         }
     }
 }

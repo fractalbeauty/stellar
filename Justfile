@@ -42,6 +42,12 @@ run-desktop-release *FLAGS:
   ./gradlew :desktopApp:createDistributable -Pnet.trillia.stellar.rust.variant=release
   ./{{desktop-binary}} {{FLAGS}}
 
+run-mobile *FLAGS:
+  ./gradlew :desktopApp:run --args={{ quote("--mobile " + FLAGS) }}
+
+run-mobile-hot *FLAGS:
+  ./gradlew :desktopApp:hotRun --auto --args={{ quote("--mobile " + FLAGS) }}
+
 run-android:
   ./gradlew :androidApp:installDebug
   adb shell am start -n net.trillia.stellar/.MainActivity

@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import net.trillia.stellar.mobile.MobileApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -23,7 +24,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val coreReady by app.coreReady.collectAsState()
             if (coreReady) {
-                App(core = app.core, devicesManager = app.devicesManager, schemaManager = app.schemaManager)
+                MobileApp(core = app.core, devicesManager = app.devicesManager, schemaManager = app.schemaManager)
             }
         }
     }

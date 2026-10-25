@@ -1,15 +1,20 @@
-@file:Suppress("ktlint:standard:filename")
-
 package net.trillia.stellar
 
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.awaitApplication
+import androidx.compose.ui.window.rememberWindowState
 import kotlinx.coroutines.runBlocking
+import net.trillia.stellar.desktop.DesktopApp
+import net.trillia.stellar.mobile.MobileApp
 import uniffi.stellar.Core
 import uniffi.stellar.CoreException
 
 fun main(args: Array<String>) =
     runBlocking {
+        val isMobile = "--mobile" in args
+
         val devicesManager = DevicesManager()
         val schemaManager = SchemaManager()
 
@@ -26,15 +31,19 @@ fun main(args: Array<String>) =
         val title = if (profile == "default") "Stellar" else "Stellar (profile: $profile)"
 
         awaitApplication {
+            val windowState =
+                if (isMobile) rememberWindowState(size = DpSize(320.dp, 568.dp)) else rememberWindowState()
+
             Window(
                 onCloseRequest = ::exitApplication,
                 title = title,
+                state = windowState,
             ) {
-                App(
-                    core = core,
-                    devicesManager = devicesManager,
-                    schemaManager = schemaManager,
-                )
+                if (isMobile) {
+                    MobileApp(core, devicesManager, schemaManager)
+                } else {
+                    DesktopApp(core, devicesManager, schemaManager)
+                }
             }
         }
     }
