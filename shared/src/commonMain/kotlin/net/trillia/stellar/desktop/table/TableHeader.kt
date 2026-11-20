@@ -58,7 +58,7 @@ fun TableHeader(
 
 @Composable
 @Preview(widthDp = 200)
-fun TableHeaderPreview() {
+private fun `Preview TableHeader Default`() {
     val columns =
         listOf(
             TableColumnDefinition<Unit, String>(

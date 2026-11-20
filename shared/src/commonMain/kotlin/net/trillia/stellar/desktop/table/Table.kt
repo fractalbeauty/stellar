@@ -263,7 +263,7 @@ const val TABLE_DRAG_ALPHA = 0.3f
 
 @Composable
 @Preview
-fun TablePreview() {
+private fun `Preview Table Default`() {
     val columns =
         listOf(
             TableColumnDefinition<Map<String, String>, String>(

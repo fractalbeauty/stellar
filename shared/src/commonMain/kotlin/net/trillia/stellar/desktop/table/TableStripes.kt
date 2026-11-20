@@ -63,7 +63,7 @@ fun <Row> TableStripes(
 
 @Composable
 @Preview
-fun TableStripesPreview() {
+private fun `Preview TableStripes Default`() {
     Box(
         Modifier.size(100.dp),
     ) {
