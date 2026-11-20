@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -53,6 +54,7 @@ fun <Row> Table(
     onDeselectRow: (Row) -> Unit,
     onDeselectAllRows: () -> Unit,
     onColumnTap: (String) -> Unit,
+    onSettingsClick: () -> Unit,
     onRowContextMenuRequest: (Row) -> List<ContextMenuItem>,
 ) {
     val density = LocalDensity.current
@@ -213,6 +215,11 @@ fun <Row> Table(
                 TableColumnDividers(columnState)
             }
         }
+
+        TableSettingsButton(
+            onClick = onSettingsClick,
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
     }
 }
 
@@ -304,6 +311,7 @@ private fun `Preview Table Default`() {
             { selected.remove(it) },
             onDeselectAllRows = { selected.clear() },
             onColumnTap = FakeHandler("onColumnTap"),
+            onSettingsClick = FakeHandler("onSettingsClick"),
             onRowContextMenuRequest = {
                 listOf(
                     ContextMenuItem.Action("action", FakeHandler("ContextMenuItem.Action onClick")),

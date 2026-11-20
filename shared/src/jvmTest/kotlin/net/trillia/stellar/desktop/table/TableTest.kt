@@ -221,6 +221,7 @@ private fun ComposeUiTest.makeTableTest(): TableTestState {
             onDeselectRow = { state.selected.remove(it) },
             onDeselectAllRows = { state.selected.clear() },
             onColumnTap = {},
+            onSettingsClick = {},
             onRowContextMenuRequest = { emptyList() },
         )
     }
@@ -246,6 +247,7 @@ private fun ComposeUiTest.makeScrollableTableTest(): TableTestState {
                 onDeselectRow = { state.selected.remove(it) },
                 onDeselectAllRows = { state.selected.clear() },
                 onColumnTap = {},
+                onSettingsClick = {},
                 onRowContextMenuRequest = { emptyList() },
             )
         }

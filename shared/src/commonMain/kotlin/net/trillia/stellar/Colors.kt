@@ -19,5 +19,6 @@ object AppColors {
     val TableRowSelected = Primary
 
     val TableHeaderBackground = Color(0xFFDADADA)
+    val TableSettingsButtonBackground = Color(0xFF8A9199)
     val TableHeaderBackgroundDragged = Color(0xFFABB3BA)
 }

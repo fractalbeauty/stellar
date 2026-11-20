@@ -11,7 +11,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateSet
-import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -120,6 +119,7 @@ fun EntityTable(
             selected.clear()
         },
         onColumnTap = handleColumnTap,
+        onSettingsClick = FakeHandler("onSettingsClick"),
         onRowContextMenuRequest = { row ->
             listOf(
                 ContextMenuItem.Action("Row: ${row[0]}") {},
