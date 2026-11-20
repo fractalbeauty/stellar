@@ -18,8 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.trillia.stellar.AttributeKind
 import net.trillia.stellar.EntityId
-import net.trillia.stellar.FakeHandler
-import net.trillia.stellar.desktop.buildEntityTableColumns
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
 import net.trillia.stellar.desktop.table.TableColumnDefinition
@@ -38,9 +36,6 @@ import uniffi.stellar_graph.TableQuery
 import uniffi.stellar_graph.TableQueryChangeHandler
 import uniffi.stellar_graph.Value
 import uniffi.stellar_sync.Schema
-import kotlin.collections.component1
-import kotlin.collections.component2
-import kotlin.collections.forEach
 import kotlin.math.floor
 import kotlin.math.round
 import kotlin.time.measureTimedValue
@@ -49,6 +44,7 @@ import kotlin.time.measureTimedValue
 fun EntityTable(
     state: EntityTableState,
     selected: SnapshotStateSet<EntityId>,
+    onSettingsClick: () -> Unit,
 ) {
     val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
 
@@ -119,7 +115,7 @@ fun EntityTable(
             selected.clear()
         },
         onColumnTap = handleColumnTap,
-        onSettingsClick = FakeHandler("onSettingsClick"),
+        onSettingsClick = onSettingsClick,
         onRowContextMenuRequest = { row ->
             listOf(
                 ContextMenuItem.Action("Row: ${row[0]}") {},

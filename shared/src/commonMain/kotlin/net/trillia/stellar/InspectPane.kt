@@ -5,11 +5,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateSetOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import net.trillia.stellar.desktop.EntityInspector
 import net.trillia.stellar.desktop.EntityTable
+import net.trillia.stellar.desktop.EntityTableSettingsInspector
 import net.trillia.stellar.desktop.rememberEntityTableState
 import uniffi.stellar.Core
 import uniffi.stellar_graph.EntityKind
@@ -27,14 +30,24 @@ fun InspectPane(
 
     val selected = remember(selectedEntity) { mutableStateSetOf<EntityId>() }
 
+    var isSettingsVisible by remember { mutableStateOf(false) }
+
     Row {
         Box(Modifier.weight(1f)) {
             EntityTable(
                 state = state,
                 selected = selected,
+                onSettingsClick = {
+                    isSettingsVisible = !isSettingsVisible
+                },
             )
         }
-        if (selected.isNotEmpty()) {
+
+        if (isSettingsVisible) {
+            EntityTableSettingsInspector(
+                entityTable = state,
+            )
+        } else if (selected.isNotEmpty()) {
             EntityInspector(
                 schema = schema,
                 selectedEntity = selectedEntity,
