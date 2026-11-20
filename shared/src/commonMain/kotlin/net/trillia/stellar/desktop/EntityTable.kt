@@ -11,6 +11,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateSet
+import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -18,6 +19,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.trillia.stellar.AttributeKind
 import net.trillia.stellar.EntityId
+import net.trillia.stellar.FakeHandler
 import net.trillia.stellar.desktop.buildEntityTableColumns
 import net.trillia.stellar.desktop.table.Table
 import net.trillia.stellar.desktop.table.TableCellText
@@ -118,6 +120,11 @@ fun EntityTable(
             selected.clear()
         },
         onColumnTap = handleColumnTap,
+        onRowContextMenuRequest = { row ->
+            listOf(
+                ContextMenuItem.Action("Row: ${row[0]}") {},
+            )
+        },
     )
 }
 

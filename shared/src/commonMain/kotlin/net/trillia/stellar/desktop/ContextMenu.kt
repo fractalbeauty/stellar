@@ -53,7 +53,21 @@ fun ContextMenu(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    ContextMenu(
+        onContextMenuRequest = { items },
+        modifier,
+        content,
+    )
+}
+
+@Composable
+fun ContextMenu(
+    onContextMenuRequest: () -> List<ContextMenuItem>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
     var menuPosition by remember { mutableStateOf<IntOffset?>(null) }
+    var menuItems by remember { mutableStateOf<List<ContextMenuItem>>(emptyList()) }
 
     val handleDismiss = {
         menuPosition = null
@@ -64,11 +78,15 @@ fun ContextMenu(
             awaitEachGesture {
                 val event = awaitPointerEvent()
                 if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
-                    menuPosition =
-                        event.changes
-                            .firstOrNull()
-                            ?.position
-                            ?.round()
+                    val items = onContextMenuRequest()
+                    if (items.isNotEmpty()) {
+                        menuItems = items
+                        menuPosition =
+                            event.changes
+                                .firstOrNull()
+                                ?.position
+                                ?.round()
+                    }
                 }
             }
         },
@@ -80,7 +98,7 @@ fun ContextMenu(
                 offset = currentMenuPosition,
                 onDismissRequest = handleDismiss,
             ) {
-                ContextMenuContent(items, handleDismiss)
+                ContextMenuContent(menuItems, handleDismiss)
             }
         }
     }

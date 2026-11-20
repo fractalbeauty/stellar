@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import net.trillia.stellar.FakeHandler
+import net.trillia.stellar.desktop.ContextMenuItem
 import net.trillia.stellar.isCtrlLikePressed
 import net.trillia.stellar.upOrDownTo
 import kotlin.math.roundToInt
@@ -52,6 +53,7 @@ fun <Row> Table(
     onDeselectRow: (Row) -> Unit,
     onDeselectAllRows: () -> Unit,
     onColumnTap: (String) -> Unit,
+    onRowContextMenuRequest: (Row) -> List<ContextMenuItem>,
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
@@ -201,6 +203,9 @@ fun <Row> Table(
                                     }
                                 }
                             },
+                            onRowContextMenuRequest = {
+                                onRowContextMenuRequest(row)
+                            },
                         )
                     }
                 }
@@ -299,6 +304,11 @@ fun TablePreview() {
             { selected.remove(it) },
             onDeselectAllRows = { selected.clear() },
             onColumnTap = FakeHandler("onColumnTap"),
+            onRowContextMenuRequest = {
+                listOf(
+                    ContextMenuItem.Action("action", FakeHandler("ContextMenuItem.Action onClick")),
+                )
+            },
         )
     }
 }

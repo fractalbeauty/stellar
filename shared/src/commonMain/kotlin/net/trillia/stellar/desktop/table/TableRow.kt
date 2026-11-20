@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.unit.dp
+import net.trillia.stellar.desktop.ContextMenu
+import net.trillia.stellar.desktop.ContextMenuItem
 import net.trillia.stellar.runIf
 
 @Composable
@@ -20,6 +22,7 @@ fun <Row> TableRow(
     columnState: TableColumnState<Row>,
     row: Row,
     onSelected: () -> Unit,
+    onRowContextMenuRequest: () -> List<ContextMenuItem>,
 ) {
     val rowInteractionSource = remember { MutableInteractionSource() }
     Box(
@@ -29,25 +32,27 @@ fun <Row> TableRow(
                 .height(tableRowHeight)
                 .combinedClickable(onClick = onSelected, interactionSource = rowInteractionSource),
     ) {
-        TableRowLayout(
-            columnState = columnState,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            columnState.columnOrder.forEach { id ->
-                key(id) {
-                    val columnDefinition = columnState.columns.getValue(id)
-                    val isDragging = columnState.draggedColumnId == id
-                    Box(
-                        modifier =
-                            Modifier
-                                .layoutId(id)
-                                .height(tableRowHeight)
-                                .runIf(isDragging) {
-                                    graphicsLayer(alpha = TABLE_DRAG_ALPHA)
-                                },
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        TableCell(columnDefinition, row)
+        ContextMenu(onContextMenuRequest = onRowContextMenuRequest) {
+            TableRowLayout(
+                columnState = columnState,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                columnState.columnOrder.forEach { id ->
+                    key(id) {
+                        val columnDefinition = columnState.columns.getValue(id)
+                        val isDragging = columnState.draggedColumnId == id
+                        Box(
+                            modifier =
+                                Modifier
+                                    .layoutId(id)
+                                    .height(tableRowHeight)
+                                    .runIf(isDragging) {
+                                        graphicsLayer(alpha = TABLE_DRAG_ALPHA)
+                                    },
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            TableCell(columnDefinition, row)
+                        }
                     }
                 }
             }
