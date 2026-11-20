@@ -85,6 +85,11 @@ kotlin {
     }
 }
 
+tasks.named<Test>("jvmTest") {
+    // UI tests render offscreen; headless stops the JVM from showing a Dock icon or stealing focus.
+    systemProperty("java.awt.headless", "true")
+}
+
 cargo {
     packageDirectory = rootProject.layout.projectDirectory.dir("crates/stellar")
 
