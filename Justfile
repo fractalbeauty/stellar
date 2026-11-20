@@ -29,6 +29,12 @@ test-rust *FLAGS:
 test-kotlin *FLAGS:
   ./gradlew :shared:jvmTest --quiet {{FLAGS}}
 
+# Render `@Preview` functions to PNGs in shared/build/previews/<source file>/. FILTER matches names by substring.
+preview *FILTER:
+  rm -rf shared/build/previews
+  STELLAR_RENDER_PREVIEWS=1 STELLAR_RENDER_PREVIEWS_FILTER={{quote(FILTER)}} ./gradlew :shared:jvmTest --tests 'net.trillia.stellar.RenderPreviewsTest' --rerun --quiet
+  find "$PWD/shared/build/previews" -name '*.png' | sort
+
 run-tui *FLAGS:
   cargo run --package stellar-tui -- {{FLAGS}}
 

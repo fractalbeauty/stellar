@@ -85,16 +85,17 @@ private class UiTestContext(
  */
 private const val SCREENSHOTS_ENV_VAR = "STELLAR_UI_TEST_SCREENSHOTS"
 
-private fun saveScreenshot(
+internal fun saveScreenshot(
     bitmap: ImageBitmap,
     name: String,
+    directory: String = "build/test-results/screenshots",
 ) {
     val bytes =
         Image
             .makeFromBitmap(bitmap.asSkiaBitmap())
             .encodeToData(EncodedImageFormat.PNG)!!
             .bytes
-    val outFile = File("build/test-results/screenshots/$name.png")
+    val outFile = File("$directory/$name.png")
     outFile.parentFile.mkdirs()
     outFile.writeBytes(bytes)
     println("Saved screenshot to ${outFile.absolutePath}")

@@ -78,6 +78,9 @@ kotlin {
         }
         jvmTest.dependencies {
             implementation(compose.desktop.currentOs)
+
+            // Finds `@Preview` functions in compiled classes, for `RenderPreviewsTest`.
+            implementation(libs.classgraph)
         }
     }
 }
