@@ -40,6 +40,9 @@ fun InspectPane(
                 onSettingsClick = {
                     isSettingsVisible = !isSettingsVisible
                 },
+                onPlayEntity = { entityId ->
+                    core.play(entityId)
+                },
             )
         }
 

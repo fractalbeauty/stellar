@@ -45,6 +45,7 @@ fun EntityTable(
     state: EntityTableState,
     selected: SnapshotStateSet<EntityId>,
     onSettingsClick: () -> Unit,
+    onPlayEntity: (EntityId) -> Unit,
 ) {
     val keyboardModifiers by rememberUpdatedState(LocalWindowInfo.current.keyboardModifiers)
 
@@ -117,8 +118,17 @@ fun EntityTable(
         onColumnTap = handleColumnTap,
         onSettingsClick = onSettingsClick,
         onRowContextMenuRequest = { row ->
+            val entityId =
+                when (val entityId = row[0]) {
+                    is SlotValue.SvEntityId -> entityId.v1
+                    else -> error("expected EntityId in slot 0")
+                }
+
             listOf(
                 ContextMenuItem.Action("Row: ${row[0]}") {},
+                ContextMenuItem.Action("Play") {
+                    onPlayEntity(entityId)
+                },
             )
         },
     )
